@@ -240,18 +240,59 @@ class UnsupportedScope(DomainValidationError):
     default_user_action = "Use item scope; broader rules are not available yet."
 
 
+class StorageError(TrackForgeError):
+    """Base class for expected storage failures."""
+
+    default_user_action = "Check the TrackForge data and cache directories."
+
+
+class InvalidStorageKey(StorageError, ValueError):
+    """Raised when a hash, cache key, or payload format is invalid."""
+
+    default_user_action = "Use a 64-character lowercase SHA-256 key."
+
+
+class ArtifactCorrupted(StorageError):
+    """Raised when stored bytes do not match their recorded hash or schema."""
+
+    default_user_action = "Run storage verification or recompute the artifact."
+
+
+class PathEscapeError(ArtifactCorrupted, ValueError):
+    """Raised when a path would leave its allowed root or use ``..``."""
+
+    default_user_action = "Use paths relative to the configured storage root."
+
+
+class ArtifactConflict(StorageError):
+    """Raised when a cache key already refers to different payload bytes."""
+
+    default_user_action = "Use a new cache key or remove the stale artifact explicitly."
+
+
+class ArtifactNotFound(StorageError, FileNotFoundError):
+    """Raised when an expected object is absent from the store."""
+
+    default_user_action = "Recompute the missing artifact."
+
+
 # Convenient aliases used by callers that prefer shorter spellings.
 ValidationError = DomainValidationError
 InvalidTransition = InvalidStateTransition
 
 __all__ = [
     "AcquisitionFailed",
+    "ArtifactConflict",
+    "ArtifactCorrupted",
+    "ArtifactNotFound",
     "CandidateNotFound",
     "ConfigError",
     "DomainValidationError",
     "InvalidId",
     "InvalidStateTransition",
+    "InvalidStorageKey",
     "InvalidTransition",
+    "PathEscapeError",
     "PluginError",
     "ProviderUnavailable",
     "PublishFailed",
@@ -259,6 +300,7 @@ __all__ = [
     "RenderFailed",
     "ResolutionFailed",
     "ReviewRequired",
+    "StorageError",
     "TrackForgeError",
     "UnsupportedScope",
     "UnsupportedSource",
