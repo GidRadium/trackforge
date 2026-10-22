@@ -11,6 +11,7 @@ SQLAlchemy work in a worker thread so callers never block the event loop.
 from __future__ import annotations
 
 from datetime import datetime
+from types import TracebackType
 from typing import Any, Protocol, runtime_checkable
 
 from trackforge.application.dto.db import (
@@ -86,6 +87,18 @@ class MediaRepository(Protocol):
     async def find_by_hash(self, content_hash: str) -> MediaObject | None: ...
 
     async def save(self, media: MediaObject) -> MediaObject: ...
+
+    async def update_probe(
+        self,
+        media_id: MediaId,
+        *,
+        probe_artifact_id: ArtifactId,
+        codec: str | None,
+        bitrate: int | None,
+        sample_rate: int | None,
+        channels: int | None,
+        duration_seconds: float | None,
+    ) -> MediaObject: ...
 
 
 @runtime_checkable
@@ -335,7 +348,7 @@ class UnitOfWork(Protocol):
         self,
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
-        traceback: object | None,
+        traceback: TracebackType | None,
     ) -> None: ...
 
     async def commit(self) -> None: ...

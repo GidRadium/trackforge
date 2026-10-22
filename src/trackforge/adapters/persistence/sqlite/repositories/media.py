@@ -10,8 +10,8 @@ from trackforge.adapters.persistence.sqlite._errors import translate_integrity_e
 from trackforge.adapters.persistence.sqlite._mapping import media_from_row, to_iso_z
 from trackforge.adapters.persistence.sqlite.models import MediaObjectRow
 from trackforge.adapters.persistence.sqlite.repositories._base import SqliteRepository
-from trackforge.domain.errors import DuplicateContentHash
-from trackforge.domain.model.ids import MediaId
+from trackforge.domain.errors import DuplicateContentHash, RecordNotFound
+from trackforge.domain.model.ids import ArtifactId, MediaId
 from trackforge.domain.model.media import MediaObject
 
 
@@ -63,6 +63,37 @@ class SqliteMediaRepository(SqliteRepository):
             return await self._run(_save)
         except IntegrityError as exc:
             raise translate_integrity_error(exc) from exc
+
+    async def update_probe(
+        self,
+        media_id: MediaId,
+        *,
+        probe_artifact_id: ArtifactId,
+        codec: str | None,
+        bitrate: int | None,
+        sample_rate: int | None,
+        channels: int | None,
+        duration_seconds: float | None,
+    ) -> MediaObject:
+        """Attach measured probe properties without changing content identity."""
+
+        def _update(session: Session) -> MediaObject:
+            row = session.get(MediaObjectRow, media_id)
+            if row is None:
+                raise RecordNotFound(
+                    "media object not found",
+                    context={"media_id": media_id},
+                )
+            row.probe_artifact_id = probe_artifact_id
+            row.codec = codec
+            row.bitrate = bitrate
+            row.sample_rate = sample_rate
+            row.channels = channels
+            row.duration = duration_seconds
+            session.flush()
+            return media_from_row(row)
+
+        return await self._run(_update)
 
 
 __all__ = ["SqliteMediaRepository"]

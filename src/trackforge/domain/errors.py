@@ -183,6 +183,18 @@ class ProviderUnavailable(TrackForgeError):
     default_user_action = "Retry later or configure an alternative provider."
 
 
+class ObservationFailed(TrackForgeError):
+    """Raised when an observation run cannot produce its required artifacts."""
+
+    default_user_action = "Inspect the observation run and its warnings."
+
+
+class ProbeFailed(ObservationFailed):
+    """Raised when the media bytes cannot be probed."""
+
+    default_user_action = "Check that the file is a valid, readable audio file."
+
+
 class RateLimited(TrackForgeError):
     """Raised when a provider rejects a request due to rate limiting."""
 
@@ -357,8 +369,10 @@ __all__ = [
     "InvalidStorageKey",
     "InvalidTransition",
     "MigrationError",
+    "ObservationFailed",
     "PathEscapeError",
     "PluginError",
+    "ProbeFailed",
     "ProviderUnavailable",
     "PublishFailed",
     "RateLimited",

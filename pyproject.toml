@@ -21,6 +21,11 @@ dependencies = [
     "typer>=0.12.5,<1",
 ]
 
+[project.optional-dependencies]
+# Mutagen is GPL-2.0-or-later; it is imported only by the tagging adapter and
+# never by domain/application/pipeline code (see the license-boundary contract).
+tagging = ["mutagen>=1.47"]
+
 [project.scripts]
 trackforge = "trackforge.interfaces.cli.main:app"
 
@@ -65,6 +70,7 @@ warn_unreachable = true
 minversion = "8.0"
 addopts = "-m 'not network and not slow'"
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
     "unit: fast tests without I/O boundaries",
     "contract: architecture, interface, and license contracts",

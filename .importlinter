@@ -23,7 +23,7 @@ forbidden_modules =
     trackforge.bootstrap
 
 [importlinter:contract:domain-and-application-isolation]
-name = Domain and application do not import pipeline or config
+name = Domain and application do not import pipeline or config, except use cases orchestrating the pipeline
 type = forbidden
 source_modules =
     trackforge.domain
@@ -31,6 +31,11 @@ source_modules =
 forbidden_modules =
     trackforge.pipeline
     trackforge.config
+# Use cases are the orchestration boundary described in 02-architecture.md §6.
+# They may invoke the generic pipeline; pipeline itself only depends on
+# application ports/DTOs, so no import cycle exists at module import time.
+ignore_imports =
+    trackforge.application.use_cases.* -> trackforge.pipeline.*
 
 [importlinter:contract:license-boundary]
 name = Core layers do not import GPL or AGPL libraries
