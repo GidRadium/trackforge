@@ -13,10 +13,10 @@
 from pathlib import Path
 from trackforge.adapters.persistence.sqlite.engine import Catalog, initialize_catalog
 
-catalog = initialize_catalog(Path(data_dir))   # создаёт data_dir 0700, catalog.sqlite 0600
-catalog.engine                                  # SQLAlchemy Engine
-catalog.session_factory                         # sessionmaker[Session]
-catalog.connect()                               # короткоживущее соединение для диагностики
+catalog = initialize_catalog(Path(data_dir))  # создаёт data_dir 0700, catalog.sqlite 0600
+catalog.engine  # SQLAlchemy Engine
+catalog.session_factory  # sessionmaker[Session]
+catalog.connect()  # короткоживущее соединение для диагностики
 catalog.close()
 ```
 
@@ -71,8 +71,8 @@ async with SqliteUnitOfWork(catalog) as uow:
 from trackforge.adapters.persistence.sqlite.file_lock import FileLock
 from trackforge.domain.errors import CatalogLocked
 
-with FileLock(data_dir):          # или FileLock(data_dir / ".lock")
-    ...                           # второй процесс получает CatalogLocked
+with FileLock(data_dir):  # или FileLock(data_dir / ".lock")
+    ...  # второй процесс получает CatalogLocked
 ```
 
 - `fcntl.flock(LOCK_EX | LOCK_NB)`, без бесконечного ожидания.
