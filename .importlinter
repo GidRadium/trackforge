@@ -1,0 +1,72 @@
+[importlinter]
+root_package = trackforge
+include_external_packages = True
+
+[importlinter:contract:layer-direction]
+name = Interfaces depend on application, which depends on domain
+type = layers
+layers =
+    trackforge.interfaces
+    trackforge.application
+    trackforge.domain
+
+[importlinter:contract:core-isolation]
+name = Core layers do not import adapters, interfaces, or bootstrap
+type = forbidden
+source_modules =
+    trackforge.domain
+    trackforge.application
+    trackforge.pipeline
+forbidden_modules =
+    trackforge.adapters
+    trackforge.interfaces
+    trackforge.bootstrap
+
+[importlinter:contract:domain-and-application-isolation]
+name = Domain and application do not import pipeline or config
+type = forbidden
+source_modules =
+    trackforge.domain
+    trackforge.application
+forbidden_modules =
+    trackforge.pipeline
+    trackforge.config
+
+[importlinter:contract:license-boundary]
+name = Core layers do not import GPL or AGPL libraries
+type = forbidden
+source_modules =
+    trackforge.domain
+    trackforge.application
+    trackforge.pipeline
+forbidden_modules =
+    mutagen
+    essentia
+    torch
+    faster_whisper
+    demucs
+    onnxruntime
+
+[importlinter:contract:domain-purity]
+name = Domain does not import framework, ORM, network, or CLI libraries
+type = forbidden
+source_modules =
+    trackforge.domain
+forbidden_modules =
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    httpx
+    typer
+    rich
+
+[importlinter:contract:application-purity]
+name = Application does not import ORM, network, or CLI libraries
+type = forbidden
+source_modules =
+    trackforge.application
+forbidden_modules =
+    sqlalchemy
+    httpx
+    typer
+    rich

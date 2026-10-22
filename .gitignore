@@ -206,6 +206,9 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# import-linter
+.import_linter_cache/
+
 # PyPI configuration file
 .pypirc
 
