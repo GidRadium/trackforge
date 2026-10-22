@@ -276,6 +276,62 @@ class ArtifactNotFound(StorageError, FileNotFoundError):
     default_user_action = "Recompute the missing artifact."
 
 
+class CatalogError(StorageError):
+    """Base class for expected SQLite catalog failures."""
+
+    default_user_action = "Check the TrackForge catalog and data directory."
+
+
+class CatalogLocked(CatalogError):
+    """Raised when another process holds the data-directory lock."""
+
+    default_user_action = (
+        "Wait for the other TrackForge process to finish, or use a different data directory."
+    )
+
+
+class MigrationError(CatalogError):
+    """Raised when the catalog schema cannot be created or upgraded."""
+
+    default_user_action = "Check the catalog file or restore it from backup."
+
+
+class DuplicateRecord(CatalogError, ValueError):
+    """Raised when a unique catalog constraint rejects a write."""
+
+    default_user_action = "Use a unique identifier or update the existing record."
+
+
+class DuplicateContentHash(DuplicateRecord):
+    """Raised when two media objects would share the same content hash."""
+
+
+class DuplicateCacheKey(DuplicateRecord):
+    """Raised when two artifacts would share the same cache key."""
+
+
+class DuplicateLock(DuplicateRecord):
+    """Raised when an item/field lock already exists."""
+
+
+class ForeignKeyViolation(CatalogError, ValueError):
+    """Raised when a catalog write references a missing row."""
+
+    default_user_action = "Create the referenced record before writing this one."
+
+
+class RecordNotFound(CatalogError, LookupError):
+    """Raised when an operation requires a catalog row that does not exist."""
+
+    default_user_action = "Refresh the item or run the operation again."
+
+
+class InvalidCatalogData(CatalogError, ValueError):
+    """Raised when persisted catalog data cannot be decoded safely."""
+
+    default_user_action = "Run storage verification or restore the catalog from backup."
+
+
 # Convenient aliases used by callers that prefer shorter spellings.
 ValidationError = DomainValidationError
 InvalidTransition = InvalidStateTransition
@@ -286,17 +342,27 @@ __all__ = [
     "ArtifactCorrupted",
     "ArtifactNotFound",
     "CandidateNotFound",
+    "CatalogError",
+    "CatalogLocked",
     "ConfigError",
     "DomainValidationError",
+    "DuplicateCacheKey",
+    "DuplicateContentHash",
+    "DuplicateLock",
+    "DuplicateRecord",
+    "ForeignKeyViolation",
+    "InvalidCatalogData",
     "InvalidId",
     "InvalidStateTransition",
     "InvalidStorageKey",
     "InvalidTransition",
+    "MigrationError",
     "PathEscapeError",
     "PluginError",
     "ProviderUnavailable",
     "PublishFailed",
     "RateLimited",
+    "RecordNotFound",
     "RenderFailed",
     "ResolutionFailed",
     "ReviewRequired",
