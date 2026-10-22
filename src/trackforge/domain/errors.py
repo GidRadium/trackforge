@@ -208,6 +208,14 @@ class ResolutionFailed(TrackForgeError):
     default_user_action = "Review the claims and field policy."
 
 
+class UnsupportedMode(TrackForgeError):
+    """Raised when a resolution mode is not implemented in this build."""
+
+    default_user_action = (
+        "Use policy mode; LLM-assisted, autopilot, and manual modes arrive in later plans."
+    )
+
+
 class RenderFailed(TrackForgeError):
     """Raised when rendering or read-back verification fails."""
 
@@ -383,6 +391,7 @@ __all__ = [
     "StorageError",
     "TrackForgeError",
     "UnsupportedScope",
+    "UnsupportedMode",
     "UnsupportedSource",
     "ValidationError",
 ]

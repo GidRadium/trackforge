@@ -21,8 +21,15 @@ from trackforge.application.ports.execution import Capability
 from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.ports.sources import SourceResolver
 from trackforge.application.use_cases.acquire_item import AcquireItem
+from trackforge.application.use_cases.explain_item import ExplainItem
+from trackforge.application.use_cases.interpret_item import (
+    DEFAULT_INTERPRETERS,
+    Interpreter,
+    InterpretItem,
+)
 from trackforge.application.use_cases.observe_item import ObserveItem
 from trackforge.application.use_cases.plan_item import PlanItem
+from trackforge.application.use_cases.resolve_item import ResolveItem
 from trackforge.config import TrackForgeConfig
 
 
@@ -58,6 +65,11 @@ class AppContext:
         """Return the intrinsic observation capabilities registered for this build."""
 
         return build_observer_capabilities()
+
+    def interpreter_capabilities(self) -> tuple[Interpreter, ...]:
+        """Return observation-to-claims interpreters for this build."""
+
+        return build_interpreter_capabilities()
 
 
 @dataclass(slots=True)
@@ -95,6 +107,11 @@ class CatalogContext:
 
         return build_observer_capabilities()
 
+    def interpreter_capabilities(self) -> tuple[Interpreter, ...]:
+        """Observation-to-claims interpreters registered for this build."""
+
+        return build_interpreter_capabilities()
+
     def plan_item(self) -> PlanItem:
         """Build the plan use case with this build's capabilities/resolvers."""
 
@@ -117,6 +134,25 @@ class CatalogContext:
             artifact_store=self.artifact_store,
             capabilities=self.observer_capabilities(),
         )
+
+    def interpret_item(self) -> InterpretItem:
+        """Build the interpretation use case with default interpreters."""
+
+        return build_interpret_item(
+            self.unit_of_work,
+            artifact_store=self.artifact_store,
+            interpreters=self.interpreter_capabilities(),
+        )
+
+    def resolve_item(self) -> ResolveItem:
+        """Build the policy resolution use case for this catalog."""
+
+        return build_resolve_item(self.unit_of_work)
+
+    def explain_item(self) -> ExplainItem:
+        """Build the explanation use case for this catalog."""
+
+        return build_explain_item(self.unit_of_work)
 
     def close(self) -> None:
         """Release the lock and dispose the catalog engine."""
@@ -212,6 +248,43 @@ def build_observer_capabilities() -> tuple[Capability, ...]:
     )
 
 
+def build_interpreter_capabilities() -> tuple[Interpreter, ...]:
+    """Return the pure observation-to-claims interpreters."""
+
+    return DEFAULT_INTERPRETERS
+
+
+def build_interpret_item(
+    unit_of_work_factory: Callable[[], UnitOfWork],
+    *,
+    artifact_store: FileSystemArtifactStore | None = None,
+    interpreters: tuple[Interpreter, ...] | None = None,
+) -> InterpretItem:
+    """Build the interpretation use case with explicit or default interpreters."""
+
+    return InterpretItem(
+        unit_of_work_factory,
+        interpreters if interpreters is not None else build_interpreter_capabilities(),
+        artifact_store=artifact_store,
+    )
+
+
+def build_resolve_item(
+    unit_of_work_factory: Callable[[], UnitOfWork],
+) -> ResolveItem:
+    """Build the policy resolver over this catalog."""
+
+    return ResolveItem(unit_of_work_factory)
+
+
+def build_explain_item(
+    unit_of_work_factory: Callable[[], UnitOfWork],
+) -> ExplainItem:
+    """Build the explanation use case over this catalog."""
+
+    return ExplainItem(unit_of_work_factory)
+
+
 def build_plan_item(
     *,
     capabilities: tuple[Capability, ...] | None = None,
@@ -258,9 +331,13 @@ __all__ = [
     "build_catalog",
     "build_catalog_context",
     "build_context",
+    "build_explain_item",
+    "build_interpret_item",
+    "build_interpreter_capabilities",
     "build_observer_capabilities",
     "build_observe_item",
     "build_plan_item",
+    "build_resolve_item",
     "build_source_resolvers",
     "build_unit_of_work",
 ]

@@ -86,6 +86,7 @@ def _allowed_transitions(status: ItemStatus) -> frozenset[ItemStatus]:
         )
     if status is ItemStatus.NEEDS_REVIEW:
         allowed.add(ItemStatus.FAILED)
+        allowed.add(ItemStatus.RESOLVED)
     return frozenset(allowed)
 
 

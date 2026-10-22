@@ -244,6 +244,15 @@ class SqliteRunRepository(SqliteRepository):
 
         return await self._run(_list)
 
+    async def list_steps_for_item(self, item_id: ItemId) -> list[StepRecord]:
+        def _list(session: Session) -> list[StepRecord]:
+            rows = session.scalars(
+                select(StepRow).where(StepRow.item_id == item_id).order_by(StepRow.id)
+            ).all()
+            return [step_from_row(row) for row in rows]
+
+        return await self._run(_list)
+
     async def find_resumable(self) -> list[RunRecord]:
         resumable = (RunStatus.RUNNING.value, RunStatus.PAUSED.value)
 

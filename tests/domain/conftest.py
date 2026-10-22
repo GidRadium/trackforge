@@ -8,8 +8,14 @@ from typing import Any
 
 import pytest
 
+from trackforge.application.dto.db import LockRecord
 from trackforge.domain.model.claims import Claim, Observation, Subject
-from trackforge.domain.model.decisions import Decision, DecisionRecord
+from trackforge.domain.model.decisions import (
+    Decision,
+    DecisionRecord,
+    FieldPolicy,
+    PolicyStrategy,
+)
 from trackforge.domain.model.ids import (
     ClaimId,
     DecisionRecordId,
@@ -74,6 +80,40 @@ def make_claim() -> Callable[..., Claim]:
         }
         data.update(overrides)
         return Claim(**data)
+
+    return _make
+
+
+@pytest.fixture
+def make_lock() -> Callable[..., LockRecord]:
+    def _make(**overrides: Any) -> LockRecord:
+        item_id = overrides.pop("item_id", ItemId(new_uuid7()))
+        data: dict[str, Any] = {
+            "id": new_uuid7(),
+            "item_id": item_id,
+            "field": "title",
+            "value": "Locked",
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+        data.update(overrides)
+        return LockRecord(**data)
+
+    return _make
+
+
+@pytest.fixture
+def make_policy() -> Callable[..., FieldPolicy]:
+    def _make(**overrides: Any) -> FieldPolicy:
+        data: dict[str, Any] = {
+            "id": "title",
+            "field": "title",
+            "strategy": PolicyStrategy.SOURCE_PRIORITY,
+            "priority": ("user_lock", "item.title", "path.title", "unknown"),
+            "version": 1,
+        }
+        data.update(overrides)
+        return FieldPolicy(**data)
 
     return _make
 

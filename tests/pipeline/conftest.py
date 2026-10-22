@@ -463,6 +463,12 @@ class FakeRunRepository:
         ]
         return sorted(result, key=lambda step: str(step.id))
 
+    async def list_steps_for_item(self, item_id: ItemId) -> list[StepRecord]:
+        return sorted(
+            (step for step in self.steps.values() if step.item_id == item_id),
+            key=lambda step: str(step.id),
+        )
+
     async def find_resumable(self) -> list[RunRecord]:
         return [
             run for run in self.runs.values() if run.status in (RunStatus.RUNNING, RunStatus.PAUSED)
