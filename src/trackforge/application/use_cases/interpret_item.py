@@ -23,11 +23,13 @@ from trackforge.application.dto.observations import (
     InitialTagsPayload,
     ObservationView,
     PathStructurePayload,
+    SourceMetadataPayload,
 )
 from trackforge.application.ports.observations import (
     INITIAL_TAGS_ARTIFACT,
     PATH_STRUCTURE_ARTIFACT,
     PROBE_ARTIFACT,
+    SOURCE_METADATA_ARTIFACT,
 )
 from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.ports.storage import ArtifactStore, StorageError
@@ -67,16 +69,19 @@ IDENTITY_ARTIFACT = "identity.hypotheses.v1"
 INITIAL_TAGS_TYPE = str(INITIAL_TAGS_ARTIFACT)
 PATH_STRUCTURE_TYPE = str(PATH_STRUCTURE_ARTIFACT)
 PROBE_TYPE = str(PROBE_ARTIFACT)
+SOURCE_METADATA_TYPE = str(SOURCE_METADATA_ARTIFACT)
 
 SOURCE_INITIAL_TAGS = "initial_tags"
 SOURCE_PATH = "path"
 SOURCE_PROBE = "audio_probe"
+SOURCE_SITE_METADATA = "source_metadata"
 
 METHOD_TAG_READER = "mutagen_tag_reader/v1"
 METHOD_PATH = "path_structure/v1"
 METHOD_KIND = "kind_classifier/v1"
 METHOD_DERIVATIVE = "derivative_detector/v1"
 METHOD_IDENTITY = "identity_resolver/v1"
+METHOD_SOURCE_METADATA = "source_metadata/v1"
 
 _GENERIC_PARENTS = frozenset(
     {
@@ -654,13 +659,131 @@ class IdentityResolver:
         )
 
 
+class SourceMetadataInterpreter:
+    """Create claims from the normalized yt-dlp source metadata artifact."""
+
+    manifest = CapabilityManifest(
+        id="source_metadata_interpreter",
+        version="1",
+        kind=CapabilityKind.INTERPRETER,
+        requires=(),
+        provides=(CLAIMS_ARTIFACT,),
+        cost=Cost(cpu_seconds=0.01, memory_mb=8.0),
+        determinism=Determinism.DETERMINISTIC,
+        cacheable=True,
+        side_effects=SideEffect.NONE,
+        description="Turn source.metadata.v1 into source-backed claims.",
+    )
+
+    def interpret(self, inputs: InterpreterInput) -> InterpreterResult:
+        artifact = inputs.optional(str(SOURCE_METADATA_ARTIFACT))
+        if artifact is None:
+            return InterpreterResult(
+                artifact_type=CLAIMS_ARTIFACT,
+                payload={
+                    "schema_version": 1,
+                    "item_id": str(inputs.item_id),
+                    "claims": [],
+                },
+            )
+        payload = artifact.model(SourceMetadataPayload)
+        claims: list[Claim] = []
+
+        def add(
+            field: str,
+            value: FieldValue,
+            confidence: float,
+            *,
+            role: str | None = None,
+            order: int | None = None,
+            notes: str | None = None,
+        ) -> None:
+            if value is None:
+                return
+            claims.append(
+                _make_claim(
+                    inputs.item_id,
+                    subject=Subject.ITEM,
+                    field=field,
+                    value=value,
+                    confidence=confidence,
+                    source=SOURCE_SITE_METADATA,
+                    method=METHOD_SOURCE_METADATA,
+                    evidence=artifact.artifact_id,
+                    role=role,
+                    order=order,
+                    notes=notes,
+                )
+            )
+
+        add("title", payload.title, 0.75)
+        for marker in detect_source_noise(payload.title):
+            add(
+                "source_noise",
+                marker,
+                0.7,
+                notes=f"source-noise marker in source title: {marker}",
+            )
+
+        raw_artist = payload.artist or payload.uploader
+        if raw_artist:
+            cleaned = strip_topic_suffix(raw_artist)
+            if cleaned != raw_artist.strip():
+                add(
+                    "source_noise",
+                    "topic_channel",
+                    0.65,
+                    notes="YouTube Topic suffix removed for comparison",
+                )
+            for index, credit in enumerate(parse_artists(cleaned)):
+                add(
+                    "artist",
+                    credit.name,
+                    0.65 if credit.role == "main" else 0.55,
+                    role=credit.role,
+                    order=index,
+                )
+        if payload.album:
+            add("album", payload.album, 0.5)
+        date_value = _normalize_upload_date(payload.upload_date)
+        if date_value is None and payload.release_year is not None:
+            date_value = str(payload.release_year)
+        add("date", date_value, 0.5)
+        for index, genre in enumerate(dict.fromkeys(payload.tags)):
+            add("genre", genre, 0.35, order=index)
+        add("language", payload.language, 0.4)
+        if payload.track and payload.track.strip().isdigit():
+            add("track", int(payload.track.strip()), 0.4)
+        add("source", payload.webpage_url, 0.8, notes="canonical source page")
+        return InterpreterResult(
+            artifact_type=CLAIMS_ARTIFACT,
+            payload=_claims_payload(inputs.item_id, claims),
+            claims=tuple(claims),
+        )
+
+
+def _normalize_upload_date(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if len(text) == 8 and text.isdigit():
+        return f"{text[:4]}-{text[4:6]}-{text[6:8]}"
+    if len(text) == 6 and text.isdigit():
+        return f"{text[:4]}-{text[4:6]}"
+    if len(text) == 4 and text.isdigit():
+        return text
+    return text or None
+
+
 initial_tags_interpreter = InitialTagsInterpreter()
+source_metadata_interpreter = SourceMetadataInterpreter()
 kind_classifier = KindClassifier()
 derivative_detector = DerivativeDetector()
 identity_resolver = IdentityResolver()
 
 DEFAULT_INTERPRETERS: tuple[Interpreter, ...] = (
     initial_tags_interpreter,
+    source_metadata_interpreter,
     kind_classifier,
     derivative_detector,
     identity_resolver,
@@ -723,17 +846,25 @@ class InterpretItem:
 
             artifacts = await self._load_artifacts(uow, item, observations)
             if INITIAL_TAGS_TYPE not in artifacts:
-                raise ObservationFailed(
-                    "initial.tags.v1 is required for interpretation",
-                    user_action="Run observe first so tags and path artifacts exist.",
-                    context={"item_id": item_id},
-                )
+                if SOURCE_METADATA_TYPE in artifacts:
+                    # URL sources can lack a tag-readable container (for
+                    # example WebM/Opus); normalized source metadata is a
+                    # sufficient fallback and the degradation stays visible.
+                    pass
+                else:
+                    raise ObservationFailed(
+                        "initial.tags.v1 is required for interpretation",
+                        user_action="Run observe first so tags and path artifacts exist.",
+                        context={"item_id": item_id},
+                    )
 
             existing = await uow.claims.list_by_item(item.id)
             known = {_claim_key(claim): claim for claim in existing}
             produced: list[Claim] = []
             warnings: list[str] = []
             payloads: list[Mapping[str, Any]] = []
+            if INITIAL_TAGS_TYPE not in artifacts:
+                warnings.append("missing_artifact:initial.tags.v1")
             accumulated = list(existing)
             identity_payload: Mapping[str, Any] | None = None
 
@@ -834,6 +965,7 @@ class InterpretItem:
             INITIAL_TAGS_TYPE,
             PATH_STRUCTURE_TYPE,
             PROBE_TYPE,
+            SOURCE_METADATA_TYPE,
         }
         steps = await uow.runs.list_steps_for_item(item.id)
         for step in reversed(steps):
@@ -1157,9 +1289,11 @@ __all__ = [
     "InterpreterResult",
     "KindClassifier",
     "MissingArtifactError",
+    "SourceMetadataInterpreter",
     "ObservationSource",
     "derivative_detector",
     "identity_resolver",
     "initial_tags_interpreter",
     "kind_classifier",
+    "source_metadata_interpreter",
 ]

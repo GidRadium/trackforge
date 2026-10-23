@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""Deterministic fake for yt-dlp integration tests.
+
+It accepts the subset of arguments used by YtDlpClient.  It never touches the
+network.  Set TRACKFORGE_FAKE_YTDLP_LOG to record every argv (one JSON array
+per line), and TRACKFORGE_FAKE_MEDIA to copy a prepared media fixture instead
+of generating one with ffmpeg.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "ytdlp"
+
+
+def _record(argv: list[str]) -> None:
+    target = os.environ.get("TRACKFORGE_FAKE_YTDLP_LOG")
+    if not target:
+        return
+    path = Path(target)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(argv, ensure_ascii=False) + "\n")
+
+
+def _url(argv: list[str]) -> str:
+    for value in reversed(argv):
+        if value.startswith(("http://", "https://")):
+            return value
+    return ""
+
+
+def _fixture(url: str) -> dict:
+    folded = url.casefold()
+    if "soundcloud" in folded:
+        name = "single_soundcloud.json"
+    else:
+        name = "single_youtube.json"
+    document = json.loads((FIXTURE_DIR / name).read_text(encoding="utf-8"))
+    if "drm" in folded:
+        document["has_drm"] = True
+        for item in document.get("formats", []):
+            item["has_drm"] = True
+    if "playlist" in folded:
+        document = {
+            "_type": "playlist",
+            "id": "fixture-playlist",
+            "title": "Fixture Playlist",
+            "entries": [{"id": "one"}, {"id": "two"}],
+        }
+    if "missing-formats" in folded:
+        document["formats"] = []
+    return document
+
+
+def _arg(argv: list[str], option: str) -> str | None:
+    try:
+        index = argv.index(option)
+    except ValueError:
+        return None
+    return argv[index + 1] if index + 1 < len(argv) else None
+
+
+def _format_selector(argv: list[str]) -> str:
+    value = _arg(argv, "-f") or "bestaudio[ext=m4a]/bestaudio/best"
+    return value.split("/", 1)[0]
+
+
+def _selected_format(document: dict, selector: str) -> dict:
+    formats = [item for item in document.get("formats", []) if isinstance(item, dict)]
+    for item in formats:
+        if str(item.get("format_id")) == selector:
+            return item
+    audio = [
+        item
+        for item in formats
+        if str(item.get("acodec") or "none") != "none"
+        and str(item.get("vcodec") or "none") == "none"
+    ]
+    if audio:
+        return max(audio, key=lambda item: float(item.get("abr") or 0))
+    if formats:
+        return formats[0]
+    return {"format_id": "fallback", "ext": "m4a", "acodec": "aac", "vcodec": "none"}
+
+
+def _generate_media(path: Path, extension: str, duration: float = 1.0) -> None:
+    supplied = os.environ.get("TRACKFORGE_FAKE_MEDIA")
+    if supplied:
+        shutil.copyfile(supplied, path)
+        return
+    codec = {
+        "m4a": ["-c:a", "aac", "-b:a", "64k"],
+        "mp3": ["-c:a", "libmp3lame", "-b:a", "64k"],
+        "opus": ["-c:a", "libopus", "-b:a", "32k"],
+        "webm": ["-c:a", "libopus", "-b:a", "32k"],
+        "flac": ["-c:a", "flac"],
+        "ogg": ["-c:a", "libvorbis", "-q:a", "2"],
+    }.get(extension, ["-c:a", "aac", "-b:a", "64k"])
+    command = [
+        "ffmpeg",
+        "-nostdin",
+        "-y",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        f"sine=frequency=440:duration={duration:g}",
+        *codec,
+        str(path),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        # A raw WAV keeps plan/add tests useful even when ffmpeg is absent.
+        payload = b"RIFF" + (36 + 8000).to_bytes(4, "little") + b"WAVEfmt "
+        payload += (16).to_bytes(4, "little") + (1).to_bytes(2, "little")
+        payload += (1).to_bytes(2, "little") + (8000).to_bytes(4, "little")
+        payload += (8000).to_bytes(4, "little") + (1).to_bytes(2, "little")
+        payload += (8).to_bytes(2, "little") + b"data" + (8000).to_bytes(4, "little")
+        payload += b"\x80" * 8000
+        path.write_bytes(payload)
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    _record(argv)
+    if "--version" in argv:
+        print(os.environ.get("TRACKFORGE_FAKE_YTDLP_VERSION", "2026.10.21"))
+        return 0
+    url = _url(argv)
+    if "slow" in url.casefold():
+        time.sleep(float(os.environ.get("TRACKFORGE_FAKE_YTDLP_SLEEP", "2")))
+    if "429" in url.casefold():
+        print("ERROR: HTTP Error 429: Too Many Requests", file=sys.stderr)
+        return 1
+    if "unavailable" in url.casefold():
+        print("ERROR: Video unavailable", file=sys.stderr)
+        return 1
+    if "login" in url.casefold() or "private" in url.casefold():
+        print(
+            "ERROR: Sign in to confirm you're not a bot. Use --cookies for authentication.",
+            file=sys.stderr,
+        )
+        return 1
+    if "invalidjson" in url.casefold():
+        print("{not valid json", file=sys.stdout)
+        return 0
+    document = _fixture(url)
+    if "--dump-single-json" in argv or "--no-download" in argv:
+        print(json.dumps(document, ensure_ascii=False))
+        return 0
+
+    template = _arg(argv, "-o") or "media.%(ext)s"
+    selector = _format_selector(argv)
+    selected = _selected_format(document, selector)
+    extension = str(selected.get("ext") or "m4a")
+    output = template.replace("%(id)s", str(document.get("id") or "fixture"))
+    output = output.replace("%(ext)s", extension)
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _generate_media(path, extension)
+    info_path = path.with_suffix(".info.json")
+    info = dict(document)
+    info["requested_downloads"] = [{"format_id": selected.get("format_id")}]
+    info_path.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+    total = path.stat().st_size
+    print(f"TF_PROGRESS {total} {total} 100.0%")
+    print(str(path))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

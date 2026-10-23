@@ -177,6 +177,54 @@ class PathStructurePayload(BaseModel):
     suffix: str
 
 
+class SourceThumbnail(BaseModel):
+    """One thumbnail advertised by the source snapshot."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    url: str = Field(min_length=1)
+    width: int | None = Field(default=None, ge=0)
+    height: int | None = Field(default=None, ge=0)
+
+
+class SourceChapter(BaseModel):
+    """One chapter in a normalized source metadata payload."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    start_seconds: float | None = Field(default=None, ge=0.0)
+    end_seconds: float | None = Field(default=None, ge=0.0)
+    title: str | None = None
+
+
+class SourceMetadataPayload(BaseModel):
+    """Schema for the ``source.metadata.v1`` normalized payload.
+
+    The raw extractor document remains the ``source.snapshot.v1`` artifact;
+    this payload is the small, stable subset that interpreters consume.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    external_id: str = Field(min_length=1)
+    extractor: str | None = None
+    title: str = Field(min_length=1)
+    uploader: str | None = None
+    artist: str | None = None
+    album: str | None = None
+    track: str | None = None
+    release_year: int | None = Field(default=None, ge=0)
+    language: str | None = None
+    description: str | None = None
+    upload_date: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    duration: float | None = Field(default=None, ge=0.0)
+    duration_seconds: float | None = Field(default=None, ge=0.0)
+    thumbnails: list[SourceThumbnail] = Field(default_factory=list)
+    chapters: list[SourceChapter] = Field(default_factory=list)
+    webpage_url: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class ObservationWarning:
     """A user-visible warning attached to an observation run."""
@@ -266,5 +314,8 @@ __all__ = [
     "ProbePicture",
     "ProbeStream",
     "RawTagInfo",
+    "SourceChapter",
+    "SourceMetadataPayload",
+    "SourceThumbnail",
     "TagReaderInfo",
 ]

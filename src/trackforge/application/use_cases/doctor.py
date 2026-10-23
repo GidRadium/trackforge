@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import shutil
 import sqlite3
+import subprocess  # noqa: S404 - explicit argument list, no shell
 import sys
 import tempfile
 from collections.abc import Callable, Iterable
@@ -92,8 +94,25 @@ class Doctor:
         checks.append(self._catalog_check())
         checks.append(self._disk_check())
         checks.append(_binary_check("fpcalc", self._which, status=DoctorStatus.WARNING))
-        checks.append(_binary_check("yt-dlp", self._which, status=DoctorStatus.WARNING))
-        checks.append(_binary_check("deno", self._which, status=DoctorStatus.WARNING))
+        checks.append(
+            _tool_version_check(
+                "yt-dlp",
+                self._which,
+                status=DoctorStatus.WARNING,
+                executable=str(getattr(self._config, "ytdlp_binary", "yt-dlp")),
+            )
+        )
+        checks.append(
+            _tool_version_check(
+                "deno",
+                self._which,
+                status=DoctorStatus.WARNING,
+                minimum=(2, 3, 0),
+                executable=str(getattr(self._config, "deno_binary", "deno")),
+            )
+        )
+        checks.append(_ytdlp_ejs_check(self._module_available))
+        checks.append(_cookies_check(Path(self._config.config_dir) / "cookies"))
         checks.append(_settings_check(self._config))
         return DoctorReport(checks=tuple(checks), generated_at=self._clock(), version=_version())
 
@@ -239,6 +258,188 @@ def _binary_check(
         status=status,
         message=f"{binary} is not installed or not on PATH",
         details={"binary": binary},
+    )
+
+
+def _tool_version_check(
+    binary: str,
+    which: Callable[[str], str | None],
+    *,
+    status: DoctorStatus,
+    minimum: tuple[int, int, int] | None = None,
+    executable: str | None = None,
+) -> DoctorCheck:
+    configured = executable or binary
+    try:
+        location = which(configured)
+    except OSError:
+        location = None
+    if location is None and Path(configured).is_file():
+        location = configured
+    if not location:
+        return DoctorCheck(
+            name=binary,
+            status=status,
+            message=f"{binary} is not installed or not on PATH",
+            details={"binary": binary},
+        )
+    try:
+        completed = subprocess.run(  # noqa: S603 - explicit arg list, no shell
+            [location, "--version"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return DoctorCheck(
+            name=binary,
+            status=status,
+            message=f"{binary} is present but could not be executed",
+            details={"path": location},
+        )
+    output = (completed.stdout or completed.stderr or "").strip()
+    if completed.returncode != 0 or not output:
+        return DoctorCheck(
+            name=binary,
+            status=status,
+            message=f"{binary} did not report a version",
+            details={"path": location},
+        )
+    first_line = output.splitlines()[0].strip()[:160]
+    version_numbers = _version_tuple(first_line)
+    if minimum is not None and version_numbers is not None:
+        if version_numbers < minimum:
+            expected = ".".join(str(part) for part in minimum)
+            return DoctorCheck(
+                name=binary,
+                status=DoctorStatus.WARNING,
+                message=f"{binary} is older than the supported minimum {expected}",
+                details={"path": location, "version": first_line},
+            )
+    return DoctorCheck(
+        name=binary,
+        status=DoctorStatus.OK,
+        message=f"{binary} is available",
+        details={"path": location, "version": first_line},
+    )
+
+
+def _ytdlp_ejs_check(module_available: Callable[[str], bool]) -> DoctorCheck:
+    try:
+        available = module_available("yt_dlp_ejs")
+    except Exception:
+        available = False
+    if available:
+        return DoctorCheck(
+            name="yt-dlp-ejs",
+            status=DoctorStatus.OK,
+            message="yt-dlp-ejs is available",
+            details={},
+        )
+    return DoctorCheck(
+        name="yt-dlp-ejs",
+        status=DoctorStatus.WARNING,
+        message="yt-dlp-ejs is not importable from this Python environment",
+        details={"install": "Install yt-dlp[default] for the downloader environment."},
+    )
+
+
+def _cookies_check(directory: Path) -> DoctorCheck:
+    if not directory.exists():
+        return DoctorCheck(
+            name="cookies",
+            status=DoctorStatus.OK,
+            message="no cookie directory is configured; public sources do not need cookies",
+            details={"path": str(directory), "files": 0},
+        )
+    if not directory.is_dir():
+        return DoctorCheck(
+            name="cookies",
+            status=DoctorStatus.WARNING,
+            message="cookie path is not a directory",
+            details={"path": str(directory)},
+        )
+    try:
+        files = sorted(path for path in directory.iterdir() if path.suffix.lower() == ".txt")
+    except OSError as exc:
+        return DoctorCheck(
+            name="cookies",
+            status=DoctorStatus.WARNING,
+            message="cookie directory cannot be inspected",
+            details={"path": str(directory), "error": str(exc)},
+        )
+    if not files:
+        return DoctorCheck(
+            name="cookies",
+            status=DoctorStatus.OK,
+            message="no cookie files found; public sources do not need cookies",
+            details={"path": str(directory), "files": 0},
+        )
+    warnings: list[str] = []
+    for path in files:
+        try:
+            metadata = path.stat()
+        except OSError:
+            warnings.append("a cookie file cannot be inspected")
+            continue
+        if path.is_symlink():
+            warnings.append("a cookie file is a symlink")
+            continue
+        mode = metadata.st_mode & 0o777
+        if mode != 0o600:
+            warnings.append("a cookie file does not have mode 0600")
+            continue
+        if _cookie_file_expired(path):
+            warnings.append("a cookie file appears to be expired")
+    if warnings:
+        return DoctorCheck(
+            name="cookies",
+            status=DoctorStatus.WARNING,
+            message="; ".join(dict.fromkeys(warnings)),
+            details={"path": str(directory), "files": len(files)},
+        )
+    return DoctorCheck(
+        name="cookies",
+        status=DoctorStatus.OK,
+        message="cookie files are present, private, and not obviously expired",
+        details={"path": str(directory), "files": len(files)},
+    )
+
+
+def _cookie_file_expired(path: Path) -> bool:
+    from datetime import UTC, datetime
+
+    current = datetime.now(UTC).timestamp()
+    expiries: list[int] = []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                columns = line.rstrip("\n").split("\t")
+                if len(columns) < 6:
+                    continue
+                try:
+                    expiry = int(columns[4])
+                except ValueError:
+                    continue
+                if expiry > 0:
+                    expiries.append(expiry)
+    except OSError:
+        return False
+    return bool(expiries) and all(expiry <= current for expiry in expiries)
+
+
+def _version_tuple(text: str) -> tuple[int, int, int] | None:
+    match = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", text)
+    if match is None:
+        return None
+    return (
+        int(match.group(1)),
+        int(match.group(2)),
+        int(match.group(3) or 0),
     )
 
 

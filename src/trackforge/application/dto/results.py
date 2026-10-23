@@ -62,6 +62,7 @@ class RunOptions:
     offline: bool = False
     dry_run: bool = False
     target_format: TargetFormat | None = None
+    format_id: str | None = None
     naming: str = DEFAULT_NAMING_TEMPLATE
     publish: PublishOptions = field(default_factory=PublishOptions)
 
@@ -80,6 +81,11 @@ class RunOptions:
         for name in ("auto", "review", "offline", "dry_run"):
             if not isinstance(getattr(self, name), bool):
                 raise DomainValidationError(f"{name} must be a boolean")
+        if self.format_id is not None:
+            format_id = optional_text(self.format_id, "format_id")
+            if format_id is None:
+                raise DomainValidationError("format_id must not be empty")
+            object.__setattr__(self, "format_id", format_id)
         raw_steps = self.force_steps
         if isinstance(raw_steps, str):
             raw_steps = tuple(part.strip() for part in raw_steps.split(",") if part.strip())

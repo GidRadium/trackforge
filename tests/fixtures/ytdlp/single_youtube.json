@@ -1,0 +1,79 @@
+{
+  "_type": "video",
+  "id": "fixture-yt-1",
+  "title": "Fixture YouTube Song (Official Audio)",
+  "fulltitle": "Fixture YouTube Song (Official Audio)",
+  "uploader": "Fixture Uploader - Topic",
+  "channel": "Fixture Channel",
+  "artist": "Fixture Artist",
+  "track": "Fixture YouTube Song",
+  "album": "Fixture Album",
+  "duration": 2.0,
+  "upload_date": "20240102",
+  "release_year": 2024,
+  "language": "en",
+  "description": "A deterministic fixture used by URL ingest tests.",
+  "tags": ["fixture", "electronic"],
+  "webpage_url": "https://www.youtube.com/watch?v=demo&token=should-not-be-logged",
+  "extractor": "youtube",
+  "extractor_key": "Youtube",
+  "has_drm": false,
+  "thumbnails": [
+    {"url": "https://i.ytimg.com/vi/demo/hqdefault.jpg?token=thumb-secret", "width": 480, "height": 360},
+    {"url": "https://i.ytimg.com/vi/demo/maxresdefault.jpg", "width": 1280, "height": 720}
+  ],
+  "chapters": [
+    {"start_time": 0.0, "end_time": 2.0, "title": "Fixture chapter"}
+  ],
+  "formats": [
+    {
+      "format_id": "140",
+      "ext": "m4a",
+      "acodec": "mp4a.40.2",
+      "vcodec": "none",
+      "abr": 128.0,
+      "asr": 44100,
+      "audio_channels": 2,
+      "filesize": 12000,
+      "language": "en",
+      "has_drm": false,
+      "url": "https://cdn.example.test/audio.m4a?token=format-secret"
+    },
+    {
+      "format_id": "251",
+      "ext": "webm",
+      "acodec": "opus",
+      "vcodec": "none",
+      "abr": 160.0,
+      "asr": 48000,
+      "audio_channels": 2,
+      "filesize": 15000,
+      "has_drm": false,
+      "url": "https://cdn.example.test/audio.webm"
+    },
+    {
+      "format_id": "137",
+      "ext": "mp4",
+      "acodec": "none",
+      "vcodec": "avc1.640028",
+      "abr": null,
+      "asr": null,
+      "audio_channels": null,
+      "filesize": 90000,
+      "has_drm": false,
+      "url": "https://cdn.example.test/video.mp4"
+    },
+    {
+      "format_id": "18",
+      "ext": "mp4",
+      "acodec": "mp4a.40.2",
+      "vcodec": "avc1.42001f",
+      "abr": 96.0,
+      "asr": 44100,
+      "audio_channels": 2,
+      "filesize": 50000,
+      "has_drm": false,
+      "url": "https://cdn.example.test/combined.mp4"
+    }
+  ]
+}

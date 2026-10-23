@@ -18,6 +18,7 @@ from trackforge.adapters.persistence.sqlite.models import IntakeRow
 from trackforge.adapters.persistence.sqlite.repositories._base import SqliteRepository
 from trackforge.domain.model.ids import IntakeId, ItemId
 from trackforge.domain.model.media import Intake
+from trackforge.domain.model.source import SourceRef
 
 
 class SqliteIntakeRepository(SqliteRepository):
@@ -35,6 +36,21 @@ class SqliteIntakeRepository(SqliteRepository):
             rows = session.scalars(
                 select(IntakeRow)
                 .where(IntakeRow.item_id == item_id)
+                .order_by(IntakeRow.created_at, IntakeRow.id)
+            ).all()
+            return [intake_from_row(row) for row in rows]
+
+        return await self._run(_find)
+
+    async def find_by_source_ref(self, source_ref: SourceRef) -> list[Intake]:
+        """Return intakes for one exact source reference, oldest first."""
+
+        document = to_json(source_ref_document(source_ref))
+
+        def _find(session: Session) -> list[Intake]:
+            rows = session.scalars(
+                select(IntakeRow)
+                .where(IntakeRow.source_ref_json == document)
                 .order_by(IntakeRow.created_at, IntakeRow.id)
             ).all()
             return [intake_from_row(row) for row in rows]

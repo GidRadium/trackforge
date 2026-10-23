@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from types import TracebackType
 
 from trackforge.adapters.acquisition.local_copy import LocalCopyAcquirer
+from trackforge.adapters.acquisition.ytdlp import YtDlpAcquirer
 from trackforge.adapters.analysis.ffprobe import FfprobeProbe
 from trackforge.adapters.analysis.path_structure import PathStructureObserver
 from trackforge.adapters.persistence.filesystem.artifacts import FileSystemArtifactStore
@@ -17,6 +18,9 @@ from trackforge.adapters.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from trackforge.adapters.publishing.filesystem import FilesystemPublisher
 from trackforge.adapters.rendering.ffmpeg import FfmpegRenderer
 from trackforge.adapters.sources.local import LocalFileSource
+from trackforge.adapters.sources.ytdlp.client import YtDlpClient
+from trackforge.adapters.sources.ytdlp.metadata import SourceMetadataObserver
+from trackforge.adapters.sources.ytdlp.source import YtDlpSource
 from trackforge.adapters.tagging.mutagen.reader import InitialTagsObserver, MutagenTagReader
 from trackforge.adapters.tagging.mutagen.writer import MutagenTagWriter
 from trackforge.application.ports.acquisition import Acquirer
@@ -70,7 +74,7 @@ class AppContext:
     def source_resolvers(self) -> tuple[SourceResolver, ...]:
         """Return the source resolvers registered for this build."""
 
-        return build_source_resolvers()
+        return build_source_resolvers(self.config)
 
     def observer_capabilities(self) -> tuple[Capability, ...]:
         """Return the intrinsic observation capabilities registered for this build."""
@@ -104,14 +108,19 @@ class CatalogContext:
         return SqliteUnitOfWork(self.catalog)
 
     def source_resolvers(self) -> tuple[SourceResolver, ...]:
-        """Resolvers available to plan and acquire local files."""
+        """Resolvers available to plan and acquire local files and URLs."""
 
-        return build_source_resolvers()
+        return build_source_resolvers(self.config)
 
     def acquirers(self) -> tuple[Acquirer, ...]:
         """Acquirers wired to this catalog and its CAS."""
 
-        return build_acquirers(self.cas, self.unit_of_work)
+        return build_acquirers(
+            self.cas,
+            self.unit_of_work,
+            config=self.config,
+            artifact_store=self.artifact_store,
+        )
 
     def observer_capabilities(self) -> tuple[Capability, ...]:
         """Intrinsic observers registered for the observation pipeline."""
@@ -274,28 +283,59 @@ def build_unit_of_work(catalog: Catalog) -> SqliteUnitOfWork:
     return SqliteUnitOfWork(catalog)
 
 
-def build_source_resolvers() -> tuple[SourceResolver, ...]:
-    """Return the source resolvers enabled in the local MVP."""
+def build_source_resolvers(
+    config: TrackForgeConfig | None = None,
+) -> tuple[SourceResolver, ...]:
+    """Return the source resolvers enabled in this build."""
 
-    return (LocalFileSource(),)
+    cookie_dir = config.cookies_dir if config is not None else None
+    client = _build_ytdlp_client(config)
+    return (LocalFileSource(), YtDlpSource(client=client, cookie_dir=cookie_dir))
 
 
 def build_acquirers(
     cas: FileSystemCas,
     unit_of_work_factory: Callable[[], UnitOfWork],
+    *,
+    config: TrackForgeConfig | None = None,
+    artifact_store: FileSystemArtifactStore | None = None,
 ) -> tuple[Acquirer, ...]:
     """Return acquisition adapters bound to ``cas`` and the catalog."""
 
-    return (LocalCopyAcquirer(cas, unit_of_work_factory),)
+    acquirers: list[Acquirer] = [LocalCopyAcquirer(cas, unit_of_work_factory)]
+    if config is not None or artifact_store is not None:
+        acquirers.append(
+            YtDlpAcquirer(
+                cas,
+                unit_of_work_factory,
+                artifact_store=artifact_store,
+                cache_dir=config.cache_dir if config is not None else None,
+                client=_build_ytdlp_client(config),
+                cookie_dir=config.cookies_dir if config is not None else None,
+            )
+        )
+    return tuple(acquirers)
+
+
+def _build_ytdlp_client(config: TrackForgeConfig | None = None) -> YtDlpClient:
+    if config is None:
+        return YtDlpClient()
+    return YtDlpClient(
+        config.ytdlp_binary,
+        timeout_metadata=config.ytdlp_timeout_metadata,
+        timeout_download=config.ytdlp_timeout_download,
+        cache_dir=config.cache_dir / "ytdlp",
+    )
 
 
 def build_observer_capabilities() -> tuple[Capability, ...]:
-    """Return the intrinsic observation capabilities for the local MVP."""
+    """Return the intrinsic observation capabilities for this build."""
 
     return (
         FfprobeProbe(),
         InitialTagsObserver(),
         PathStructureObserver(),
+        SourceMetadataObserver(),
     )
 
 
@@ -367,12 +407,13 @@ def build_plan_item(
     *,
     capabilities: tuple[Capability, ...] | None = None,
     resolvers: tuple[SourceResolver, ...] | None = None,
+    config: TrackForgeConfig | None = None,
 ) -> PlanItem:
     """Build the planning use case with explicit or default registrations."""
 
     return PlanItem(
         capabilities=capabilities if capabilities is not None else build_observer_capabilities(),
-        resolvers=resolvers if resolvers is not None else build_source_resolvers(),
+        resolvers=(resolvers if resolvers is not None else build_source_resolvers(config)),
     )
 
 
@@ -432,13 +473,18 @@ def build_process_item(
     artifacts = artifact_store if artifact_store is not None else build_artifact_store(config)
     plan = PlanItem(
         capabilities=observer_capabilities,
-        resolvers=build_source_resolvers(),
+        resolvers=build_source_resolvers(config),
     )
     return ProcessItem(
         unit_of_work_factory,
         plan_item=plan,
         acquire_item=build_acquire_item(),
-        acquirers=build_acquirers(content_store, unit_of_work_factory),
+        acquirers=build_acquirers(
+            content_store,
+            unit_of_work_factory,
+            config=config,
+            artifact_store=artifacts,
+        ),
         observe_item=ObserveItem(
             unit_of_work_factory,
             observer_capabilities,

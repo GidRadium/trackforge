@@ -131,8 +131,8 @@ class AsyncTrackForge:
             plan_options = options
         else:
             opts = options or RunOptions()
-            plan_options = PlanOptions(profile=opts.profile)
-        return await build_plan_item().plan(ref, plan_options)
+            plan_options = PlanOptions(profile=opts.profile, offline=opts.offline)
+        return await build_plan_item(config=self._config).plan(ref, plan_options)
 
     async def run(
         self,
@@ -153,6 +153,28 @@ class AsyncTrackForge:
         if isinstance(plan_or_source, str) and _looks_like_item_id(plan_or_source):
             return await self._process_item().run_item(ItemId(plan_or_source), opts)
         return await self._process_item().run(_coerce_source(plan_or_source), opts)
+
+    async def add(
+        self,
+        source: SourceRef | str | Path,
+        options: RunOptions | None = None,
+    ) -> RunResult | PlanView:
+        """Plan and run one source (URL or local path)."""
+
+        opts = options or RunOptions()
+        ref = _coerce_source(source)
+        if opts.dry_run:
+            return await self.plan(ref, opts)
+        await self._ensure_open()
+        if isinstance(ref, Url):
+            return await self._process_item().run(ref, opts)
+        if isinstance(ref, LocalPath):
+            return await self.import_path(ref.path, opts)
+        raise UnsupportedSource(
+            "add supports URLs and local files",
+            user_action="Pass an http(s) URL or a local audio path.",
+            context={"source_type": type(ref).__name__},
+        )
 
     async def import_path(
         self,
@@ -465,6 +487,13 @@ class TrackForge:
         options: RunOptions | None = None,
     ) -> RunResult | PlanView:
         return self._call(self._async.run, plan_or_source, options)
+
+    def add(
+        self,
+        source: SourceRef | str | Path,
+        options: RunOptions | None = None,
+    ) -> RunResult | PlanView:
+        return self._call(self._async.add, source, options)
 
     def import_path(
         self,

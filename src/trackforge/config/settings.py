@@ -147,6 +147,32 @@ class TrackForgeConfig(BaseSettings):
         default=False,
         validation_alias=AliasChoices("CORE_OFFLINE", "OFFLINE"),
     )
+    # Downloader settings are internal to the URL adapter.  ``config show``
+    # filters them so the portable configuration surface stays stable.
+    ytdlp_binary: str = Field(
+        default="yt-dlp",
+        validation_alias=AliasChoices("YTDLP_BINARY"),
+    )
+    deno_binary: str = Field(
+        default="deno",
+        validation_alias=AliasChoices("DENO_BINARY"),
+    )
+    ytdlp_timeout_metadata: float = Field(
+        default=60.0,
+        gt=0,
+        validation_alias=AliasChoices("YTDLP_TIMEOUT_METADATA"),
+    )
+    ytdlp_timeout_download: float = Field(
+        default=1800.0,
+        gt=0,
+        validation_alias=AliasChoices("YTDLP_TIMEOUT_DOWNLOAD"),
+    )
+
+    @property
+    def cookies_dir(self) -> Path:
+        """Per-site Netscape cookie files live under the config directory."""
+
+        return Path(self.config_dir) / "cookies"
 
     def __init__(self, **values: Any) -> None:
         try:

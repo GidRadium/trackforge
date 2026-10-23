@@ -1,0 +1,37 @@
+{
+  "_type": "video",
+  "id": "fixture-sc-1",
+  "title": "Fixture SoundCloud Track",
+  "fulltitle": "Fixture SoundCloud Track",
+  "uploader": "Fixture SoundCloud Artist",
+  "channel": null,
+  "artist": "Fixture SoundCloud Artist",
+  "track": "Fixture SoundCloud Track",
+  "album": null,
+  "duration": 2.0,
+  "upload_date": "20230504",
+  "description": "A deterministic SoundCloud fixture.",
+  "tags": ["fixture", "ambient"],
+  "webpage_url": "https://soundcloud.com/fixture/fixture-track?secret=query-token",
+  "extractor": "soundcloud",
+  "extractor_key": "Soundcloud",
+  "has_drm": false,
+  "thumbnails": [
+    {"url": "https://i1.sndcdn.com/artworks-demo-large.jpg", "width": 500, "height": 500}
+  ],
+  "chapters": [],
+  "formats": [
+    {
+      "format_id": "hls_mp3_128",
+      "ext": "mp3",
+      "acodec": "mp3",
+      "vcodec": "none",
+      "abr": 128.0,
+      "asr": 44100,
+      "audio_channels": 2,
+      "filesize": 12000,
+      "has_drm": false,
+      "url": "https://cf-media.sndcdn.com/fixture.mp3?token=format-secret"
+    }
+  ]
+}

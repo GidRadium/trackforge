@@ -25,6 +25,8 @@ MEDIA_ARTIFACT = ArtifactType.parse("media.raw.v1")
 PROBE_ARTIFACT = ArtifactType.parse("audio.probe.v1")
 INITIAL_TAGS_ARTIFACT = ArtifactType.parse("initial.tags.v1")
 PATH_STRUCTURE_ARTIFACT = ArtifactType.parse("path.structure.v1")
+SOURCE_SNAPSHOT_ARTIFACT = ArtifactType.parse("source.snapshot.v1")
+SOURCE_METADATA_ARTIFACT = ArtifactType.parse("source.metadata.v1")
 
 
 def media_input(step_input: StepInput) -> MediaInput:
@@ -54,6 +56,8 @@ __all__ = [
     "MEDIA_ARTIFACT",
     "PATH_STRUCTURE_ARTIFACT",
     "PROBE_ARTIFACT",
+    "SOURCE_METADATA_ARTIFACT",
+    "SOURCE_SNAPSHOT_ARTIFACT",
     "Observer",
     "media_input",
 ]

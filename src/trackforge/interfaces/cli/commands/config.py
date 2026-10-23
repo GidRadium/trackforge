@@ -33,6 +33,13 @@ def config_show(
     def body() -> None:
         config = build_config(data_dir=data_dir, library_dir=library_dir)
         payload: dict[str, Any] = config.model_dump(mode="json")
+        for key in (
+            "ytdlp_binary",
+            "deno_binary",
+            "ytdlp_timeout_metadata",
+            "ytdlp_timeout_download",
+        ):
+            payload.pop(key, None)
         if as_json:
             emit_json(payload)
             return

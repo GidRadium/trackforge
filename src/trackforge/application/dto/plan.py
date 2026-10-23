@@ -17,6 +17,7 @@ class PlanOptions:
     profile: str = "balanced"
     enabled: tuple[str, ...] = ()
     disabled: tuple[str, ...] = ()
+    offline: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,9 @@ class AcquireOptions:
     """Options for one acquisition attempt."""
 
     source_snapshot_ref: str | None = None
+    format_id: str | None = None
+    offline: bool = False
+    force: bool = False
 
 
 @dataclass(frozen=True, slots=True)

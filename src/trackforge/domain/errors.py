@@ -202,6 +202,85 @@ class RateLimited(TrackForgeError):
     default_user_action = "Wait, then retry with a lower request rate."
 
 
+class OfflineModeError(UnsupportedSource):
+    """Raised when a network source is used while offline mode is enabled."""
+
+    default_user_action = "Remove --offline or use a local file."
+
+
+class UnsupportedUrl(UnsupportedSource):
+    """Raised when a URL is syntactically valid but not a supported source."""
+
+    default_user_action = "Use a supported single-track URL; playlists arrive in Plan 18."
+
+
+class UnsafeUrl(UnsupportedUrl):
+    """Raised when a URL fails the SSRF or scheme safety policy."""
+
+    default_user_action = "Use a public http(s) URL; private and local addresses are blocked."
+
+
+class LoginRequired(AcquisitionFailed):
+    """Raised when the source requires an authenticated session or cookies."""
+
+    default_user_action = "Export browser cookies to the configured cookies directory and retry."
+
+
+class CookiesExpired(LoginRequired):
+    """Raised when configured cookies are present but no longer accepted."""
+
+    default_user_action = "Refresh the cookie file for this site, then retry."
+
+
+class CookiesPermissionsError(UnsupportedSource):
+    """Raised when a cookie file exists with unsafe permissions."""
+
+    default_user_action = "Set the cookie file mode to 0600 (owner read/write only)."
+
+
+class GeoBlocked(AcquisitionFailed):
+    """Raised when the source is unavailable in the current region."""
+
+    default_user_action = "Use a source available in your region."
+
+
+class DrmProtected(AcquisitionFailed):
+    """Raised when the source is DRM protected or paid-only."""
+
+    default_user_action = "DRM-protected and paid content is not supported."
+
+
+class Unavailable(AcquisitionFailed):
+    """Raised when the source was removed, made private, or does not exist."""
+
+    default_user_action = "Check that the URL is public and still available."
+
+
+class ExtractorBroken(AcquisitionFailed):
+    """Raised when yt-dlp cannot parse the source or returns invalid JSON."""
+
+    default_user_action = "Update yt-dlp or the site plugin, then retry."
+
+
+class DownloaderNotFound(AcquisitionFailed):
+    """Raised when the configured downloader executable is missing."""
+
+    default_user_action = "Install yt-dlp and ensure it is available on PATH."
+
+
+class DownloadTimeout(AcquisitionFailed):
+    """Raised when metadata or media download exceeds its timeout."""
+
+    default_retryable = True
+    default_user_action = "Retry later or increase the configured timeout."
+
+
+class PreviewOnly(CookiesExpired):
+    """Raised when a downloaded file is only a short preview of the track."""
+
+    default_user_action = "Refresh cookies or check that the track is not preview-only."
+
+
 class ResolutionFailed(TrackForgeError):
     """Raised when a field cannot be resolved under the active policy."""
 
@@ -369,8 +448,18 @@ __all__ = [
     "DuplicateCacheKey",
     "DuplicateContentHash",
     "DuplicateLock",
+    "CookiesExpired",
+    "CookiesPermissionsError",
+    "DownloadTimeout",
+    "DownloaderNotFound",
+    "DrmProtected",
     "DuplicateRecord",
+    "ExtractorBroken",
     "ForeignKeyViolation",
+    "GeoBlocked",
+    "LoginRequired",
+    "OfflineModeError",
+    "PreviewOnly",
     "InvalidCatalogData",
     "InvalidId",
     "InvalidStateTransition",
@@ -393,5 +482,7 @@ __all__ = [
     "UnsupportedScope",
     "UnsupportedMode",
     "UnsupportedSource",
+    "UnsupportedUrl",
+    "UnsafeUrl",
     "ValidationError",
 ]

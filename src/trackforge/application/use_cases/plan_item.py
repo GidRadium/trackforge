@@ -11,11 +11,13 @@ from trackforge.application.ports.observations import (
     MEDIA_ARTIFACT,
     PATH_STRUCTURE_ARTIFACT,
     PROBE_ARTIFACT,
+    SOURCE_METADATA_ARTIFACT,
+    SOURCE_SNAPSHOT_ARTIFACT,
 )
 from trackforge.application.ports.sources import SourceResolver
-from trackforge.domain.errors import UnsupportedSource
-from trackforge.domain.model.capabilities import AnalysisProfile, Cost
-from trackforge.domain.model.source import SourceRef
+from trackforge.domain.errors import CookiesPermissionsError, OfflineModeError, UnsupportedSource
+from trackforge.domain.model.capabilities import AnalysisProfile, ArtifactType, Cost
+from trackforge.domain.model.source import SourceRef, Url
 from trackforge.pipeline.planner import Planner
 
 DEFAULT_OBSERVE_OUTPUTS = (
@@ -28,6 +30,7 @@ DEFAULT_REQUIRED_OUTPUTS = (PROBE_ARTIFACT,)
 # Local copying is cheap relative to the analysis steps.  The estimate is
 # deliberately coarse; Plan 09 will replace it with measured throughput.
 _ACQUIRE_ESTIMATE = Cost(cpu_seconds=0.1, memory_mb=64.0)
+_DOWNLOAD_ESTIMATE = Cost(cpu_seconds=1.0, memory_mb=64.0, network_calls=1)
 
 
 class PlanItem:
@@ -51,6 +54,11 @@ class PlanItem:
         """Return candidates plus the DAG the later use cases would execute."""
 
         opts = options or PlanOptions()
+        if opts.offline and isinstance(source, Url):
+            raise OfflineModeError(
+                "offline mode does not allow URL sources",
+                context={"source_type": "url"},
+            )
         available_resolvers = tuple(resolvers) if resolvers is not None else self._resolvers
         resolver = next(
             (candidate for candidate in available_resolvers if candidate.supports(source)),
@@ -67,7 +75,12 @@ class PlanItem:
             )
 
         try:
-            resolved = await resolver.resolve(source, {"profile": opts.profile})
+            resolved = await resolver.resolve(
+                source,
+                {"profile": opts.profile, "offline": opts.offline},
+            )
+        except (CookiesPermissionsError, OfflineModeError):
+            raise
         except UnsupportedSource as exc:
             return PlanView(
                 source=source,
@@ -88,21 +101,43 @@ class PlanItem:
             enabled=opts.enabled,
             disabled=opts.disabled,
         )
+        is_url = isinstance(source, Url)
+        observe_outputs: tuple[ArtifactType, ...] = tuple(
+            output
+            for output in DEFAULT_OBSERVE_OUTPUTS
+            if not (is_url and output == PATH_STRUCTURE_ARTIFACT)
+        )
+        inputs: tuple[ArtifactType, ...] = (MEDIA_ARTIFACT,)
+        has_source_metadata = any(
+            SOURCE_METADATA_ARTIFACT in capability.manifest.provides
+            for capability in self._capabilities
+        )
+        if is_url and has_source_metadata:
+            observe_outputs = (*observe_outputs, SOURCE_METADATA_ARTIFACT)
+            inputs = (MEDIA_ARTIFACT, SOURCE_SNAPSHOT_ARTIFACT)
         pipeline_plan = Planner().plan(
-            DEFAULT_OBSERVE_OUTPUTS,
+            observe_outputs,
             profile,
             self._capabilities,
             required_outputs=DEFAULT_REQUIRED_OUTPUTS,
-            inputs=(MEDIA_ARTIFACT,),
+            inputs=inputs,
         )
 
+        acquire_provides: tuple[str, ...] = (str(MEDIA_ARTIFACT),)
+        if is_url and has_source_metadata:
+            acquire_provides = (str(MEDIA_ARTIFACT), str(SOURCE_SNAPSHOT_ARTIFACT))
+        acquire_estimate = _DOWNLOAD_ESTIMATE if is_url else _ACQUIRE_ESTIMATE
         steps = [
             PlanStepView(
                 node_id="acquire",
                 capability_id="acquire",
-                description="Copy the selected candidate into the content-addressed store.",
-                provides=(str(MEDIA_ARTIFACT),),
-                estimated_cost=_ACQUIRE_ESTIMATE,
+                description=(
+                    "Download the selected audio candidate and snapshot its metadata."
+                    if is_url
+                    else "Copy the selected candidate into the content-addressed store."
+                ),
+                provides=acquire_provides,
+                estimated_cost=acquire_estimate,
             )
         ]
         steps.extend(
@@ -124,7 +159,7 @@ class PlanItem:
             resolver_id=resolver.id,
             candidates=resolved.candidates,
             steps=tuple(steps),
-            estimated_cost=pipeline_plan.estimated_cost + _ACQUIRE_ESTIMATE,
+            estimated_cost=pipeline_plan.estimated_cost + acquire_estimate,
             warnings=tuple(dict.fromkeys(warnings)),
             blocked_reason=pipeline_plan.blocked_reason,
         )

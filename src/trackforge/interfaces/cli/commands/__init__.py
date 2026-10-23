@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from trackforge.interfaces.cli.commands.add import add_command
 from trackforge.interfaces.cli.commands.doctor import doctor_command
 from trackforge.interfaces.cli.commands.explain import explain_command
 from trackforge.interfaces.cli.commands.import_path import import_command
@@ -17,6 +18,7 @@ from trackforge.interfaces.cli.commands.status import status_command
 
 
 def register_commands(app: typer.Typer) -> None:
+    app.command("add")(add_command)
     app.command("import")(import_command)
     app.command("plan")(plan_command)
     app.command("resolve")(resolve_command)

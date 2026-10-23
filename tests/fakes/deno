@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""Fake Deno for doctor and integration tests (no runtime execution)."""
+
+import os
+import sys
+
+if "--version" in sys.argv[1:]:
+    print(os.environ.get("TRACKFORGE_FAKE_DENO_VERSION", "2.9.8"))
+    print("v8 15.0.0")
+    print("typescript 5.9.0")
+    raise SystemExit(0)
+print("fake deno: only --version is implemented", file=sys.stderr)
+raise SystemExit(1)

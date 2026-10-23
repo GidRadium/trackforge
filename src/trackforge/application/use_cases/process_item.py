@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, TypeVar, cast
@@ -40,6 +41,7 @@ from trackforge.application.use_cases.render_item import RenderItem
 from trackforge.application.use_cases.resolve_item import ResolveItem
 from trackforge.domain.errors import (
     CandidateNotFound,
+    DrmProtected,
     RecordNotFound,
     RenderFailed,
     TrackForgeError,
@@ -49,9 +51,9 @@ from trackforge.domain.model._validation import utc_now
 from trackforge.domain.model.claims import Subject
 from trackforge.domain.model.ids import ItemId, RunId
 from trackforge.domain.model.item import Item, ItemStatus
-from trackforge.domain.model.media import FileRole
+from trackforge.domain.model.media import FileRole, IntakeStatus
 from trackforge.domain.model.outputs import OutputBundle, Render
-from trackforge.domain.model.source import LocalPath, SourceRef
+from trackforge.domain.model.source import Candidate, LocalPath, SourceRef, Url
 from trackforge.pipeline.events import Event, EventBus, EventType
 
 _STEP_CAPABILITIES = (
@@ -120,7 +122,7 @@ class ProcessItem:
         opts = options or RunOptions()
         return await self._plan_item.plan(
             source,
-            PlanOptions(profile=opts.profile),
+            PlanOptions(profile=opts.profile, offline=opts.offline),
         )
 
     async def run(
@@ -317,16 +319,25 @@ class ProcessItem:
         options: RunOptions,
     ) -> tuple[ItemId | None, bool]:
         reusable = None
+        selected_format = options.format_id
+        if selected_format is None and plan.candidates:
+            raw_selected = plan.candidates[0].extra.get("selected_format_id")
+            if isinstance(raw_selected, str) and raw_selected:
+                selected_format = raw_selected
         if "acquire" not in options.force_steps:
-            reusable = await self._find_reusable_item(source)
+            reusable = await self._find_reusable_item(source, selected_format)
         if reusable is not None:
             await self._add_run_item(run_id, reusable.id)
             return reusable.id, True
 
-        candidate = plan.candidates[0]
+        candidate = _candidate_with_format(plan.candidates[0], options.format_id)
         acquired = await self._acquire_item.acquire(
             candidate,
-            AcquireOptions(),
+            AcquireOptions(
+                format_id=options.format_id,
+                offline=options.offline,
+                force="acquire" in options.force_steps,
+            ),
             self._acquirers,
         )
         await self._add_run_item(run_id, acquired.item_id)
@@ -336,7 +347,13 @@ class ProcessItem:
         async with self._uow_factory() as uow:
             await uow.runs.add_item(run_id, item_id, status=RunItemStatus.PENDING)
 
-    async def _find_reusable_item(self, source: SourceRef) -> Item | None:
+    async def _find_reusable_item(
+        self,
+        source: SourceRef,
+        selected_format: str | None = None,
+    ) -> Item | None:
+        if isinstance(source, Url):
+            return await self._find_reusable_url_item(source, selected_format)
         if not isinstance(source, LocalPath):
             return None
         path = absolute_local_path(source.path)
@@ -367,6 +384,42 @@ class ProcessItem:
                 ]
                 if usable:
                     return max(usable, key=lambda item: (item.created_at, str(item.id)))
+        return None
+
+    async def _find_reusable_url_item(
+        self,
+        source: Url,
+        selected_format: str | None = None,
+    ) -> Item | None:
+        async with self._uow_factory() as uow:
+            finder = getattr(uow.intakes, "find_by_source_ref", None)
+            if not callable(finder):
+                return None
+            intakes = await finder(source)
+            for intake in reversed(tuple(intakes)):
+                if intake.status is not IntakeStatus.SUCCEEDED:
+                    continue
+                stored_format = intake.candidate.extra.get("selected_format_id")
+                if isinstance(stored_format, str) and selected_format is not None:
+                    if stored_format != selected_format:
+                        continue
+                item = await uow.items.get(intake.item_id)
+                if item is None:
+                    continue
+                if item.status in {
+                    ItemStatus.FAILED,
+                    ItemStatus.ARCHIVED,
+                    ItemStatus.DUPLICATE,
+                }:
+                    continue
+                if item.media_id is None:
+                    continue
+                media = await uow.media.get(item.media_id)
+                if media is None:
+                    continue
+                if not Path(media.cas_path).is_file():
+                    continue
+                return item
         return None
 
     async def _continue_item(
@@ -855,6 +908,30 @@ async def _latest_decisions(uow: UnitOfWork, item: Item) -> dict[str, Any]:
         for decision in records[-1].decisions
         if decision.subject is Subject.ITEM
     }
+
+
+def _candidate_with_format(candidate: Candidate, format_id: str | None) -> Candidate:
+    if format_id is None:
+        return candidate
+    selected = next(
+        (fmt for fmt in candidate.formats if fmt.format_id == format_id),
+        None,
+    )
+    if selected is None:
+        raise CandidateNotFound(
+            "selected format is not offered by the source",
+            user_action="Choose one of the formats shown by plan.",
+            context={"format_id": format_id},
+        )
+    if selected.drm:
+        raise DrmProtected(
+            "the selected format is DRM protected",
+            context={"format_id": format_id},
+        )
+    return replace(
+        candidate,
+        extra={**candidate.extra, "selected_format_id": format_id},
+    )
 
 
 def _plan_failure(plan: PlanView) -> TrackForgeError:

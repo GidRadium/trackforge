@@ -20,6 +20,8 @@ from trackforge.application.ports.observations import (
     MEDIA_ARTIFACT,
     PATH_STRUCTURE_ARTIFACT,
     PROBE_ARTIFACT,
+    SOURCE_METADATA_ARTIFACT,
+    SOURCE_SNAPSHOT_ARTIFACT,
 )
 from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.ports.storage import ArtifactStore, StorageError
@@ -36,7 +38,7 @@ from trackforge.domain.errors import (
     RecordNotFound,
     TrackForgeError,
 )
-from trackforge.domain.model.capabilities import AnalysisProfile
+from trackforge.domain.model.capabilities import AnalysisProfile, ArtifactType
 from trackforge.domain.model.ids import ArtifactId, IntakeId, ItemId
 from trackforge.domain.model.item import Item, ItemStatus
 from trackforge.domain.model.media import FileRole, MediaObject
@@ -97,11 +99,11 @@ class ObserveItem:
                 )
 
             source_path = await self._source_path(uow, item.primary_intake_id, media)
-            desired = tuple(
+            desired_list = [
                 output
                 for output in DEFAULT_OBSERVE_OUTPUTS
                 if source_path is not None or output != PATH_STRUCTURE_ARTIFACT
-            )
+            ]
             if source_path is None:
                 warnings.append(
                     ObservationWarning(
@@ -109,16 +111,31 @@ class ObserveItem:
                         message="no source file path is recorded; path.structure.v1 was skipped",
                     )
                 )
+            snapshot = await self._source_snapshot_input(uow, item)
+            has_source_metadata = any(
+                SOURCE_METADATA_ARTIFACT in capability.manifest.provides
+                for capability in self._capabilities
+            )
+            if snapshot is not None and has_source_metadata:
+                desired_list.append(SOURCE_METADATA_ARTIFACT)
+            else:
+                snapshot = None
+            desired = tuple(desired_list)
             params: dict[str, dict[str, Any]] = {}
             if source_path is not None:
                 params["path_structure"] = {"path": source_path}
 
+            inputs = (
+                (MEDIA_ARTIFACT, SOURCE_SNAPSHOT_ARTIFACT)
+                if snapshot is not None
+                else (MEDIA_ARTIFACT,)
+            )
             plan = Planner().plan(
                 desired,
                 analysis_profile,
                 self._capabilities,
                 required_outputs=DEFAULT_REQUIRED_OUTPUTS,
-                inputs=(MEDIA_ARTIFACT,),
+                inputs=inputs,
                 params=params,
             )
             if plan.blocked_reason is not None:
@@ -136,12 +153,17 @@ class ObserveItem:
                 max_attempts=self._max_attempts,
                 commit=uow.commit,
             )
+            initial_inputs: dict[ArtifactType | str, StepInput] = {
+                MEDIA_ARTIFACT: _media_step_input(media)
+            }
+            if snapshot is not None:
+                initial_inputs[SOURCE_SNAPSHOT_ARTIFACT] = snapshot
             run = await executor.run(
                 plan,
                 item_id=item.id,
                 profile=analysis_profile.name,
                 mode="auto",
-                initial_inputs={MEDIA_ARTIFACT: _media_step_input(media)},
+                initial_inputs=initial_inputs,
             )
 
             summaries = await self._index_artifacts(uow, run, warnings)
@@ -163,6 +185,37 @@ class ObserveItem:
         if run.status is not RunStatus.COMPLETED:
             raise _observation_error(run)
         return view
+
+    async def _source_snapshot_input(
+        self,
+        uow: UnitOfWork,
+        item: Item,
+    ) -> StepInput | None:
+        if item.primary_intake_id is None:
+            return None
+        intake = await uow.intakes.get(item.primary_intake_id)
+        if intake is None or intake.source_snapshot_artifact_id is None:
+            return None
+        record = await uow.artifacts.get(intake.source_snapshot_artifact_id)
+        if record is None:
+            return None
+        try:
+            reference = await self._artifact_store.find(record.cache_key)
+            if reference is None:
+                return None
+            manifest, payload = await self._artifact_store.load(reference)
+        except (StorageError, OSError):
+            return None
+        return StepInput(
+            type=SOURCE_SNAPSHOT_ARTIFACT,
+            artifact_id=manifest.artifact_id,
+            schema_version=manifest.schema_version,
+            cache_key=reference.cache_key,
+            payload_hash=manifest.payload_hash,
+            payload=payload,
+            manifest=manifest,
+            ref=reference,
+        )
 
     @staticmethod
     def _profile(value: str | AnalysisProfile) -> AnalysisProfile:

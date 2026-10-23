@@ -111,6 +111,7 @@ def build_run_options(
     dry_run: bool = False,
     force: str | None = None,
     target_format: str | None = None,
+    format_id: str | None = None,
     offline: bool = False,
 ) -> RunOptions:
     """Translate CLI flags into a validated ``RunOptions`` value."""
@@ -130,6 +131,7 @@ def build_run_options(
         offline=offline or config.offline,
         dry_run=dry_run,
         target_format=target_format,  # type: ignore[arg-type]
+        format_id=format_id,
     )
 
 
