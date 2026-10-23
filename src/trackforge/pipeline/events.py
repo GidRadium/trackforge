@@ -113,6 +113,18 @@ class Event:
         return self.type
 
     @property
+    def kind(self) -> str:
+        """String event name matching the public API example."""
+
+        return self.type.value
+
+    @property
+    def step(self) -> str | None:
+        """Step/capability name used by simple progress consumers."""
+
+        return self.capability
+
+    @property
     def is_terminal(self) -> bool:
         return self.type.terminal
 

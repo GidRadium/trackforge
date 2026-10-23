@@ -548,8 +548,12 @@ def _matches_priority(claim: Claim, token: str, field: str) -> bool:
         prefix, _, suffix = text.partition(".")
         suffix_field = canonical_field(suffix)
         if prefix == "item":
-            return (claim.field == suffix_field and claim.source not in {"path", "user"}) or (
-                claim.field == field and claim.source not in {"path", "user"}
+            if claim.source == "user":
+                # A user correction is stronger evidence than any automatic
+                # source even when the user has not asked for a permanent lock.
+                return claim.field in {suffix_field, field}
+            return (claim.field == suffix_field and claim.source != "path") or (
+                claim.field == field and claim.source != "path"
             )
         if prefix == "path":
             return claim.source == "path" and claim.field == suffix_field

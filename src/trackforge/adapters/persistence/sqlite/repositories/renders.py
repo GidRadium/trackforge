@@ -86,6 +86,30 @@ class SqliteRenderRepository(SqliteRepository):
 
         return await self._run(_get)
 
+    async def find_bundle_by_render(self, render_id: str) -> OutputBundle | None:
+        def _find(session: Session) -> OutputBundle | None:
+            row = session.scalars(
+                select(OutputBundleRow)
+                .where(OutputBundleRow.render_id == render_id)
+                .order_by(OutputBundleRow.created_at.desc(), OutputBundleRow.id)
+                .limit(1)
+            ).first()
+            return None if row is None else bundle_from_row(row)
+
+        return await self._run(_find)
+
+    async def latest_bundle(self, item_id: ItemId) -> OutputBundle | None:
+        def _latest(session: Session) -> OutputBundle | None:
+            row = session.scalars(
+                select(OutputBundleRow)
+                .where(OutputBundleRow.item_id == item_id)
+                .order_by(OutputBundleRow.created_at.desc(), OutputBundleRow.id)
+                .limit(1)
+            ).first()
+            return None if row is None else bundle_from_row(row)
+
+        return await self._run(_latest)
+
     async def list_by_item(self, item_id: ItemId) -> list[Render]:
         def _list(session: Session) -> list[Render]:
             rows = session.scalars(

@@ -30,7 +30,6 @@ from trackforge.application.use_cases.plan_item import (
 )
 from trackforge.domain.errors import (
     DomainValidationError,
-    InvalidStateTransition,
     ObservationFailed,
     ProbeFailed,
     ProviderUnavailable,
@@ -296,13 +295,10 @@ class ObserveItem:
 
     @staticmethod
     async def _mark_observed(uow: UnitOfWork, item: Item) -> Item:
-        if item.status is ItemStatus.OBSERVED:
-            return item
         if item.status is not ItemStatus.ACQUIRED:
-            raise InvalidStateTransition(
-                f"cannot observe an item in status {item.status.value}",
-                context={"item_id": item.id, "status": item.status.value},
-            )
+            # A forced observation after resolution must not move the item
+            # backwards; the observation artifacts are still refreshed.
+            return item
         item.transition_to(ItemStatus.OBSERVED)
         return await uow.items.save(item)
 

@@ -14,17 +14,21 @@ from trackforge.adapters.persistence.filesystem.cas import FileSystemCas
 from trackforge.adapters.persistence.sqlite.engine import Catalog, initialize_catalog
 from trackforge.adapters.persistence.sqlite.file_lock import FileLock
 from trackforge.adapters.persistence.sqlite.unit_of_work import SqliteUnitOfWork
+from trackforge.adapters.publishing.filesystem import FilesystemPublisher
 from trackforge.adapters.rendering.ffmpeg import FfmpegRenderer
 from trackforge.adapters.sources.local import LocalFileSource
 from trackforge.adapters.tagging.mutagen.reader import InitialTagsObserver, MutagenTagReader
 from trackforge.adapters.tagging.mutagen.writer import MutagenTagWriter
 from trackforge.application.ports.acquisition import Acquirer
 from trackforge.application.ports.execution import Capability
+from trackforge.application.ports.publishing import Publisher
 from trackforge.application.ports.rendering import Renderer, TagReader, TagWriter
 from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.ports.sources import SourceResolver
 from trackforge.application.use_cases.acquire_item import AcquireItem
+from trackforge.application.use_cases.doctor import Doctor
 from trackforge.application.use_cases.explain_item import ExplainItem
+from trackforge.application.use_cases.import_path import ImportPath
 from trackforge.application.use_cases.interpret_item import (
     DEFAULT_INTERPRETERS,
     Interpreter,
@@ -32,8 +36,11 @@ from trackforge.application.use_cases.interpret_item import (
 )
 from trackforge.application.use_cases.observe_item import ObserveItem
 from trackforge.application.use_cases.plan_item import PlanItem
+from trackforge.application.use_cases.process_item import ProcessItem
+from trackforge.application.use_cases.publish_item import PublishItem
 from trackforge.application.use_cases.render_item import RenderItem
 from trackforge.application.use_cases.resolve_item import ResolveItem
+from trackforge.application.use_cases.review_item import ReviewItem
 from trackforge.config import TrackForgeConfig
 
 
@@ -162,6 +169,41 @@ class CatalogContext:
         """Build the render/tag/verify use case for this catalog."""
 
         return build_render_item(self.config, self.unit_of_work)
+
+    def publish_item(self) -> PublishItem:
+        """Build the managed-library publisher for this catalog."""
+
+        return build_publish_item(self.config, self.unit_of_work)
+
+    def process_item(self) -> ProcessItem:
+        """Build the end-to-end local pipeline for this catalog."""
+
+        return build_process_item(
+            self.config,
+            self.unit_of_work,
+            cas=self.cas,
+            artifact_store=self.artifact_store,
+        )
+
+    def import_path(self) -> ImportPath:
+        """Build the local import use case."""
+
+        return build_import_path(
+            self.config,
+            self.unit_of_work,
+            cas=self.cas,
+            artifact_store=self.artifact_store,
+        )
+
+    def review_item(self) -> ReviewItem:
+        """Build the review/feedback use case."""
+
+        return build_review_item(self.unit_of_work)
+
+    def doctor(self) -> Doctor:
+        """Build the environment doctor for this configuration."""
+
+        return build_doctor(self.config)
 
     def close(self) -> None:
         """Release the lock and dispose the catalog engine."""
@@ -334,6 +376,111 @@ def build_plan_item(
     )
 
 
+def build_publisher(config: TrackForgeConfig) -> Publisher:
+    """Build the managed-library publisher for ``config``."""
+
+    return FilesystemPublisher(workspace_root=config.data_dir)
+
+
+def build_publish_item(
+    config: TrackForgeConfig,
+    unit_of_work_factory: Callable[[], UnitOfWork],
+    *,
+    publisher: Publisher | None = None,
+) -> PublishItem:
+    """Build the publish use case rooted at the configured library."""
+
+    return PublishItem(
+        unit_of_work_factory,
+        publisher if publisher is not None else build_publisher(config),
+        workspace_root=config.data_dir,
+        library_root=config.library_dir,
+    )
+
+
+def build_review_item(
+    unit_of_work_factory: Callable[[], UnitOfWork],
+) -> ReviewItem:
+    """Build the review service over the shared resolver/explainer."""
+
+    return ReviewItem(
+        unit_of_work_factory,
+        build_resolve_item(unit_of_work_factory),
+        build_explain_item(unit_of_work_factory),
+    )
+
+
+def build_doctor(config: TrackForgeConfig) -> Doctor:
+    """Build the doctor checks for ``config`` without opening the catalog."""
+
+    return Doctor(config)
+
+
+def build_process_item(
+    config: TrackForgeConfig,
+    unit_of_work_factory: Callable[[], UnitOfWork],
+    *,
+    cas: FileSystemCas | None = None,
+    artifact_store: FileSystemArtifactStore | None = None,
+    publisher: Publisher | None = None,
+) -> ProcessItem:
+    """Build the full local pipeline with one consistent capability set."""
+
+    observer_capabilities = build_observer_capabilities()
+    interpreter_capabilities = build_interpreter_capabilities()
+    content_store = cas if cas is not None else build_cas(config)
+    artifacts = artifact_store if artifact_store is not None else build_artifact_store(config)
+    plan = PlanItem(
+        capabilities=observer_capabilities,
+        resolvers=build_source_resolvers(),
+    )
+    return ProcessItem(
+        unit_of_work_factory,
+        plan_item=plan,
+        acquire_item=build_acquire_item(),
+        acquirers=build_acquirers(content_store, unit_of_work_factory),
+        observe_item=ObserveItem(
+            unit_of_work_factory,
+            observer_capabilities,
+            artifacts,
+            config={"offline": config.offline, "profile": config.profile},
+        ),
+        interpret_item=InterpretItem(
+            unit_of_work_factory,
+            interpreter_capabilities,
+            artifact_store=artifacts,
+        ),
+        resolve_item=build_resolve_item(unit_of_work_factory),
+        render_item=build_render_item(config, unit_of_work_factory),
+        publish_item=build_publish_item(
+            config,
+            unit_of_work_factory,
+            publisher=publisher,
+        ),
+        library_root=config.library_dir,
+    )
+
+
+def build_import_path(
+    config: TrackForgeConfig,
+    unit_of_work_factory: Callable[[], UnitOfWork],
+    *,
+    cas: FileSystemCas | None = None,
+    artifact_store: FileSystemArtifactStore | None = None,
+    publisher: Publisher | None = None,
+) -> ImportPath:
+    """Build the import use case, sharing its process item with the caller."""
+
+    process = build_process_item(
+        config,
+        unit_of_work_factory,
+        cas=cas,
+        artifact_store=artifact_store,
+        publisher=publisher,
+    )
+    return ImportPath(process, process.plan_item)
+
+
 def build_acquire_item() -> AcquireItem:
     """Build the acquisition use case."""
 
@@ -367,14 +514,20 @@ __all__ = [
     "build_catalog",
     "build_catalog_context",
     "build_context",
+    "build_doctor",
     "build_explain_item",
+    "build_import_path",
     "build_interpret_item",
     "build_interpreter_capabilities",
     "build_observer_capabilities",
     "build_observe_item",
     "build_plan_item",
+    "build_process_item",
+    "build_publish_item",
+    "build_publisher",
     "build_render_item",
     "build_resolve_item",
+    "build_review_item",
     "build_source_resolvers",
     "build_unit_of_work",
 ]

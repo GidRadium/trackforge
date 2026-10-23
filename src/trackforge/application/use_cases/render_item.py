@@ -130,7 +130,11 @@ class RenderItem:
             item = await uow.items.get(item_id)
             if item is None:
                 raise RecordNotFound("item not found", context={"item_id": item_id})
-            if item.status not in {ItemStatus.RESOLVED, ItemStatus.RENDERED}:
+            if item.status not in {
+                ItemStatus.RESOLVED,
+                ItemStatus.RENDERED,
+                ItemStatus.PUBLISHED,
+            }:
                 raise RenderFailed(
                     "item must be resolved before it can be rendered",
                     user_action="Resolve the item first.",

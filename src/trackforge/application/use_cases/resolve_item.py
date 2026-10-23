@@ -117,6 +117,8 @@ class ResolveItem:
                 ItemStatus.INTERPRETED,
                 ItemStatus.NEEDS_REVIEW,
                 ItemStatus.RESOLVED,
+                ItemStatus.RENDERED,
+                ItemStatus.PUBLISHED,
             }:
                 raise InvalidStateTransition(
                     f"cannot resolve an item in status {item.status.value}",

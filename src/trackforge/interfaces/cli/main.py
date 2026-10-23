@@ -2,25 +2,23 @@
 
 from __future__ import annotations
 
-import json
-from typing import Annotated, Any, NoReturn
+from typing import Annotated
 
 import typer
 
 from trackforge import __version__
-from trackforge.bootstrap.container import AppContext, build_context
-from trackforge.config import ConfigError, TrackForgeConfig
+from trackforge.interfaces.cli.commands import register_commands
+from trackforge.interfaces.cli.commands.config import config_app
+from trackforge.interfaces.cli.common import (  # noqa: F401 - public for CLI tests
+    build_config,
+    build_run_options,
+    execute,
+    exit_code_for,
+)
 
 app = typer.Typer(
     name="trackforge",
     help="Local-first audio metadata and library tooling.",
-    no_args_is_help=True,
-    add_completion=False,
-    rich_markup_mode=None,
-)
-config_app = typer.Typer(
-    name="config",
-    help="Inspect and validate configuration.",
     no_args_is_help=True,
     add_completion=False,
     rich_markup_mode=None,
@@ -49,61 +47,14 @@ def main(
     """Run a TrackForge command."""
 
 
-def _load_context() -> AppContext:
-    return build_context(TrackForgeConfig.from_file())
+register_commands(app)
 
 
-def _fail(message: str, exit_code: int) -> NoReturn:
-    typer.echo(f"error: {message}", err=True)
-    raise typer.Exit(exit_code)
-
-
-def _load_context_or_exit() -> AppContext:
-    try:
-        return _load_context()
-    except ConfigError as exc:
-        _fail(str(exc), 2)
-    except Exception as exc:  # pragma: no cover - defensive CLI boundary
-        _fail(f"internal error: {exc}", 5)
-
-
-def _config_payload(context: AppContext) -> dict[str, Any]:
-    return context.config.model_dump(mode="json")
-
-
-@config_app.command("show")
-def config_show(
-    as_json: Annotated[
-        bool,
-        typer.Option("--json", help="Emit one JSON object for scripts."),
-    ] = False,
-) -> None:
-    """Show the effective configuration."""
-
-    context = _load_context_or_exit()
-    payload = _config_payload(context)
-
-    if as_json:
-        typer.echo(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-        return
-
-    for key, value in payload.items():
-        typer.echo(f"{key}: {value}")
-
-
-@config_app.command("validate")
-def config_validate(
-    as_json: Annotated[
-        bool,
-        typer.Option("--json", help="Emit one JSON object for scripts."),
-    ] = False,
-) -> None:
-    """Validate the effective configuration without creating directories."""
-
-    _load_context_or_exit()
-
-    if as_json:
-        typer.echo(json.dumps({"valid": True}, sort_keys=True))
-        return
-
-    typer.echo("Configuration is valid.")
+__all__ = [
+    "app",
+    "build_config",
+    "build_run_options",
+    "execute",
+    "exit_code_for",
+    "main",
+]

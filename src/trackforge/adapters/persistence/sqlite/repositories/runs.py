@@ -253,6 +253,15 @@ class SqliteRunRepository(SqliteRepository):
 
         return await self._run(_list)
 
+    async def list_items(self, run_id: RunId) -> list[RunItemRecord]:
+        def _list(session: Session) -> list[RunItemRecord]:
+            rows = session.scalars(
+                select(RunItemRow).where(RunItemRow.run_id == run_id).order_by(RunItemRow.item_id)
+            ).all()
+            return [run_item_from_row(row) for row in rows]
+
+        return await self._run(_list)
+
     async def find_resumable(self) -> list[RunRecord]:
         resumable = (RunStatus.RUNNING.value, RunStatus.PAUSED.value)
 

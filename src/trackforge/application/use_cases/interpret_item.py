@@ -707,7 +707,14 @@ class InterpretItem:
             item = await uow.items.get(item_id)
             if item is None:
                 raise RecordNotFound("item not found", context={"item_id": item_id})
-            if item.status not in {ItemStatus.OBSERVED, ItemStatus.INTERPRETED}:
+            if item.status not in {
+                ItemStatus.OBSERVED,
+                ItemStatus.INTERPRETED,
+                ItemStatus.NEEDS_REVIEW,
+                ItemStatus.RESOLVED,
+                ItemStatus.RENDERED,
+                ItemStatus.PUBLISHED,
+            }:
                 raise InvalidStateTransition(
                     f"cannot interpret an item in status {item.status.value}",
                     user_action="Acquire and observe the item before interpreting it.",
