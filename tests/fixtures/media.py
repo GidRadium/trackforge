@@ -8,7 +8,9 @@ clear reason when ffmpeg/ffprobe are unavailable.
 from __future__ import annotations
 
 import shutil
+import struct
 import subprocess
+import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +40,11 @@ DEFAULT_TAGS: dict[str, str] = {
 }
 
 MBID_RECORDING = DEFAULT_TAGS["musicbrainz_trackid"]
+
+LRC_TEXT = """[00:01.00]First line
+[00:03.50]Second line
+[00:06.25]Third line
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +131,40 @@ def generate_media(
     )
 
 
+def generate_png(
+    directory: Path,
+    *,
+    name: str = "cover.png",
+    width: int = 100,
+    height: int = 100,
+) -> Path:
+    """Create a small valid RGB PNG without external image libraries."""
+
+    if width < 1 or height < 1:
+        raise ValueError("PNG dimensions must be positive")
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    raw = b"".join(b"\x00" + b"\xff\x40\x20" * width for _ in range(height))
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(payload))
+            + kind
+            + payload
+            + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+        )
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+    path.write_bytes(png)
+    return path
+
+
 def generate_all_formats(
     directory: Path,
     *,
@@ -146,10 +187,12 @@ def generate_all_formats(
 __all__ = [
     "CONTAINER_CODECS",
     "DEFAULT_TAGS",
+    "LRC_TEXT",
     "MBID_RECORDING",
     "MediaFixture",
     "generate_all_formats",
     "generate_media",
+    "generate_png",
     "media_tools_available",
     "skip_without_media_tools",
 ]

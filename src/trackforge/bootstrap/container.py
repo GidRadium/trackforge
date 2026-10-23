@@ -14,10 +14,13 @@ from trackforge.adapters.persistence.filesystem.cas import FileSystemCas
 from trackforge.adapters.persistence.sqlite.engine import Catalog, initialize_catalog
 from trackforge.adapters.persistence.sqlite.file_lock import FileLock
 from trackforge.adapters.persistence.sqlite.unit_of_work import SqliteUnitOfWork
+from trackforge.adapters.rendering.ffmpeg import FfmpegRenderer
 from trackforge.adapters.sources.local import LocalFileSource
-from trackforge.adapters.tagging.mutagen.reader import InitialTagsObserver
+from trackforge.adapters.tagging.mutagen.reader import InitialTagsObserver, MutagenTagReader
+from trackforge.adapters.tagging.mutagen.writer import MutagenTagWriter
 from trackforge.application.ports.acquisition import Acquirer
 from trackforge.application.ports.execution import Capability
+from trackforge.application.ports.rendering import Renderer, TagReader, TagWriter
 from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.ports.sources import SourceResolver
 from trackforge.application.use_cases.acquire_item import AcquireItem
@@ -29,6 +32,7 @@ from trackforge.application.use_cases.interpret_item import (
 )
 from trackforge.application.use_cases.observe_item import ObserveItem
 from trackforge.application.use_cases.plan_item import PlanItem
+from trackforge.application.use_cases.render_item import RenderItem
 from trackforge.application.use_cases.resolve_item import ResolveItem
 from trackforge.config import TrackForgeConfig
 
@@ -153,6 +157,11 @@ class CatalogContext:
         """Build the explanation use case for this catalog."""
 
         return build_explain_item(self.unit_of_work)
+
+    def render_item(self) -> RenderItem:
+        """Build the render/tag/verify use case for this catalog."""
+
+        return build_render_item(self.config, self.unit_of_work)
 
     def close(self) -> None:
         """Release the lock and dispose the catalog engine."""
@@ -285,6 +294,33 @@ def build_explain_item(
     return ExplainItem(unit_of_work_factory)
 
 
+def build_render_item(
+    config: TrackForgeConfig,
+    unit_of_work_factory: Callable[[], UnitOfWork],
+    *,
+    renderer: Renderer | None = None,
+    tag_writer: TagWriter | None = None,
+    tag_reader: TagReader | None = None,
+) -> RenderItem:
+    """Build the renderer and mutagen adapters for this catalog."""
+
+    reader: TagReader = tag_reader if tag_reader is not None else MutagenTagReader()
+    writer: TagWriter = (
+        tag_writer
+        if tag_writer is not None
+        else MutagenTagWriter(reader=reader if isinstance(reader, MutagenTagReader) else None)
+    )
+    cover_loader = reader.read_cover if isinstance(reader, MutagenTagReader) else None
+    return RenderItem(
+        unit_of_work_factory,
+        renderer if renderer is not None else FfmpegRenderer(),
+        writer,
+        reader,
+        config.data_dir,
+        cover_loader=cover_loader,
+    )
+
+
 def build_plan_item(
     *,
     capabilities: tuple[Capability, ...] | None = None,
@@ -337,6 +373,7 @@ __all__ = [
     "build_observer_capabilities",
     "build_observe_item",
     "build_plan_item",
+    "build_render_item",
     "build_resolve_item",
     "build_source_resolvers",
     "build_unit_of_work",

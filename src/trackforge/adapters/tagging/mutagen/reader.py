@@ -21,6 +21,7 @@ from trackforge.application.dto.observations import (
     RawTagInfo,
     TagReaderInfo,
 )
+from trackforge.application.dto.rendering import CoverArt, TagSet, is_synced_lyrics
 from trackforge.application.ports.execution import (
     ArtifactDraft,
     StepContext,
@@ -450,9 +451,612 @@ class InitialTagsObserver:
         )
 
 
+# ---------------------------------------------------------------------------
+# Canonical read-back
+# ---------------------------------------------------------------------------
+
+_MBID_READ_KEYS: dict[str, tuple[str, ...]] = {
+    "mb_recording_id": (
+        "MusicBrainz Track Id",
+        "MusicBrainz Recording Id",
+        "MUSICBRAINZ_TRACKID",
+        "MUSICBRAINZ_RECORDINGID",
+    ),
+    "mb_release_id": ("MusicBrainz Album Id", "MusicBrainz Release Id", "MUSICBRAINZ_ALBUMID"),
+    "mb_release_group_id": (
+        "MusicBrainz Release Group Id",
+        "MUSICBRAINZ_RELEASEGROUPID",
+    ),
+    "mb_artist_id": ("MusicBrainz Artist Id", "MUSICBRAINZ_ARTISTID"),
+    "mb_albumartist_id": (
+        "MusicBrainz Album Artist Id",
+        "MusicBrainz Release Artist Id",
+        "MUSICBRAINZ_ALBUMARTISTID",
+    ),
+    "acoustid": ("Acoustid Id", "ACOUSTID_ID"),
+    "isrc": ("ISRC",),
+}
+
+_VORBIS_KEYS = {
+    "title": ("TITLE",),
+    "artists": ("ARTIST",),
+    "albumartist": ("ALBUMARTIST", "ALBUM ARTIST"),
+    "album": ("ALBUM",),
+    "date": ("DATE",),
+    "originaldate": ("ORIGINALDATE", "ORIGINAL DATE"),
+    "track": ("TRACKNUMBER", "TRACK"),
+    "tracktotal": ("TRACKTOTAL", "TOTALTRACKS"),
+    "disc": ("DISCNUMBER", "DISC"),
+    "disctotal": ("DISCTOTAL", "TOTALDISCS"),
+    "genre": ("GENRE",),
+    "bpm": ("BPM",),
+    "key": ("KEY", "INITIALKEY"),
+    "language": ("LANGUAGE",),
+    "label": ("LABEL", "ORGANIZATION", "PUBLISHER"),
+    "catalog_number": ("CATALOGNUMBER", "CATALOGNUMBER"),
+    "barcode": ("BARCODE",),
+    "isrc": ("ISRC",),
+    "compilation": ("COMPILATION",),
+    "comment": ("COMMENT",),
+    "description": ("DESCRIPTION",),
+    "lyrics": ("LYRICS", "UNSYNCEDLYRICS"),
+    "copyright": ("COPYRIGHT",),
+    "license": ("LICENSE",),
+    "source_url": ("TRACKFORGE_SOURCE_URL", "SOURCE_URL"),
+    "source_id": ("TRACKFORGE_SOURCE_ID", "SOURCE_ID"),
+}
+
+
+def _frame_values(tags: Any, frame_id: str) -> list[str]:
+    values: list[str] = []
+    try:
+        frames = tags.getall(frame_id)
+    except (AttributeError, KeyError, TypeError):
+        return values
+    for frame in frames:
+        values.extend(_texts(getattr(frame, "text", None)))
+    return values
+
+
+def _frame_first(tags: Any, frame_id: str) -> str | None:
+    values = _frame_values(tags, frame_id)
+    return values[0] if values else None
+
+
+def _id3_multi(values: list[str], version: tuple[int, ...]) -> list[str]:
+    """Split pre-2.4 ID3 values, which mutagen serializes with ``/``."""
+
+    if len(values) != 1 or version >= (2, 4, 0):
+        return values
+    text = values[0]
+    separator = "/" if "/" in text else ("; " if "; " in text else None)
+    if separator is None:
+        return values
+    return [part.strip() for part in text.split(separator) if part.strip()]
+
+
+def _id3_txxx(tags: Any) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    try:
+        frames = tags.getall("TXXX")
+    except (AttributeError, KeyError, TypeError):
+        return result
+    for frame in frames:
+        description = str(getattr(frame, "desc", "") or "")
+        if description:
+            result[description] = _texts(getattr(frame, "text", None))
+    return result
+
+
+def _txxx_lookup(txxx: dict[str, list[str]], aliases: Sequence[str]) -> str | None:
+    lowered = {key.casefold(): values for key, values in txxx.items()}
+    for alias in aliases:
+        values = lowered.get(alias.casefold())
+        if values:
+            return values[0]
+    return None
+
+
+def _pair_values(value: str | None) -> tuple[int | None, int | None]:
+    if not value:
+        return None, None
+    head, _, tail = value.partition("/")
+    number = _int(head)
+    total = _int(tail) if tail else None
+    return (
+        number if number not in {None, 0} else None,
+        total if total not in {None, 0} else None,
+    )
+
+
+def _read_id3(tags: Any, module: Any) -> TagSet:
+    del module
+    version = tuple(getattr(tags, "version", (2, 4, 0)))
+    txxx = _id3_txxx(tags)
+    track, tracktotal = _pair_values(_frame_first(tags, "TRCK"))
+    disc, disctotal = _pair_values(_frame_first(tags, "TPOS"))
+    date = _frame_first(tags, "TDRC")
+    if date is None:
+        year = _frame_first(tags, "TYER")
+        day_month = _frame_first(tags, "TDAT")
+        if year and day_month and len(day_month) == 4:
+            date = f"{year}-{day_month[2:4]}-{day_month[0:2]}"
+        elif year:
+            date = year
+    bpm_text = _frame_first(tags, "TBPM")
+    mbids: dict[str, str | None] = {}
+    for field_name, aliases in _MBID_READ_KEYS.items():
+        if field_name == "isrc":
+            continue
+        mbids[field_name] = _txxx_lookup(txxx, aliases)
+    trackforge = {
+        key.upper(): values[0]
+        for key, values in txxx.items()
+        if key.upper().startswith("TRACKFORGE_") and values
+    }
+    comments = _frame_values(tags, "COMM")
+    if not comments:
+        fallback = _txxx_lookup(txxx, ("COMMENT", "comment"))
+        if fallback:
+            comments = [fallback]
+    lyrics = _frame_values(tags, "USLT")
+    compilation_text = _frame_first(tags, "TCMP")
+    return TagSet(
+        title=_frame_first(tags, "TIT2"),
+        artists=tuple(_id3_multi(_frame_values(tags, "TPE1"), version)),
+        albumartist=_frame_first(tags, "TPE2"),
+        album=_frame_first(tags, "TALB"),
+        date=date,
+        originaldate=_frame_first(tags, "TDOR"),
+        track=track,
+        tracktotal=tracktotal,
+        disc=disc,
+        disctotal=disctotal,
+        genre=tuple(_id3_multi(_frame_values(tags, "TCON"), version)),
+        bpm=_positive_number(bpm_text),
+        key=_frame_first(tags, "TKEY"),
+        language=_frame_first(tags, "TLAN"),
+        label=_frame_first(tags, "TPUB"),
+        catalog_number=_txxx_lookup(txxx, ("CATALOGNUMBER",)),
+        barcode=_txxx_lookup(txxx, ("BARCODE",)),
+        isrc=_txxx_lookup(txxx, ("ISRC",)),
+        compilation=(
+            None
+            if compilation_text is None
+            else compilation_text.strip().lower() in {"1", "true", "yes"}
+        ),
+        comment=comments[0] if comments else None,
+        description=_txxx_lookup(txxx, ("DESCRIPTION", "description")),
+        lyrics=_plain_lyrics(lyrics[0] if lyrics else None),
+        source_url=trackforge.get("TRACKFORGE_SOURCE_URL") or _txxx_lookup(txxx, ("SOURCE_URL",)),
+        source_id=trackforge.get("TRACKFORGE_SOURCE_ID") or _txxx_lookup(txxx, ("SOURCE_ID",)),
+        copyright=_frame_first(tags, "TCOP"),
+        license=_txxx_lookup(txxx, ("LICENSE",)),
+        mb_recording_id=mbids.get("mb_recording_id"),
+        mb_release_id=mbids.get("mb_release_id"),
+        mb_release_group_id=mbids.get("mb_release_group_id"),
+        mb_artist_id=mbids.get("mb_artist_id"),
+        mb_albumartist_id=mbids.get("mb_albumartist_id"),
+        acoustid=mbids.get("acoustid"),
+        trackforge=trackforge,
+    )
+
+
+def _mp4_values(tags: Any, key: str) -> list[str]:
+    try:
+        raw = tags.get(key, [])
+    except (AttributeError, KeyError, TypeError):
+        return []
+    if not isinstance(raw, (list, tuple)):
+        raw = [raw]
+    result: list[str] = []
+    for value in raw:
+        if isinstance(value, (bytes, bytearray)):
+            text = bytes(value).decode("utf-8", errors="replace").strip()
+        elif isinstance(value, str):
+            text = value.strip()
+        elif isinstance(value, bool):
+            continue
+        else:
+            data = getattr(value, "data", None)
+            if isinstance(data, (bytes, bytearray)):
+                text = bytes(data).decode("utf-8", errors="replace").strip()
+            else:
+                text = str(value).strip()
+        if text:
+            result.append(text)
+    return result
+
+
+def _mp4_freeform(tags: Any) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    try:
+        keys = list(tags.keys())
+    except (AttributeError, TypeError):
+        return result
+    for key in keys:
+        text_key = str(key)
+        if not text_key.startswith("----:"):
+            continue
+        descriptor = text_key.rsplit(":", 1)[-1]
+        result[descriptor] = _mp4_values(tags, text_key)
+    return result
+
+
+def _freeform_lookup(freeform: dict[str, list[str]], aliases: Sequence[str]) -> str | None:
+    lowered = {key.casefold(): values for key, values in freeform.items()}
+    for alias in aliases:
+        values = lowered.get(alias.casefold())
+        if values:
+            return values[0]
+    return None
+
+
+def _read_mp4(tags: Any) -> TagSet:
+    freeform = _mp4_freeform(tags)
+    track_values = []
+    try:
+        track_values = list(tags.get("trkn", []))
+        disc_values = list(tags.get("disk", []))
+    except (AttributeError, KeyError, TypeError):
+        disc_values = []
+    track, tracktotal = _pair_from_mp4(track_values[0]) if track_values else (None, None)
+    disc, disctotal = _pair_from_mp4(disc_values[0]) if disc_values else (None, None)
+    bpm_values = _mp4_values(tags, "tmpo")
+    bpm_text = _freeform_lookup(freeform, ("BPM",))
+    bpm = _positive_number(bpm_text)
+    if bpm is None:
+        bpm = _positive_number(bpm_values[0] if bpm_values else None)
+    compilation = None
+    try:
+        raw_compilation = tags.get("cpil", [])
+    except (AttributeError, KeyError, TypeError):
+        raw_compilation = []
+    if isinstance(raw_compilation, (list, tuple)):
+        compilation = bool(raw_compilation[0]) if raw_compilation else None
+    elif raw_compilation is not None:
+        compilation = bool(raw_compilation)
+    trackforge = {
+        key.upper(): values[0]
+        for key, values in freeform.items()
+        if key.upper().startswith("TRACKFORGE_") and values
+    }
+    return TagSet(
+        title=_first_mp4(tags, "©nam"),
+        artists=tuple(_mp4_values(tags, "©ART")),
+        albumartist=_first_mp4(tags, "aART"),
+        album=_first_mp4(tags, "©alb"),
+        date=_first_mp4(tags, "©day"),
+        originaldate=_freeform_lookup(freeform, ("ORIGINALDATE", "ORIGINAL DATE")),
+        track=track,
+        tracktotal=tracktotal,
+        disc=disc,
+        disctotal=disctotal,
+        genre=tuple(_mp4_values(tags, "©gen")),
+        bpm=bpm,
+        key=_freeform_lookup(freeform, ("KEY", "INITIALKEY")),
+        language=_freeform_lookup(freeform, ("LANGUAGE",)),
+        label=_freeform_lookup(freeform, ("LABEL",)),
+        catalog_number=_freeform_lookup(freeform, ("CATALOGNUMBER",)),
+        barcode=_freeform_lookup(freeform, ("BARCODE",)),
+        isrc=_freeform_lookup(freeform, ("ISRC",)),
+        compilation=compilation,
+        comment=_first_mp4(tags, "©cmt"),
+        description=_freeform_lookup(freeform, ("DESCRIPTION",)),
+        lyrics=_plain_lyrics(_first_mp4(tags, "©lyr")),
+        source_url=trackforge.get("TRACKFORGE_SOURCE_URL")
+        or _freeform_lookup(freeform, ("SOURCE_URL",)),
+        source_id=trackforge.get("TRACKFORGE_SOURCE_ID")
+        or _freeform_lookup(freeform, ("SOURCE_ID",)),
+        copyright=_first_mp4(tags, "cprt"),
+        license=_freeform_lookup(freeform, ("LICENSE",)),
+        mb_recording_id=_freeform_lookup(
+            freeform,
+            ("MusicBrainz Track Id", "MusicBrainz Recording Id"),
+        ),
+        mb_release_id=_freeform_lookup(
+            freeform,
+            ("MusicBrainz Album Id", "MusicBrainz Release Id"),
+        ),
+        mb_release_group_id=_freeform_lookup(freeform, ("MusicBrainz Release Group Id",)),
+        mb_artist_id=_freeform_lookup(freeform, ("MusicBrainz Artist Id",)),
+        mb_albumartist_id=_freeform_lookup(freeform, ("MusicBrainz Album Artist Id",)),
+        acoustid=_freeform_lookup(freeform, ("Acoustid Id",)),
+        trackforge=trackforge,
+    )
+
+
+def _first_mp4(tags: Any, key: str) -> str | None:
+    values = _mp4_values(tags, key)
+    return values[0] if values else None
+
+
+def _pair_from_mp4(value: object) -> tuple[int | None, int | None]:
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        number = _int(value[0])
+        total = _int(value[1])
+    else:
+        number, total = _pair_values(str(value))
+    return (
+        number if number not in {None, 0} else None,
+        total if total not in {None, 0} else None,
+    )
+
+
+def _vorbis_map(tags: Any) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    if tags is None:
+        return result
+    try:
+        keys = list(tags.keys())
+    except (AttributeError, TypeError):
+        return result
+    for key in keys:
+        normalized = str(key).strip().upper()
+        try:
+            raw = tags.get(key)
+        except (AttributeError, KeyError, TypeError):
+            continue
+        values = _texts(raw)
+        if values:
+            result.setdefault(normalized, []).extend(
+                item for item in values if item not in result.get(normalized, [])
+            )
+    return result
+
+
+def _vorbis_first(tags: dict[str, list[str]], aliases: Sequence[str]) -> str | None:
+    for alias in aliases:
+        values = tags.get(alias.upper())
+        if values:
+            return values[0]
+    return None
+
+
+def _read_vorbis(tags: Any) -> TagSet:
+    values = _vorbis_map(tags)
+    bpm_text = _vorbis_first(values, _VORBIS_KEYS["bpm"])
+    compilation_text = _vorbis_first(values, _VORBIS_KEYS["compilation"])
+    track, track_pair_total = _pair_values(_vorbis_first(values, _VORBIS_KEYS["track"]))
+    tracktotal = _int(_vorbis_first(values, _VORBIS_KEYS["tracktotal"]))
+    if tracktotal is None:
+        tracktotal = track_pair_total
+    disc, disc_pair_total = _pair_values(_vorbis_first(values, _VORBIS_KEYS["disc"]))
+    disctotal = _int(_vorbis_first(values, _VORBIS_KEYS["disctotal"]))
+    if disctotal is None:
+        disctotal = disc_pair_total
+    comment = _vorbis_first(values, _VORBIS_KEYS["comment"])
+    description = _vorbis_first(values, _VORBIS_KEYS["description"])
+    if comment is None:
+        comment = description
+    trackforge = {
+        key: items[0] for key, items in values.items() if key.startswith("TRACKFORGE_") and items
+    }
+
+    def joined(field_name: str) -> str | None:
+        artists = values.get(field_name)
+        return ", ".join(artists) if artists else None
+
+    return TagSet(
+        title=_vorbis_first(values, _VORBIS_KEYS["title"]),
+        artists=tuple(values.get("ARTIST", ())),
+        albumartist=joined("ALBUMARTIST"),
+        album=_vorbis_first(values, _VORBIS_KEYS["album"]),
+        date=_vorbis_first(values, _VORBIS_KEYS["date"]),
+        originaldate=_vorbis_first(values, _VORBIS_KEYS["originaldate"]),
+        track=track,
+        tracktotal=tracktotal,
+        disc=disc,
+        disctotal=disctotal,
+        genre=tuple(values.get("GENRE", ())),
+        bpm=_positive_number(bpm_text),
+        key=_vorbis_first(values, _VORBIS_KEYS["key"]),
+        language=_vorbis_first(values, _VORBIS_KEYS["language"]),
+        label=_vorbis_first(values, _VORBIS_KEYS["label"]),
+        catalog_number=_vorbis_first(values, _VORBIS_KEYS["catalog_number"]),
+        barcode=_vorbis_first(values, _VORBIS_KEYS["barcode"]),
+        isrc=_vorbis_first(values, _VORBIS_KEYS["isrc"]),
+        compilation=(
+            None
+            if compilation_text is None
+            else compilation_text.strip().lower() in {"1", "true", "yes"}
+        ),
+        comment=comment,
+        description=description,
+        lyrics=_plain_lyrics(_vorbis_first(values, _VORBIS_KEYS["lyrics"])),
+        source_url=_vorbis_first(values, _VORBIS_KEYS["source_url"]),
+        source_id=_vorbis_first(values, _VORBIS_KEYS["source_id"]),
+        copyright=_vorbis_first(values, _VORBIS_KEYS["copyright"]),
+        license=_vorbis_first(values, _VORBIS_KEYS["license"]),
+        mb_recording_id=_vorbis_first(
+            values,
+            ("MUSICBRAINZ_TRACKID", "MUSICBRAINZ_RECORDINGID"),
+        ),
+        mb_release_id=_vorbis_first(
+            values,
+            ("MUSICBRAINZ_ALBUMID", "MUSICBRAINZ_RELEASEID"),
+        ),
+        mb_release_group_id=_vorbis_first(values, ("MUSICBRAINZ_RELEASEGROUPID",)),
+        mb_artist_id=_vorbis_first(values, ("MUSICBRAINZ_ARTISTID",)),
+        mb_albumartist_id=_vorbis_first(values, ("MUSICBRAINZ_ALBUMARTISTID",)),
+        acoustid=_vorbis_first(values, ("ACOUSTID_ID", "ACOUSTID")),
+        trackforge=trackforge,
+    )
+
+
+def _plain_lyrics(value: str | None) -> str | None:
+    """Never surface LRC timecodes as canonical plain lyrics."""
+
+    return None if is_synced_lyrics(value) else value
+
+
+def _is_number(value: str) -> bool:
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _positive_number(value: str | None) -> float | None:
+    if value is None or not _is_number(value):
+        return None
+    number = float(value)
+    return number if number > 0 and number < float("inf") else None
+
+
+def _read_cover_from_audio(audio: Any, module: Any) -> CoverArt | None:
+    class_name = type(audio).__name__
+    tags = getattr(audio, "tags", None)
+    if class_name == "MP3":
+        if tags is not None:
+            try:
+                pictures = tags.getall("APIC")
+            except (AttributeError, KeyError, TypeError):
+                pictures = []
+            for picture in pictures:
+                if getattr(picture, "type", None) == 3 or picture is pictures[0]:
+                    try:
+                        return CoverArt(
+                            data=getattr(picture, "data", b""),
+                            mime_type=str(getattr(picture, "mime", "")),
+                            description=str(getattr(picture, "desc", "") or ""),
+                        )
+                    except Exception:  # noqa: S112 - skip malformed cover frames
+                        continue
+        return None
+    if class_name == "MP4":
+        if tags is not None:
+            try:
+                covers = tags.get("covr", [])
+            except (AttributeError, KeyError, TypeError):
+                covers = []
+            for cover in covers or []:
+                image_format = getattr(cover, "imageformat", None)
+                mime = "image/png" if int(image_format or 0) == 14 else "image/jpeg"
+                try:
+                    return CoverArt(data=bytes(cover), mime_type=mime)
+                except Exception:  # noqa: S112 - skip malformed cover frames
+                    continue
+        return None
+    if class_name == "FLAC":
+        for picture in getattr(audio, "pictures", None) or ():
+            if getattr(picture, "type", None) == 3:
+                try:
+                    width = getattr(picture, "width", None)
+                    height = getattr(picture, "height", None)
+                    return CoverArt(
+                        data=getattr(picture, "data", b""),
+                        mime_type=str(getattr(picture, "mime", "")),
+                        description=str(getattr(picture, "desc", "") or ""),
+                        width=width if isinstance(width, int) and width > 0 else None,
+                        height=height if isinstance(height, int) and height > 0 else None,
+                    )
+                except Exception:
+                    return None
+        return None
+    if class_name in {"OggVorbis", "OggOpus"} and tags is not None:
+        try:
+            encoded_values = tags.get("metadata_block_picture") or []
+        except (AttributeError, KeyError, TypeError):
+            encoded_values = []
+        if isinstance(encoded_values, str):
+            encoded_values = [encoded_values]
+        for encoded in encoded_values:
+            try:
+                raw = base64.b64decode(str(encoded), validate=False)
+                picture = module.flac.Picture(raw)
+                return CoverArt(
+                    data=picture.data,
+                    mime_type=str(picture.mime),
+                    description=str(picture.desc or ""),
+                    width=picture.width if picture.width > 0 else None,
+                    height=picture.height if picture.height > 0 else None,
+                )
+            except Exception:  # noqa: S112 - skip malformed picture blocks
+                continue
+    return None
+
+
+class MutagenTagReader:
+    """Read canonical tags and cover art with mutagen."""
+
+    def __init__(self, module: Any | None = None) -> None:
+        self._module = module
+
+    def _mutagen(self) -> Any:
+        module = self._module if self._module is not None else load_mutagen()
+        if module is None:
+            raise ProbeFailed(
+                "mutagen is not installed",
+                retryable=False,
+                user_action="Install TrackForge with the 'tagging' extra.",
+            )
+        return module
+
+    def _open(self, path: Path) -> Any:
+        module = self._mutagen()
+        try:
+            audio = module.File(str(path))
+        except Exception as exc:  # mutagen raises format-specific errors
+            raise ProbeFailed(
+                "mutagen could not open the media file",
+                retryable=False,
+                user_action="Check that the file is a valid, readable audio file.",
+                context={"path": str(path), "error": str(exc)},
+            ) from exc
+        if audio is None:
+            raise ProbeFailed(
+                "mutagen did not recognize the media file",
+                retryable=False,
+                user_action="Check that the file is a supported audio format.",
+                context={"path": str(path)},
+            )
+        return audio
+
+    def read(self, path: Path) -> TagSet:
+        """Read canonical values without modifying the file."""
+
+        audio = self._open(Path(path))
+        class_name = type(audio).__name__
+        tags = getattr(audio, "tags", None)
+        module = self._mutagen()
+        try:
+            if class_name == "MP3":
+                return _read_id3(tags, module) if tags is not None else TagSet()
+            if class_name == "MP4":
+                return _read_mp4(tags) if tags is not None else TagSet()
+            if class_name == "FLAC":
+                return _read_vorbis(getattr(audio, "tags", None))
+            if class_name in {"OggVorbis", "OggOpus"}:
+                return _read_vorbis(getattr(audio, "tags", None))
+        except DomainValidationError:
+            raise
+        except Exception as exc:
+            raise ProbeFailed(
+                "canonical tags could not be decoded",
+                retryable=False,
+                user_action="Check that the file's tags are valid.",
+                context={"path": str(path), "error": str(exc)},
+            ) from exc
+        raise ProbeFailed(
+            "the tag reader does not support this file format",
+            retryable=False,
+            user_action="Use MP3, M4A, FLAC, OGG, or Opus output.",
+            context={"path": str(path), "format": class_name},
+        )
+
+    def read_cover(self, path: Path) -> CoverArt | None:
+        """Read the embedded front cover, if one exists."""
+
+        audio = self._open(Path(path))
+        return _read_cover_from_audio(audio, self._mutagen())
+
+
 __all__ = [
     "INITIAL_TAGS_ARTIFACT",
     "InitialTagsObserver",
+    "MutagenTagReader",
     "load_mutagen",
     "read_initial_tags",
 ]
