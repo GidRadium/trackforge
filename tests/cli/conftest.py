@@ -16,9 +16,16 @@ runner = CliRunner()
 
 
 @pytest.fixture
-def cli_dirs(tmp_path: Path) -> tuple[Path, Path]:
+def cli_dirs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    clean_env: None,
+) -> tuple[Path, Path]:
     data = tmp_path / "data"
     library = tmp_path / "library"
+    # Keep CLI tests independent from a developer's real config while leaving
+    # production `--data-dir` behavior untouched.
+    monkeypatch.setenv("TRACKFORGE_CONFIG_DIR", str(data / "config"))
     return data, library
 
 
