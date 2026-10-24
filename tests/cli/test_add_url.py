@@ -22,6 +22,8 @@ def fake_ytdlp(
     monkeypatch.setenv("PATH", f"{FAKE_DIR}:{__import__('os').environ.get('PATH', '')}")
     log = tmp_path / "yt-dlp-log.jsonl"
     monkeypatch.setenv("TRACKFORGE_FAKE_YTDLP_LOG", str(log))
+    # The fixture uses real-looking i.ytimg.com URLs; do not fetch them in tests.
+    monkeypatch.setenv("TRACKFORGE_SOURCE_COVER_ENABLED", "false")
     return log
 
 

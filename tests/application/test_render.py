@@ -113,6 +113,7 @@ async def build_setup(
     lyrics: str | None = "plain lyrics",
     synced_lyrics: str | None = None,
     elrc: str | None = None,
+    artwork: str | None = None,
     status: ItemStatus = ItemStatus.RESOLVED,
 ) -> RenderSetup:
     cas_path = tmp_path / "cas" / "source.mp3"
@@ -154,6 +155,7 @@ async def build_setup(
         "elrc": elrc,
         "source_url": "https://example.com/watch?v=abc&token=secret",
         "mb_recording_id": "11111111-1111-1111-1111-111111111111",
+        "artwork": artwork,
     }
     item_claim = Claim(
         id=ClaimId(new_uuid7()),
@@ -247,6 +249,7 @@ def build_use_case(
         tag_writer,
         tag_reader,
         config.data_dir,
+        cas=context.cas,
         clock=lambda: FIXED_TIME,
         id_factory=new_uuid7,
     )
@@ -462,3 +465,27 @@ async def test_plain_lrc_and_elrc_sidecars_coexist(
     assert {"track.mp3.lrc", "track.mp3.elrc"} <= set(result.bundle.files)
     sidecar = json.loads((result.directory / "trackforge.json").read_text(encoding="utf-8"))
     assert sidecar["metadata"]["lyrics"] == "plain lyrics"
+
+
+@pytest.mark.asyncio
+async def test_render_loads_resolved_artwork_from_cas(
+    catalog_context: CatalogContext,
+    config: Any,
+    tmp_path: Path,
+) -> None:
+    cover_source = generate_png(tmp_path / "covers")
+    content_hash = await catalog_context.cas.put_bytes(cover_source.read_bytes())
+    setup = await build_setup(catalog_context, tmp_path, artwork=str(content_hash))
+    use_case, _renderer, writer, _reader = build_use_case(catalog_context, config=config)
+
+    result = await use_case.render(
+        setup.item_id,
+        RenderOptions(cover_sidecar=True),
+        render_id=FIXED_RENDER_ID,
+        bundle_id=FIXED_BUNDLE_ID,
+        created_at=FIXED_TIME,
+    )
+
+    assert (result.directory / "cover.jpg").is_file()
+    assert writer.writes[0][1] is not None
+    assert writer.writes[0][1].data == cover_source.read_bytes()

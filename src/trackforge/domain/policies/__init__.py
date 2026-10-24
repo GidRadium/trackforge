@@ -40,6 +40,7 @@ from trackforge.domain.policies.normalization import (
     normalize_text,
     parse_artists,
     parse_date,
+    strip_qualifier,
 )
 from trackforge.domain.policies.registry import (
     DEFAULT_POLICIES,
@@ -122,6 +123,7 @@ __all__ = [
     "select_unknown",
     "select_user_lock",
     "strategies",
+    "strip_qualifier",
     "validators",
     "validate_claim",
     "validate_confidence",

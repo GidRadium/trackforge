@@ -33,6 +33,11 @@ from trackforge.application.dto.rendering import (
 )
 from trackforge.application.ports.rendering import Renderer, TagReader, TagWriter
 from trackforge.application.ports.repositories import UnitOfWork
+from trackforge.application.ports.storage import (
+    ContentAddressedStore,
+    is_sha256_hex,
+    require_content_hash,
+)
 from trackforge.application.services.sidecar import (
     SidecarArtifacts,
     SidecarData,
@@ -90,6 +95,7 @@ class RenderItem:
         workspace_root: Path,
         *,
         cover_loader: Callable[[Path], CoverArt | None] | None = None,
+        cas: ContentAddressedStore | None = None,
         clock: Callable[[], datetime] = utc_now,
         id_factory: Callable[[], str] = new_uuid7,
     ) -> None:
@@ -99,6 +105,7 @@ class RenderItem:
         self._tag_reader = tag_reader
         self._workspace_root = Path(workspace_root)
         self._cover_loader = cover_loader
+        self._cas = cas
         self._clock = clock
         self._id_factory = id_factory
 
@@ -163,6 +170,12 @@ class RenderItem:
         resolved = _resolved_metadata(record)
         derivative = _derivatives(claims)
         warnings: list[str] = list(resolved.warnings)
+        if cover_path is None and self._cas is not None:
+            artwork = resolved.fields.get("artwork")
+            if isinstance(artwork, str) and is_sha256_hex(artwork):
+                candidate_path = self._cas.path_for(require_content_hash(artwork))
+                if candidate_path.is_file():
+                    cover_path = candidate_path
         try:
             tagset, lrc_lyrics, elrc_lyrics = _tagset_for(resolved, derivative)
         except DomainValidationError as exc:

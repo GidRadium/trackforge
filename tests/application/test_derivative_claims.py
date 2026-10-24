@@ -337,3 +337,67 @@ async def test_hypotheses_artifact_type_is_exposed(
         for payload in view.artifact_payloads
     )
     assert DERIVATIVE_HYPOTHESES_ARTIFACT == "derivative.hypotheses.v1"
+
+
+async def test_youtube_description_gives_artist_and_base_title(
+    catalog_context: CatalogContext,
+    create_item: Callable[..., Any],
+    make_observations: Callable[..., dict[str, bytes]],
+) -> None:
+    from trackforge.application.dto.observations import SourceMetadataPayload
+
+    item_id = await create_item()
+    observed = make_observations(title="", artists=(), album=None, path=None)
+    observed["source.metadata.v1"] = (
+        SourceMetadataPayload(
+            external_id="k9MNcoWj1fo",
+            extractor="youtube",
+            title="Nightcore | Queen of Shadow",
+            uploader="Purely's Metal Nightcore",
+            description="Queen of Shadow by Delain from Dark Waters.",
+            tags=["music", "nightcore", "delain", "queen of shadow", "dark waters"],
+            webpage_url="https://www.youtube.com/watch?v=k9MNcoWj1fo",
+        )
+        .model_dump_json()
+        .encode("utf-8")
+    )
+
+    view = await catalog_context.interpret_item().interpret(item_id, observed)
+    resolved = await catalog_context.resolve_item().resolve(item_id)
+
+    assert resolved.fields["artist"] == "Delain"
+    assert resolved.fields["title"] == "Queen of Shadow (Nightcore)"
+    assert resolved.fields["album"] == "Dark Waters"
+    assert {claim.value for claim in _claims(view, "transformation")} >= {"nightcore"}
+
+
+async def test_source_thumbnail_cover_becomes_artwork_claim(
+    catalog_context: CatalogContext,
+    create_item: Callable[..., Any],
+    make_observations: Callable[..., dict[str, bytes]],
+) -> None:
+    from trackforge.application.dto.providers import CoverCandidate, CoverCandidatesPayload
+
+    item_id = await create_item()
+    observed = make_observations(title="Song", artists=("Artist",), path=None)
+    observed["cover.candidates.v1"] = (
+        CoverCandidatesPayload(
+            candidates=[
+                CoverCandidate(
+                    source="source_thumbnail",
+                    url="https://i.ytimg.com/vi/demo/maxresdefault.jpg",
+                    width=1920,
+                    height=1080,
+                    score=0.95,
+                    artifact_ref="a" * 64,
+                )
+            ]
+        )
+        .model_dump_json()
+        .encode("utf-8")
+    )
+
+    await catalog_context.interpret_item().interpret(item_id, observed)
+    resolved = await catalog_context.resolve_item().resolve(item_id)
+
+    assert resolved.fields["artwork"] == "a" * 64

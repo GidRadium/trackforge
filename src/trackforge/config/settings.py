@@ -155,6 +155,10 @@ class TrackForgeConfig(BaseSettings):
         default=False,
         validation_alias=AliasChoices("CORE_METADATA_ENABLED", "METADATA_ENABLED"),
     )
+    source_cover_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("SOURCE_COVER_ENABLED"),
+    )
     acoustid_api_key: str = Field(
         default="",
         validation_alias=AliasChoices("ACOUSTID_API_KEY"),
@@ -799,6 +803,7 @@ _CORE_KEYS = {
     "log_level",
     "offline",
     "metadata_enabled",
+    "source_cover_enabled",
     "acoustid_api_key",
     "musicbrainz_user_agent",
     "ytdlp_binary",

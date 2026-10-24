@@ -31,6 +31,7 @@ from trackforge.adapters.metadata.observers import (
     LrclibObserver,
     MusicBrainzObserver,
 )
+from trackforge.adapters.metadata.source_cover import SourceCoverObserver
 from trackforge.adapters.models.local import LocalModelManager
 from trackforge.adapters.persistence.feedback import JsonlFeedbackJournal
 from trackforge.adapters.persistence.filesystem.artifacts import FileSystemArtifactStore
@@ -426,8 +427,24 @@ def build_observer_capabilities(
         # Registered even when unconfigured so `full` can report a visible
         # `model_missing` skip instead of silently omitting the ASR step.
         local = (*local, build_whisper_observer(config), build_demucs_observer(config))
+
+    ytdlp_router = (
+        ProxyRouter.from_mapping(config.ytdlp_proxy or None, config.ytdlp_site_proxies)
+        if config is not None
+        else None
+    )
+    source_cover = (
+        SourceCoverObserver(
+            client=http_client,
+            cas=cas,
+            proxy_for=ytdlp_router.proxy_for if ytdlp_router is not None else None,
+        )
+        if cas is not None and (config is None or config.source_cover_enabled)
+        else None
+    )
+
     if config is None or not config.metadata_providers_enabled:
-        return local
+        return (*local, *((source_cover,) if source_cover is not None else ()))
     client = http_client or HttpClient(
         contact=config.musicbrainz_user_agent or None,
         offline=config.offline,
@@ -451,6 +468,7 @@ def build_observer_capabilities(
             fetch_images=cas is not None,
         ),
         LrclibObserver(client=client),
+        *((source_cover,) if source_cover is not None else ()),
     )
 
 
@@ -655,6 +673,7 @@ def build_render_item(
         reader,
         config.data_dir,
         cover_loader=cover_loader,
+        cas=build_cas(config),
     )
 
 
@@ -668,7 +687,12 @@ def build_plan_item(
 
     return PlanItem(
         capabilities=(
-            capabilities if capabilities is not None else build_observer_capabilities(config)
+            capabilities
+            if capabilities is not None
+            else build_observer_capabilities(
+                config,
+                cas=build_cas(config) if config is not None else None,
+            )
         ),
         resolvers=(resolvers if resolvers is not None else build_source_resolvers(config)),
     )
@@ -847,6 +871,7 @@ def _observe_config(config: TrackForgeConfig) -> dict[str, object]:
     return {
         "offline": config.offline,
         "profile": config.profile,
+        "source_cover_enabled": config.source_cover_enabled,
         "asr_model": config.asr_model,
         "asr_model_path": config.asr_model_path,
         "asr_model_version": config.asr_model_version,

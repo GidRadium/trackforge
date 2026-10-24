@@ -583,6 +583,49 @@ def title_has_qualifier(title: str, transformation: Transformation | str) -> boo
     return label in text or value in text
 
 
+def strip_qualifier(title: str, transformation: Transformation | str) -> str:
+    """Remove an existing qualifier/marker from a title.
+
+    This is used before re-applying a normalized trailing qualifier, so
+    ``Nightcore | Queen of Shadow`` becomes ``Queen of Shadow`` and then
+    ``Queen of Shadow (Nightcore)``.  If stripping would empty the title, the
+    original value is kept.
+    """
+
+    base = normalize_text(title)
+    if not base:
+        return base
+    candidate = _coerce_transformation(transformation)
+    labels = {
+        display_qualifier(candidate),
+        candidate.value.replace("_", " "),
+        candidate.value,
+    }
+    text = base
+    for label in labels:
+        escaped = re.escape(label)
+        text = re.sub(
+            rf"\s*[\(\[\{{]\s*{escaped}\s*[\)\]\}}]\s*",
+            " ",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            rf"^\s*{escaped}\s*[-–—|:]\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            rf"\s*[-–—|:]\s*{escaped}\s*$",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+    text = re.sub(r"\s+", " ", text).strip(" -–—|:")
+    return text or base
+
+
 def apply_qualifier(title: str, transformation: Transformation | str) -> str:
     """Append `` (Qualifier)`` unless the qualifier is already present."""
 
@@ -688,6 +731,7 @@ __all__ = [
     "source_noise_markers",
     "split_artist_credit",
     "split_artists",
+    "strip_qualifier",
     "strip_topic_suffix",
     "title_has_qualifier",
     "value_equal",

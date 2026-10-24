@@ -88,6 +88,7 @@ from trackforge.domain.policies.derivative import (
 )
 from trackforge.domain.policies.normalization import (
     detect_source_noise,
+    detect_transformations,
     is_vevo,
     normalize_artist_name,
     parse_artists,
@@ -154,6 +155,11 @@ _GENERIC_PARENTS = frozenset(
 )
 _LEADING_TRACK_RE = re.compile(r"^\s*(\d{1,3})\s*(?:[-._)]\s*|\s+)(?P<rest>.+)$")
 _ARTIST_TITLE_RE = re.compile(r"^(?P<artist>.+?)\s+[-–—]\s+(?P<title>.+)$")
+_ATTRIBUTION_RE = re.compile(
+    r"^\s*(?P<title>.+?)\s+by\s+(?P<artist>.+?)"
+    r"(?:\s+from\s+(?P<album>.+?))?\.?\s*$",
+    re.IGNORECASE,
+)
 _MBID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -1316,7 +1322,12 @@ class SourceMetadataInterpreter:
             )
 
         raw_artist = payload.artist or payload.uploader
-        if raw_artist:
+        derivative_title = bool(detect_transformations(payload.title or ""))
+        derivative_uploader = bool(detect_transformations(raw_artist or ""))
+        # A nightcore/slowed channel name is provenance, not the main artist.
+        # When the source supplies no artist field, keep looking in the
+        # description and leave the artist unknown rather than guessing.
+        if raw_artist and not (derivative_title and derivative_uploader):
             cleaned = strip_topic_suffix(raw_artist)
             if cleaned != raw_artist.strip():
                 add(
@@ -1332,6 +1343,22 @@ class SourceMetadataInterpreter:
                     0.65 if credit.role == "main" else 0.55,
                     role=credit.role,
                     order=index,
+                )
+        attribution = _description_attribution(payload.description, payload.title)
+        if attribution is not None:
+            parsed_artist, parsed_album = attribution
+            add(
+                "artist",
+                parsed_artist,
+                0.60,
+                notes="parsed from source description attribution",
+            )
+            if parsed_album:
+                add(
+                    "album",
+                    parsed_album,
+                    0.45,
+                    notes="parsed from source description attribution",
                 )
         if payload.album:
             add("album", payload.album, 0.5)
@@ -1979,6 +2006,24 @@ def _claim_text(claims: Sequence[Claim], field: str) -> str | None:
         if claim.field == field and isinstance(claim.value, str) and claim.value.strip():
             return claim.value.strip()
     return None
+
+
+def _description_attribution(
+    description: str | None,
+    title: str | None,
+) -> tuple[str, str | None] | None:
+    if not description or not title:
+        return None
+    first_line = next((line.strip() for line in description.splitlines() if line.strip()), "")
+    match = _ATTRIBUTION_RE.fullmatch(first_line)
+    if match is None:
+        return None
+    parsed_title = match.group("title").strip(" .")
+    if not parsed_title or parsed_title.casefold() not in title.casefold():
+        return None
+    artist = strip_topic_suffix(match.group("artist")).strip(" .")
+    album = (match.group("album") or "").strip(" .") or None
+    return (artist, album) if artist else None
 
 
 def _probe_duration(inputs: InterpreterInput) -> float | None:

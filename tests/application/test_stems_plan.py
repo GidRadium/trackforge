@@ -93,3 +93,27 @@ async def test_enable_stems_adds_it_to_balanced_plan(tmp_path: Path) -> None:
 
     assert plan.blocked_reason is None
     assert "demucs" in {step.capability_id for step in plan.steps}
+
+
+@pytest.mark.asyncio
+async def test_url_plan_includes_source_cover(tmp_path: Path) -> None:
+    from tests.adapters.ytdlp.conftest import FAKE_YTDLP, YOUTUBE_URL
+
+    from trackforge.bootstrap.container import build_plan_item
+    from trackforge.config import TrackForgeConfig
+    from trackforge.domain.model.source import Url
+
+    config = TrackForgeConfig(
+        config_dir=tmp_path / "config",
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        state_dir=tmp_path / "state",
+        library_dir=tmp_path / "library",
+        ytdlp_binary=str(FAKE_YTDLP),
+    )
+
+    plan = await build_plan_item(config=config).plan(Url(YOUTUBE_URL))
+    steps = {step.capability_id for step in plan.steps}
+
+    assert "source_metadata" in steps
+    assert "source_cover" in steps

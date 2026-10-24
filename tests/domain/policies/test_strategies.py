@@ -203,3 +203,37 @@ def test_user_lock_wins_and_is_marked_locked(
     assert result.confidence == 1.0
     assert result.selected == (user_claim,)
     assert other.id in {claim.id for claim in result.alternatives}
+
+
+def test_derive_normalizes_qualifier_prefix(make_claim) -> None:
+    from trackforge.domain.model.claims import Subject
+    from trackforge.domain.model.identity import Transformation
+    from trackforge.domain.policies.strategies import StrategyResult
+
+    source = make_claim(
+        field="title",
+        value="Nightcore | Queen of Shadow",
+        subject=Subject.ITEM,
+        source="source_metadata",
+        method="source_metadata/v1",
+        confidence=0.75,
+    )
+    transformation = make_claim(
+        field="transformation",
+        value=Transformation.NIGHTCORE.value,
+        subject=Subject.DERIVATIVE,
+        source="source_metadata",
+        method="derivative_detector/v1",
+        confidence=0.8,
+    )
+    base = StrategyResult(
+        field="title",
+        value=source.value,
+        selected=(source,),
+        confidence=0.75,
+        rationale="test base",
+    )
+
+    derived = select_derive("title", base, [transformation])
+
+    assert derived.value == "Queen of Shadow (Nightcore)"

@@ -26,6 +26,7 @@ from trackforge.domain.policies.normalization import (
     normalize_date,
     normalize_key,
     rank_transformations,
+    strip_qualifier,
     title_has_qualifier,
 )
 from trackforge.domain.policies.validators import ValidationResult, validate_field
@@ -306,21 +307,31 @@ def select_derive(
 
     primary = ranked[0]
     label = qualifier or display_qualifier(primary)
+    derived_value = base.value
     if title_has_qualifier(base.value, primary):
-        return StrategyResult(
-            field=canonical,
-            value=base.value,
-            selected=base.selected,
-            alternatives=base.alternatives,
-            confidence=base.confidence,
-            rationale=(f"base {canonical} already contains qualifier {label}; not duplicated"),
-            strategy=PolicyStrategy.DERIVE,
-            derived_from=base.derived_from,
-            synthesized=base.synthesized,
-            locked=base.locked,
+        cleaned = strip_qualifier(base.value, primary)
+        normalized = (
+            apply_qualifier(cleaned, primary)
+            if cleaned and cleaned != base.value and not title_has_qualifier(cleaned, primary)
+            else base.value
         )
-
-    derived_value = apply_qualifier(base.value, primary)
+        if normalized != base.value:
+            derived_value = normalized
+        else:
+            return StrategyResult(
+                field=canonical,
+                value=base.value,
+                selected=base.selected,
+                alternatives=base.alternatives,
+                confidence=base.confidence,
+                rationale=(f"base {canonical} already contains qualifier {label}; not duplicated"),
+                strategy=PolicyStrategy.DERIVE,
+                derived_from=base.derived_from,
+                synthesized=base.synthesized,
+                locked=base.locked,
+            )
+    else:
+        derived_value = apply_qualifier(base.value, primary)
     transformation_ids = tuple(
         claim.id for claim in transformation_claims if _claim_has_transformation(claim, primary)
     )

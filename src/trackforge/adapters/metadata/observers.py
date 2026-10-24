@@ -496,18 +496,9 @@ class CoverArtObserver(_MetadataObserver):
                 candidates.extend(payload.candidates)
             if candidates:
                 break
-        if source is not None:
-            for index, thumbnail in enumerate(source.thumbnails[:4]):
-                candidates.append(
-                    CoverCandidate(
-                        source="source_thumbnail",
-                        url=thumbnail.url,
-                        mime=None,
-                        width=thumbnail.width,
-                        height=thumbnail.height,
-                        score=max(0.1, 0.3 - index * 0.05),
-                    )
-                )
+        # Source thumbnails are handled by ``SourceCoverObserver`` so their
+        # bytes are stored in CAS.  Keeping URL-only candidates here would
+        # prevent rendering when no CAA/iTunes/Deezer cover exists.
         if not candidates:
             return self._skip(
                 "no_data",

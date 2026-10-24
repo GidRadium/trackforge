@@ -218,3 +218,18 @@ def test_publish_options_reject_unknown_collision_policy() -> None:
 
 def test_target_format_enum_is_not_used_for_extension_guess() -> None:
     assert TargetFormat.MP3.value == "mp3"
+
+
+def test_nightcore_title_is_not_duplicated_in_library_name() -> None:
+    name = format_library_name(
+        "{artist} - {title} ({qualifier})",
+        {
+            "artist": "Delain",
+            "title": "Queen of Shadow (Nightcore)",
+        },
+        short_id="abcd1234",
+        derivative=("nightcore",),
+        extension=".m4a",
+    )
+
+    assert name == "Delain - Queen of Shadow (Nightcore).m4a"

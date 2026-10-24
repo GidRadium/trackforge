@@ -233,6 +233,8 @@ class PlanItem:
         )
         if is_url and has_source_metadata:
             observe_outputs = (*observe_outputs, SOURCE_METADATA_ARTIFACT)
+            if COVER_ARTIFACT in provided and COVER_ARTIFACT not in observe_outputs:
+                observe_outputs = (*observe_outputs, COVER_ARTIFACT)
             inputs = (MEDIA_ARTIFACT, SOURCE_SNAPSHOT_ARTIFACT)
         pipeline_plan = Planner().plan(
             observe_outputs,

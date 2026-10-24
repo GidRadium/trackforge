@@ -113,6 +113,7 @@ def test_config_show_json_is_single_machine_readable_object(
         "ranker_strategy",
         "ranker_threads",
         "send_audio_to_cloud",
+        "source_cover_enabled",
         "send_text_to_cloud",
         "state_dir",
         "stems_backend",

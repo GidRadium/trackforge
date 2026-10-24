@@ -206,6 +206,8 @@ class ObserveItem:
             )
             if snapshot is not None and has_source_metadata:
                 desired_list.append(SOURCE_METADATA_ARTIFACT)
+                if self._provides(COVER_ARTIFACT):
+                    desired_list.append(COVER_ARTIFACT)
             else:
                 snapshot = None
             desired = tuple(desired_list)

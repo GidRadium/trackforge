@@ -141,3 +141,18 @@ def test_canonical_field_aliases() -> None:
     assert canonical_field("track_total") == "tracktotal"
     with pytest.raises(DomainValidationError):
         canonical_field("")
+
+
+def test_strip_qualifier_normalizes_prefix_and_suffix() -> None:
+    from trackforge.domain.policies.normalization import strip_qualifier
+
+    assert strip_qualifier("Nightcore | Queen of Shadow", Transformation.NIGHTCORE) == (
+        "Queen of Shadow"
+    )
+    assert strip_qualifier("Queen of Shadow (Nightcore)", Transformation.NIGHTCORE) == (
+        "Queen of Shadow"
+    )
+    assert strip_qualifier("Queen of Shadow - Nightcore", Transformation.NIGHTCORE) == (
+        "Queen of Shadow"
+    )
+    assert strip_qualifier("Nightcore", Transformation.NIGHTCORE) == "Nightcore"
