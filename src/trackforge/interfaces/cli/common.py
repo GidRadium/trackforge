@@ -83,15 +83,13 @@ def build_config(
     if data_dir is not None:
         root = Path(data_dir).expanduser()
         updates["data_dir"] = root
-        # An explicit data directory opts into a fully isolated workspace;
-        # otherwise a sandboxed or read-only home cache would make every
-        # command fail before touching the requested directory.
+        # An explicit data directory isolates data/cache/state, but not the
+        # configuration directory: config.toml, cookies, and .env stay in the
+        # user's config dir unless TRACKFORGE_CONFIG_DIR explicitly overrides it.
         if not os.environ.get("TRACKFORGE_CACHE_DIR"):
             updates["cache_dir"] = root / "cache"
         if not os.environ.get("TRACKFORGE_STATE_DIR"):
             updates["state_dir"] = root / "state"
-        if not os.environ.get("TRACKFORGE_CONFIG_DIR"):
-            updates["config_dir"] = root / "config"
     if library_dir is not None:
         updates["library_dir"] = Path(library_dir).expanduser()
     if profile is not None:
