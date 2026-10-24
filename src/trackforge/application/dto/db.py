@@ -446,11 +446,43 @@ class ClaimEventRecord:
 
 @dataclass(frozen=True, slots=True)
 class FeedbackStats:
-    """Aggregated feedback counts for reporting."""
+    """Aggregated feedback counts for reporting.
+
+    ``by_source``/``by_method`` describe the evidence behind the reviewed
+    decision (for example ``musicbrainz``/``musicbrainz-api/v1``).  They are
+    derived from the event's context snapshot, so older events without a
+    snapshot land in ``unknown`` rather than being silently dropped.
+    """
 
     total: int
     by_kind: dict[str, int] = dc_field(default_factory=dict)
     by_field: dict[str, int] = dc_field(default_factory=dict)
+    by_source: dict[str, int] = dc_field(default_factory=dict)
+    by_method: dict[str, int] = dc_field(default_factory=dict)
+    corrections: int = 0
+    approvals: int = 0
+    rejections: int = 0
+    locks: int = 0
+    unlocks: int = 0
+    review_notes: int = 0
+    unknowns: int = 0
+
+    @property
+    def correction_rate(self) -> float:
+        reviewed = self.corrections + self.approvals + self.rejections
+        return 0.0 if reviewed <= 0 else self.corrections / reviewed
+
+    @property
+    def review_rate(self) -> float:
+        return (
+            0.0
+            if self.total <= 0
+            else (self.corrections + self.approvals + self.rejections) / self.total
+        )
+
+    @property
+    def unknown_rate(self) -> float:
+        return 0.0 if self.total <= 0 else self.unknowns / self.total
 
 
 __all__ = [

@@ -1,0 +1,10 @@
+{
+  "id": 4242,
+  "trackName": "Fixture Song",
+  "artistName": "Fixture Artist",
+  "albumName": "Fixture Album",
+  "duration": 0.75,
+  "instrumental": false,
+  "plainLyrics": "First line\nSecond line\nThird line",
+  "syncedLyrics": "[00:01.00]First line\n[00:03.50]Second line\n[00:06.25]Third line"
+}

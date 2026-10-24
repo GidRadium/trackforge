@@ -25,9 +25,11 @@ from trackforge.adapters.persistence.sqlite.repositories import (
     SqliteLibraryRepository,
     SqliteLockRepository,
     SqliteMediaRepository,
+    SqliteModelRepository,
     SqliteRenderRepository,
     SqliteRunRepository,
 )
+from trackforge.application.ports.models import ModelRegistry
 from trackforge.application.ports.repositories import (
     ArtifactRepository,
     ClaimRepository,
@@ -59,6 +61,7 @@ class SqliteUnitOfWork:
     runs: RunRepository
     renders: RenderRepository
     library: LibraryRepository
+    models: ModelRegistry
 
     def __init__(self, catalog: Catalog) -> None:
         self._catalog = catalog
@@ -90,6 +93,7 @@ class SqliteUnitOfWork:
         self.runs = SqliteRunRepository(runner)
         self.renders = SqliteRenderRepository(runner)
         self.library = SqliteLibraryRepository(runner)
+        self.models = SqliteModelRepository(runner)
         return self
 
     async def commit(self) -> None:

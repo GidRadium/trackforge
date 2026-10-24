@@ -9,7 +9,7 @@ import pytest
 from tests.application.conftest import ClaimSpec
 
 from trackforge.bootstrap.container import CatalogContext
-from trackforge.domain.errors import DomainValidationError, ResolutionFailed, UnsupportedMode
+from trackforge.domain.errors import DomainValidationError, ResolutionFailed
 from trackforge.domain.model.claims import Subject
 from trackforge.domain.model.decisions import FieldPolicy, OnMissing, PolicyStrategy
 from trackforge.domain.model.ids import ItemId
@@ -246,11 +246,8 @@ async def test_ids_are_unknown_in_policy_mode_even_with_valid_claims(
     assert any("authority evidence" in warning for warning in resolved.warnings)
 
 
-@pytest.mark.parametrize(
-    "mode",
-    ["llm_assisted", "llm_autopilot", "manual"],
-)
-async def test_unsupported_modes_raise(
+@pytest.mark.parametrize("mode", ["llm_assisted", "llm_autopilot"])
+async def test_llm_modes_without_provider_fall_back_to_policy(
     catalog_context: CatalogContext,
     create_item: Callable[..., Any],
     append_claim: Callable[..., Any],
@@ -259,8 +256,32 @@ async def test_unsupported_modes_raise(
     item_id = await create_item()
     await _title(item_id, append_claim)
 
-    with pytest.raises(UnsupportedMode):
-        await catalog_context.resolve_item().resolve(item_id, mode=mode)
+    resolved = await catalog_context.resolve_item().resolve(item_id, mode=mode)
+
+    assert resolved.fields["title"] == "Song"
+    assert any("fallback" in warning for warning in resolved.warnings)
+
+
+async def test_manual_mode_selects_user_claim_and_marks_decided_by_user(
+    catalog_context: CatalogContext,
+    create_item: Callable[..., Any],
+    append_claim: Callable[..., Any],
+) -> None:
+    item_id = await create_item()
+    await _title(item_id, append_claim)
+    await _title(item_id, append_claim, "Manual Title", source="user", confidence=1.0)
+
+    resolved = await catalog_context.resolve_item().resolve(item_id, mode="manual")
+
+    assert resolved.fields["title"] == "Manual Title"
+    async with catalog_context.unit_of_work() as uow:
+        record = await uow.decisions.get_record(resolved.decision_record_id)
+    assert record is not None
+    title = record.decision_for("title")
+    assert title is not None
+    assert title.mode.value == "manual"
+    assert title.decided_by.value == "user"
+    assert title.locked is False
 
 
 async def test_cross_field_track_exceeds_total_becomes_unknown(

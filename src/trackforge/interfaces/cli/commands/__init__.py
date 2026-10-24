@@ -7,7 +7,9 @@ import typer
 from trackforge.interfaces.cli.commands.add import add_command
 from trackforge.interfaces.cli.commands.doctor import doctor_command
 from trackforge.interfaces.cli.commands.explain import explain_command
+from trackforge.interfaces.cli.commands.feedback import feedback_app
 from trackforge.interfaces.cli.commands.import_path import import_command
+from trackforge.interfaces.cli.commands.models import models_app
 from trackforge.interfaces.cli.commands.plan import plan_command
 from trackforge.interfaces.cli.commands.publish import publish_command
 from trackforge.interfaces.cli.commands.render import render_command
@@ -29,6 +31,8 @@ def register_commands(app: typer.Typer) -> None:
     app.command("doctor")(doctor_command)
     app.command("status")(status_command)
     app.command("resume")(resume_command)
+    app.add_typer(models_app, name="models")
+    app.add_typer(feedback_app, name="feedback")
 
 
 __all__ = ["register_commands"]

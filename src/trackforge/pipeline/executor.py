@@ -37,7 +37,7 @@ from trackforge.application.ports.storage import ArtifactStore, StorageError
 from trackforge.application.services.canonical_json import canonical_json, sha256_hex
 from trackforge.domain.errors import RateLimited, TrackForgeError
 from trackforge.domain.model._validation import utc_now
-from trackforge.domain.model.capabilities import ArtifactType, CapabilityManifest
+from trackforge.domain.model.capabilities import ArtifactType, CapabilityManifest, SideEffect
 from trackforge.domain.model.ids import ItemId, RunId, StepId
 from trackforge.pipeline.budget import Budget
 from trackforge.pipeline.cache import Cache, CacheMiss, cache_key_for_step
@@ -645,10 +645,25 @@ class Executor:
                 if isinstance(item, ArtifactType)
             }
             try:
-                ref = await self._cache.lookup(cache_key, expected or None)
+                ref, stale = await self._cache.lookup_with_status(
+                    cache_key,
+                    expected or None,
+                    allow_stale=manifest.side_effects is SideEffect.NETWORK,
+                )
                 if ref is not None:
                     entry = await self._cache.load(ref, expected or None)
                     cache_warnings = list(entry.result.warnings)
+                    if stale:
+                        cache_warnings.append(
+                            make_warning(
+                                WarningCode.STALE,
+                                (
+                                    f"{node.capability_id} reused an expired external "
+                                    "artifact; use --refresh to fetch a new response"
+                                ),
+                                capability_id=node.capability_id,
+                            )
+                        )
                     await self._jobs.step_cached(
                         step.id,
                         cache_key=cache_key,
@@ -881,9 +896,10 @@ class Executor:
                 refs=refs,
                 fallback_cache_key=cache_key,
             )
+            resolved_cache_key = refs[0].cache_key if refs else cache_key
             await self._jobs.step_succeeded(
                 step.id,
-                cache_key=cache_key,
+                cache_key=resolved_cache_key,
                 warnings=warnings,
             )
             succeeded = self._jobs.step(step.id)

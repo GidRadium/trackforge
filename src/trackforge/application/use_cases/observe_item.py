@@ -17,18 +17,32 @@ from trackforge.application.dto.observations import (
 )
 from trackforge.application.ports.execution import Capability, StepInput, StepWarning
 from trackforge.application.ports.observations import (
+    ACOUSTID_ARTIFACT,
+    ASR_TRANSCRIPT_ARTIFACT,
+    COVER_ARTIFACT,
+    FINGERPRINT_ARTIFACT,
+    LYRICS_ARTIFACT,
     MEDIA_ARTIFACT,
+    MUSICBRAINZ_ARTIFACT,
     PATH_STRUCTURE_ARTIFACT,
     PROBE_ARTIFACT,
     SOURCE_METADATA_ARTIFACT,
     SOURCE_SNAPSHOT_ARTIFACT,
+    STEMS_ARTIFACT,
 )
 from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.ports.storage import ArtifactStore, StorageError
 from trackforge.application.services.canonical_json import canonical_json, sha256_hex
 from trackforge.application.use_cases.plan_item import (
+    ASR_CAPABILITY_ALIASES,
     DEFAULT_OBSERVE_OUTPUTS,
     DEFAULT_REQUIRED_OUTPUTS,
+    METADATA_OBSERVE_OUTPUTS,
+    STEMS_CAPABILITY_ALIASES,
+    asr_requested,
+    planner_disabled,
+    planner_enabled,
+    stems_requested,
 )
 from trackforge.domain.errors import (
     DomainValidationError,
@@ -57,6 +71,8 @@ class ObserveItem:
         *,
         config: Mapping[str, Any] | None = None,
         max_attempts: int = 2,
+        metadata_enabled: bool | None = None,
+        metadata: bool | None = None,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
@@ -65,16 +81,81 @@ class ObserveItem:
         self._artifact_store = artifact_store
         self._config = dict(config or {})
         self._max_attempts = max_attempts
+        registered_metadata = any(
+            isinstance(artifact, ArtifactType) and artifact in METADATA_OBSERVE_OUTPUTS
+            for capability in self._capabilities
+            for artifact in capability.manifest.provides
+        )
+        requested = metadata if metadata is not None else metadata_enabled
+        if requested is None:
+            requested = bool(
+                self._config.get("metadata")
+                or self._config.get("metadata_enabled")
+                or registered_metadata
+            )
+        self._metadata_enabled = bool(requested)
 
     async def observe(
         self,
         item_id: ItemId,
         profile: str | AnalysisProfile = "balanced",
+        *,
+        refresh: bool | str | Sequence[str] | None = None,
+        metadata: bool | None = None,
+        enabled: Sequence[str] = (),
+        disabled: Sequence[str] = (),
     ) -> ObservationView:
-        """Execute observations, update measured media fields, and mark observed."""
+        """Execute observations, update measured media fields, and mark observed.
 
-        analysis_profile = self._profile(profile)
+        ``metadata=True`` (or ``metadata_enabled`` on the use case) adds the
+        opt-in fingerprint/AcoustID/MusicBrainz/cover/lyrics observers.  ASR is
+        requested by ``profile=full`` or ``enabled`` (``asr``/``whisper``) and
+        can be turned off with ``disabled=('asr',)``.  Demucs is requested by
+        ``profile=full`` or ``enabled`` (``stems``/``demucs``) and can be
+        turned off with ``disabled=('stems',)``.  When ``refresh`` is true,
+        expensive metadata/ASR/stems capabilities bypass the artifact cache;
+        local observations remain cacheable.
+        """
+
+        analysis_profile = self._profile(profile, enabled=enabled, disabled=disabled)
+        profile_name = analysis_profile.name
+        asr_on = asr_requested(
+            profile_name,
+            analysis_profile.enabled,
+            analysis_profile.disabled,
+        )
+        asr_off_for_full = profile_name.strip().casefold() == "full" and bool(
+            ASR_CAPABILITY_ALIASES.intersection(
+                {item.strip().casefold() for item in analysis_profile.disabled if item.strip()}
+            )
+        )
+        stems_on = stems_requested(
+            profile_name,
+            analysis_profile.enabled,
+            analysis_profile.disabled,
+        )
+        stems_off_for_full = profile_name.strip().casefold() == "full" and bool(
+            STEMS_CAPABILITY_ALIASES.intersection(
+                {item.strip().casefold() for item in analysis_profile.disabled if item.strip()}
+            )
+        )
         warnings: list[ObservationWarning] = []
+        if asr_off_for_full:
+            warnings.append(
+                ObservationWarning(
+                    code="asr_disabled",
+                    message="ASR was requested by the full profile but disabled by flags",
+                    user_action="Remove --disable asr to run Whisper again.",
+                )
+            )
+        if stems_off_for_full:
+            warnings.append(
+                ObservationWarning(
+                    code="stems_disabled",
+                    message="stems were requested by the full profile but disabled by flags",
+                    user_action="Remove --disable stems to run Demucs again.",
+                )
+            )
         run: RunResult
         view: ObservationView
 
@@ -104,6 +185,13 @@ class ObserveItem:
                 for output in DEFAULT_OBSERVE_OUTPUTS
                 if source_path is not None or output != PATH_STRUCTURE_ARTIFACT
             ]
+            include_metadata = self._metadata_enabled if metadata is None else bool(metadata)
+            if include_metadata:
+                desired_list.extend(self._metadata_outputs())
+            if (asr_on or asr_off_for_full) and self._provides(ASR_TRANSCRIPT_ARTIFACT):
+                desired_list.append(ASR_TRANSCRIPT_ARTIFACT)
+            if (stems_on or stems_off_for_full) and self._provides(STEMS_ARTIFACT):
+                desired_list.append(STEMS_ARTIFACT)
             if source_path is None:
                 warnings.append(
                     ObservationWarning(
@@ -149,8 +237,11 @@ class ObserveItem:
                 self._capabilities,
                 self._artifact_store,
                 uow.runs,
-                config=self._config,
+                config={**self._config, "offline": self._config.get("offline", False)},
                 max_attempts=self._max_attempts,
+                force_steps=self._refresh_steps(
+                    self._config.get("refresh", False) if refresh is None else refresh
+                ),
                 commit=uow.commit,
             )
             initial_inputs: dict[ArtifactType | str, StepInput] = {
@@ -217,13 +308,90 @@ class ObserveItem:
             ref=reference,
         )
 
+    def _provides(self, artifact: ArtifactType) -> bool:
+        return any(artifact in capability.manifest.provides for capability in self._capabilities)
+
+    def _metadata_outputs(self) -> list[ArtifactType]:
+        provided = {
+            artifact
+            for capability in self._capabilities
+            for artifact in capability.manifest.provides
+            if isinstance(artifact, ArtifactType)
+        }
+        outputs: list[ArtifactType] = []
+        if FINGERPRINT_ARTIFACT in provided:
+            outputs.append(FINGERPRINT_ARTIFACT)
+        if ACOUSTID_ARTIFACT in provided and FINGERPRINT_ARTIFACT in outputs:
+            outputs.append(ACOUSTID_ARTIFACT)
+        if MUSICBRAINZ_ARTIFACT in provided:
+            outputs.append(MUSICBRAINZ_ARTIFACT)
+        if COVER_ARTIFACT in provided and MUSICBRAINZ_ARTIFACT in outputs:
+            outputs.append(COVER_ARTIFACT)
+        if LYRICS_ARTIFACT in provided:
+            outputs.append(LYRICS_ARTIFACT)
+        return outputs
+
+    def _refresh_steps(self, refresh: bool | str | Sequence[str]) -> tuple[str, ...]:
+        if refresh is False:
+            return ()
+        if refresh is True:
+            return tuple(
+                capability.manifest.id
+                for capability in self._capabilities
+                if any(
+                    isinstance(artifact, ArtifactType)
+                    and (
+                        artifact in METADATA_OBSERVE_OUTPUTS
+                        or artifact in {ASR_TRANSCRIPT_ARTIFACT, STEMS_ARTIFACT}
+                    )
+                    for artifact in capability.manifest.provides
+                )
+            )
+        if isinstance(refresh, str):
+            requested = tuple(part.strip() for part in refresh.split(",") if part.strip())
+        else:
+            requested = tuple(str(item).strip() for item in refresh if str(item).strip())
+        aliases = {
+            "fingerprint": "chromaprint",
+            "musicbrainz": "musicbrainz_search",
+            "acoustid": "acoustid_lookup",
+            "cover": "cover_search",
+            "cover_art_archive": "cover_search",
+            "itunes": "cover_search",
+            "deezer": "cover_search",
+            "lrclib": "lrclib_search",
+            "lyrics": "lrclib_search",
+            "asr": "whisper",
+            "transcript": "whisper",
+            "stems": "demucs",
+            "demucs": "demucs",
+        }
+        return tuple(aliases.get(item.casefold(), item) for item in requested)
+
     @staticmethod
-    def _profile(value: str | AnalysisProfile) -> AnalysisProfile:
+    def _profile(
+        value: str | AnalysisProfile,
+        *,
+        enabled: Sequence[str] = (),
+        disabled: Sequence[str] = (),
+    ) -> AnalysisProfile:
         if isinstance(value, AnalysisProfile):
-            return value
-        if isinstance(value, str) and value.strip():
-            return AnalysisProfile(name=value)
-        raise DomainValidationError("profile must be a non-empty name or AnalysisProfile")
+            name = value.name
+            base_enabled = tuple(value.enabled)
+            base_disabled = tuple(value.disabled)
+        elif isinstance(value, str) and value.strip():
+            name = value
+            base_enabled = ()
+            base_disabled = ()
+        else:
+            raise DomainValidationError("profile must be a non-empty name or AnalysisProfile")
+        requested_enabled = tuple(enabled) or base_enabled
+        requested_disabled = tuple(disabled) or base_disabled
+        return AnalysisProfile(
+            name=name,
+            enabled=planner_enabled(requested_enabled),
+            disabled=planner_disabled(name, requested_enabled, requested_disabled),
+        )
 
     async def _source_path(
         self,

@@ -277,3 +277,197 @@ def test_fixture_config_is_wrapped_by_container(config: TrackForgeConfig) -> Non
     context = build_context(config)
 
     assert context.config is config
+
+
+def test_llm_ranker_and_privacy_sections_are_loaded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    clean_env: None,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        """
+[llm]
+provider = "openai-compatible"
+base_url = "https://llm.example/v1"
+model = "test-model"
+api_key_env = "MY_LLM_KEY"
+max_cost_usd_per_item = 0.25
+price_in = 0.5
+price_out = 2.0
+strict_schema = false
+thinking = "disabled"
+
+[ranker]
+strategy = "hybrid"
+threads = 4
+
+[models]
+offline = true
+max_heavy_models = 1
+
+[models.ranker]
+name = "BAAI/bge-reranker-base"
+path = "ranker/model.onnx"
+license = "MIT"
+checksum = "abc"
+
+[privacy]
+send_text_to_cloud = true
+send_audio_to_cloud = false
+""",
+        encoding="utf-8",
+    )
+
+    config = TrackForgeConfig.from_file(path)
+
+    assert config.llm_base_url == "https://llm.example/v1"
+    assert config.llm_model == "test-model"
+    assert config.llm_api_key_env == "MY_LLM_KEY"
+    assert config.llm_max_cost_usd_per_item == pytest.approx(0.25)
+    assert config.llm_price_in == pytest.approx(0.5)
+    assert config.llm_price_out == pytest.approx(2.0)
+    assert config.llm_strict_schema is False
+    assert config.llm_thinking == "disabled"
+    assert config.ranker_strategy == "hybrid"
+    assert config.ranker_threads == 4
+    assert config.ranker_model == "BAAI/bge-reranker-base"
+    assert config.ranker_model_path == "ranker/model.onnx"
+    assert config.ranker_license == "MIT"
+    assert config.send_text_to_cloud is True
+    assert config.send_audio_to_cloud is False
+    assert config.llm_configured is True
+
+
+def test_llm_env_overrides_toml(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    clean_env: None,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[llm]\nbase_url = "https://toml.example/v1"\nmodel = "toml-model"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TRACKFORGE_LLM_BASE_URL", "https://env.example/v1")
+    monkeypatch.setenv("TRACKFORGE_LLM_MODEL", "env-model")
+
+    config = TrackForgeConfig.from_file(path)
+
+    assert config.llm_base_url == "https://env.example/v1"
+    assert config.llm_model == "env-model"
+
+
+def test_unknown_llm_key_raises_config_error(
+    tmp_path: Path,
+    clean_env: None,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('[llm]\nmystery = "value"\n', encoding="utf-8")
+
+    with pytest.raises(ConfigError) as caught:
+        TrackForgeConfig.from_file(path)
+
+    assert "llm.mystery" in str(caught.value)
+
+
+def test_models_asr_table_is_loaded_and_projected(
+    tmp_path: Path,
+    clean_env: None,
+) -> None:
+    from trackforge.application.ports.models import ModelKind, model_specs_from_config
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        """
+[models.asr]
+name = "Systran/faster-whisper-small"
+path = "asr/small"
+version = "536b0662742c02347bc0e980a01041f333bce120"
+license = "MIT"
+checksum = "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671"
+compute_type = "int8"
+threads = 8
+vad_filter = false
+beam_size = 3
+memory_mb = 4096
+""",
+        encoding="utf-8",
+    )
+
+    config = TrackForgeConfig.from_file(path)
+    specs = model_specs_from_config(config)
+    asr = [spec for spec in specs if spec.kind is ModelKind.ASR]
+
+    assert config.asr_model == "Systran/faster-whisper-small"
+    assert config.asr_model_path == "asr/small"
+    assert config.asr_compute_type == "int8"
+    assert config.asr_threads == 8
+    assert config.asr_vad_filter is False
+    assert config.asr_beam_size == 3
+    assert config.asr_memory_mb == 4096
+    assert len(asr) == 1
+    assert asr[0].license == "MIT"
+    assert asr[0].checksum.startswith("3e3059")
+    assert asr[0].metadata["repo"] == "Systran/faster-whisper-small"
+    assert asr[0].metadata["compute_type"] == "int8"
+
+
+def test_unknown_models_asr_key_raises_config_error(
+    tmp_path: Path,
+    clean_env: None,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[models.asr]\nmystery = true\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError) as caught:
+        TrackForgeConfig.from_file(path)
+
+    assert "models.asr.mystery" in str(caught.value)
+
+
+def test_stems_table_is_parsed(tmp_path: Path, clean_env: None) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[models.stems]\n"
+        'name = "htdemucs"\n'
+        'license = "MIT"\n'
+        'checksum = "abc"\n'
+        "jobs = 1\n"
+        "overlap = 0.25\n",
+        encoding="utf-8",
+    )
+
+    config = TrackForgeConfig.from_file(path)
+
+    assert config.stems_model == "htdemucs"
+    assert config.stems_license == "MIT"
+    assert config.stems_checksum == "abc"
+    assert config.stems_jobs == 1
+    assert config.stems_overlap == 0.25
+
+
+def test_demucs_table_is_an_alias_for_stems(tmp_path: Path, clean_env: None) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[models.demucs]\nname = "htdemucs"\nlicense = "MIT"\n',
+        encoding="utf-8",
+    )
+
+    config = TrackForgeConfig.from_file(path)
+
+    assert config.stems_model == "htdemucs"
+    assert config.stems_license == "MIT"
+
+
+def test_stems_jobs_above_one_is_rejected(tmp_path: Path, clean_env: None) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[models.stems]\nname = "htdemucs"\njobs = 2\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as exc_info:
+        TrackForgeConfig.from_file(path)
+
+    assert exc_info.value.key == "stems_jobs"

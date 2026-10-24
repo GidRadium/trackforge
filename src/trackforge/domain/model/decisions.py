@@ -15,6 +15,7 @@ from trackforge.domain.model._validation import (
     coerce_enum,
     ensure_bool,
     ensure_datetime,
+    ensure_float,
     ensure_id_tuple,
     ensure_int,
     ensure_sequence,
@@ -293,6 +294,8 @@ class DecisionRecord:
     llm_model: str | None = None
     prompt_version: str | None = None
     input_claim_ids: tuple[ClaimId, ...] = ()
+    llm_cost_usd: float | None = None
+    llm_usage: dict[str, Any] | None = None
     created_at: datetime = dc_field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
@@ -337,6 +340,18 @@ class DecisionRecord:
             "input_claim_ids",
             ensure_id_tuple(self.input_claim_ids, "input_claim_ids"),
         )
+        if self.llm_cost_usd is not None:
+            object.__setattr__(
+                self,
+                "llm_cost_usd",
+                ensure_float(self.llm_cost_usd, "llm_cost_usd", minimum=0.0),
+            )
+        if self.llm_usage is not None:
+            object.__setattr__(
+                self,
+                "llm_usage",
+                json_mapping(self.llm_usage, "llm_usage"),
+            )
         object.__setattr__(
             self,
             "created_at",

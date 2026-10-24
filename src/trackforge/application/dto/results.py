@@ -7,6 +7,7 @@ same shape without reaching into domain objects.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -34,6 +35,29 @@ _KNOWN_STEPS = frozenset(
 )
 
 
+def _capability_names(value: object, field_name: str) -> tuple[str, ...]:
+    if isinstance(value, str):
+        raw: Sequence[object] = tuple(part.strip() for part in value.split(","))
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        raw = tuple(value)
+    elif value is None:
+        raw = ()
+    else:
+        raise DomainValidationError(
+            f"{field_name} must be a comma-separated string or a sequence",
+            context={"field": field_name},
+        )
+    names: list[str] = []
+    for item in raw:
+        text = str(item).strip()
+        if not text:
+            continue
+        lowered = text.casefold()
+        if lowered not in names:
+            names.append(lowered)
+    return tuple(names)
+
+
 def _coerce_target(value: object) -> TargetFormat | None:
     if value is None:
         return None
@@ -59,7 +83,10 @@ class RunOptions:
     auto: bool = False
     review: bool = False
     force_steps: tuple[str, ...] | str = ()
+    enabled: tuple[str, ...] | str = ()
+    disabled: tuple[str, ...] | str = ()
     offline: bool = False
+    refresh: bool = False
     dry_run: bool = False
     target_format: TargetFormat | None = None
     format_id: str | None = None
@@ -78,7 +105,7 @@ class RunOptions:
             raise DomainValidationError("naming must not be empty")
         if self.auto and self.review:
             raise DomainValidationError("auto and review are mutually exclusive")
-        for name in ("auto", "review", "offline", "dry_run"):
+        for name in ("auto", "review", "offline", "refresh", "dry_run"):
             if not isinstance(getattr(self, name), bool):
                 raise DomainValidationError(f"{name} must be a boolean")
         if self.format_id is not None:
@@ -108,6 +135,16 @@ class RunOptions:
         object.__setattr__(self, "mode", mode)
         object.__setattr__(self, "naming", naming)
         object.__setattr__(self, "force_steps", tuple(normalized))
+        enabled_names = _capability_names(self.enabled, "enabled")
+        disabled_names = _capability_names(self.disabled, "disabled")
+        overlap = set(enabled_names) & set(disabled_names)
+        if overlap:
+            raise DomainValidationError(
+                "enabled and disabled capabilities must not overlap",
+                context={"overlap": sorted(overlap)},
+            )
+        object.__setattr__(self, "enabled", enabled_names)
+        object.__setattr__(self, "disabled", disabled_names)
         object.__setattr__(self, "target_format", _coerce_target(self.target_format))
         if not isinstance(self.publish, PublishOptions):
             raise DomainValidationError("publish must be a PublishOptions instance")

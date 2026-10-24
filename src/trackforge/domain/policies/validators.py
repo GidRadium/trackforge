@@ -56,6 +56,8 @@ _TEXT_FIELDS = frozenset(
 _PATH_SEPARATORS = ("/", "\\", "\x00")
 _ISRC_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{3}\d{7}$")
 _LANGUAGE_RE = re.compile(r"^[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?$")
+_LYRICS_FIELDS = frozenset({"lyrics", "synced_lyrics", "elrc"})
+_MAX_LYRICS_BYTES = 256 * 1024
 
 
 class Severity(StrEnum):
@@ -195,6 +197,16 @@ def validate_field(
             soft_reason="suspiciously long genre",
             reject_path_separators=False,
         )
+    if canonical in _LYRICS_FIELDS:
+        if not isinstance(value, str):
+            return _hard("wrong_type", f"{canonical} must be a string", canonical)
+        if len(value.encode("utf-8")) > _MAX_LYRICS_BYTES:
+            return _hard(
+                "lyrics_too_large",
+                f"{canonical} exceeds the 256 KB limit; keep it in a sidecar",
+                canonical,
+            )
+        return _validate_text(canonical, value, max_length=300_000)
     if canonical in _TEXT_FIELDS:
         return _validate_text(canonical, value, max_length=10_000)
     if canonical in {"date", "originaldate"}:

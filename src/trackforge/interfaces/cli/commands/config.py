@@ -38,6 +38,9 @@ def config_show(
             "deno_binary",
             "ytdlp_timeout_metadata",
             "ytdlp_timeout_download",
+            "metadata_enabled",
+            "acoustid_api_key",
+            "musicbrainz_user_agent",
         ):
             payload.pop(key, None)
         if as_json:

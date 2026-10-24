@@ -9,6 +9,20 @@ from trackforge.application.dto.decisions import (
     InterpretationView,
     ResolvedMetadata,
 )
+from trackforge.application.dto.derivatives import (
+    DerivativeEvidencePayload,
+    DerivativeHypothesesPayload,
+    DerivativeHypothesisPayload,
+    DerivativeParametersPayload,
+)
+from trackforge.application.dto.feedback import (
+    CorrectionView,
+    FeedbackExportResult,
+    FeedbackGroupStats,
+    FeedbackStatsReport,
+    LockView,
+    ReviewSessionView,
+)
 from trackforge.application.dto.results import (
     AnalysisView,
     DoctorCheck,
@@ -24,6 +38,12 @@ from trackforge.application.dto.results import (
     publish_result,
     render_view,
 )
+from trackforge.application.dto.stems import (
+    StemFeatures,
+    StemRatios,
+    StemsModelInfo,
+    StemsPayload,
+)
 from trackforge.application.dto.views import (
     DecisionView,
     ItemView,
@@ -37,25 +57,39 @@ __all__ = [
     "AlternativeView",
     "AnalysisView",
     "ClaimView",
+    "CorrectionView",
     "DecisionView",
+    "DerivativeEvidencePayload",
+    "DerivativeHypothesesPayload",
+    "DerivativeHypothesisPayload",
+    "DerivativeParametersPayload",
     "DoctorCheck",
     "DoctorReport",
     "DoctorStatus",
     "ExplanationView",
+    "FeedbackExportResult",
+    "FeedbackGroupStats",
+    "FeedbackStatsReport",
     "InterpretationView",
     "ItemView",
     "LibraryEntryView",
+    "LockView",
     "PublishResult",
     "RenderView",
     "ResolvedMetadata",
     "ResolveView",
     "ReviewFieldView",
+    "ReviewSessionView",
     "ReviewView",
     "RunItemView",
     "RunOptions",
     "RunResult",
     "RunStepView",
+    "StemFeatures",
+    "StemRatios",
     "StatusView",
+    "StemsModelInfo",
+    "StemsPayload",
     "publish_result",
     "render_view",
 ]

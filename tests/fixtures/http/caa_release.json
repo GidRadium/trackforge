@@ -1,0 +1,25 @@
+{
+  "images": [
+    {
+      "id": 123456,
+      "image": "https://coverartarchive.org/release/cccccccc-cccc-4ccc-8ccc-cccccccccccc/front-1200.jpg",
+      "thumbnails": {
+        "small": "https://coverartarchive.org/release/cccccccc-cccc-4ccc-8ccc-cccccccccccc/front-250.jpg",
+        "large": "https://coverartarchive.org/release/cccccccc-cccc-4ccc-8ccc-cccccccccccc/front-500.jpg"
+      },
+      "front": true,
+      "types": ["Front"],
+      "approved": true,
+      "comment": ""
+    },
+    {
+      "id": 654321,
+      "image": "https://coverartarchive.org/release/cccccccc-cccc-4ccc-8ccc-cccccccccccc/back-1200.jpg",
+      "thumbnails": {},
+      "front": false,
+      "types": ["Back"],
+      "approved": true,
+      "comment": ""
+    }
+  ]
+}

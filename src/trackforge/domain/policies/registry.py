@@ -15,12 +15,28 @@ from trackforge.domain.model.decisions import (
 )
 from trackforge.domain.policies.normalization import canonical_field
 
-# The v1 priority order is intentionally source-shaped: a claim from an
-# existing tag ("item") outranks a path-derived guess, and path values remain
+# The v1 priority order is intentionally source-shaped: explicit user data and
+# an authority provider outrank existing tags, while path-derived guesses stay
 # a low-confidence fallback rather than being deleted.
-_TITLE_PRIORITY = ("user_lock", "item.title", "path.title", "unknown")
-_ARTIST_PRIORITY = ("user_lock", "item.artist", "path.artist", "unknown")
-_SIMPLE_PRIORITY = ("user_lock", "item.{field}", "unknown")
+_TITLE_PRIORITY = (
+    "user_lock",
+    "user",
+    "musicbrainz",
+    "item.title",
+    "path.title",
+    "llm",
+    "unknown",
+)
+_ARTIST_PRIORITY = (
+    "user_lock",
+    "user",
+    "musicbrainz",
+    "item.artist",
+    "path.artist",
+    "llm",
+    "unknown",
+)
+_SIMPLE_PRIORITY = ("user_lock", "user", "musicbrainz", "item.{field}", "llm", "unknown")
 _COMMENT_PRIORITY = (
     "user_lock",
     "item.comment",
@@ -84,7 +100,7 @@ DEFAULT_POLICIES: tuple[FieldPolicy, ...] = (
         id="date",
         field="date",
         strategy=PolicyStrategy.SOURCE_PRIORITY,
-        priority=("user_lock", "item.date", "unknown"),
+        priority=("user_lock", "user", "musicbrainz", "item.date", "llm", "unknown"),
         validators=("date",),
         version=1,
     ),
@@ -123,7 +139,15 @@ DEFAULT_POLICIES: tuple[FieldPolicy, ...] = (
         id="cover",
         field="artwork",
         strategy=PolicyStrategy.SOURCE_PRIORITY,
-        priority=("user_lock", "item.artwork", "unknown"),
+        priority=(
+            "user_lock",
+            "cover_art_archive",
+            "itunes",
+            "deezer",
+            "source_thumbnail",
+            "item.artwork",
+            "unknown",
+        ),
         validators=("artwork",),
         version=1,
     ),
@@ -131,10 +155,53 @@ DEFAULT_POLICIES: tuple[FieldPolicy, ...] = (
         id="lyrics",
         field="lyrics",
         strategy=PolicyStrategy.SOURCE_PRIORITY,
-        priority=("user_lock", "item.lyrics", "unknown"),
+        priority=(
+            "user_lock",
+            "user",
+            "lyrics_merge",
+            "lrclib",
+            "asr",
+            "item.lyrics",
+            "unknown",
+        ),
         validators=("lyrics",),
         version=1,
     ),
+    FieldPolicy(
+        id="synced_lyrics",
+        field="synced_lyrics",
+        strategy=PolicyStrategy.SOURCE_PRIORITY,
+        priority=(
+            "user_lock",
+            "user",
+            "lyrics_merge",
+            "lrclib",
+            "asr",
+            "item.synced_lyrics",
+            "unknown",
+        ),
+        validators=("lyrics",),
+        version=1,
+    ),
+    FieldPolicy(
+        id="elrc",
+        field="elrc",
+        strategy=PolicyStrategy.SOURCE_PRIORITY,
+        priority=(
+            "user_lock",
+            "user",
+            "lyrics_merge",
+            "asr",
+            "item.elrc",
+            "unknown",
+        ),
+        validators=("lyrics",),
+        version=1,
+    ),
+    _simple("label"),
+    _simple("catalog_number"),
+    _simple("barcode"),
+    _simple("country"),
     FieldPolicy(
         id="compilation",
         field="compilation",
@@ -147,7 +214,15 @@ DEFAULT_POLICIES: tuple[FieldPolicy, ...] = (
         id="language",
         field="language",
         strategy=PolicyStrategy.SOURCE_PRIORITY,
-        priority=("user_lock", "item.language", "unknown"),
+        priority=(
+            "user_lock",
+            "user",
+            "musicbrainz",
+            "asr",
+            "lyrics_merge",
+            "item.language",
+            "unknown",
+        ),
         validators=("language",),
         version=1,
     ),

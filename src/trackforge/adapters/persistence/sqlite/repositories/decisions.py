@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -39,6 +39,12 @@ class SqliteDecisionRepository(SqliteRepository):
                     prompt_version=materialized.prompt_version,
                     input_claim_ids_json=to_json(
                         [str(item) for item in materialized.input_claim_ids]
+                    ),
+                    llm_cost_usd=materialized.llm_cost_usd,
+                    llm_usage_json=(
+                        to_json(materialized.llm_usage)
+                        if materialized.llm_usage is not None
+                        else None
                     ),
                     created_at=to_iso_z(materialized.created_at),
                 )
@@ -105,6 +111,25 @@ class SqliteDecisionRepository(SqliteRepository):
             return list(_load_decisions(session, record_id))
 
         return await self._run(_list)
+
+    async def count_decisions(
+        self,
+        *,
+        item_id: ItemId | None = None,
+        unknown_only: bool = False,
+    ) -> int:
+        def _count(session: Session) -> int:
+            statement = select(func.count()).select_from(DecisionRow)
+            if item_id is not None:
+                statement = statement.join(
+                    DecisionRecordRow,
+                    DecisionRecordRow.id == DecisionRow.record_id,
+                ).where(DecisionRecordRow.item_id == item_id)
+            if unknown_only:
+                statement = statement.where(DecisionRow.value_json == "null")
+            return int(session.scalar(statement) or 0)
+
+        return await self._run(_count)
 
 
 def _materialize_decisions(record: DecisionRecord) -> DecisionRecord:

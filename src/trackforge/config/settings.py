@@ -147,6 +147,21 @@ class TrackForgeConfig(BaseSettings):
         default=False,
         validation_alias=AliasChoices("CORE_OFFLINE", "OFFLINE"),
     )
+    # External metadata providers are opt-in.  Configuring either credential
+    # enables the network observers automatically; ``metadata_enabled`` is an
+    # explicit switch for deployments that want the providers without a key.
+    metadata_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("CORE_METADATA_ENABLED", "METADATA_ENABLED"),
+    )
+    acoustid_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("ACOUSTID_API_KEY"),
+    )
+    musicbrainz_user_agent: str = Field(
+        default="",
+        validation_alias=AliasChoices("MUSICBRAINZ_USER_AGENT"),
+    )
     # Downloader settings are internal to the URL adapter.  ``config show``
     # filters them so the portable configuration surface stays stable.
     ytdlp_binary: str = Field(
@@ -167,12 +182,271 @@ class TrackForgeConfig(BaseSettings):
         gt=0,
         validation_alias=AliasChoices("YTDLP_TIMEOUT_DOWNLOAD"),
     )
+    # LLM settings live in ``[llm]``.  The API key is never stored here: only
+    # the environment variable name is configuration.
+    llm_provider: Literal["openai-compatible"] = Field(
+        default="openai-compatible",
+        validation_alias=AliasChoices("LLM_PROVIDER"),
+    )
+    llm_base_url: str = Field(default="", validation_alias=AliasChoices("LLM_BASE_URL"))
+    llm_model: str = Field(default="", validation_alias=AliasChoices("LLM_MODEL"))
+    llm_api_key_env: str = Field(
+        default="TRACKFORGE_LLM_API_KEY",
+        validation_alias=AliasChoices("LLM_API_KEY_ENV"),
+    )
+    llm_max_cost_usd_per_item: float = Field(
+        default=0.50,
+        ge=0.0,
+        validation_alias=AliasChoices("LLM_MAX_COST_USD_PER_ITEM"),
+    )
+    llm_max_tokens: int = Field(
+        default=2000,
+        gt=0,
+        validation_alias=AliasChoices("LLM_MAX_TOKENS"),
+    )
+    llm_temperature: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=2.0,
+        validation_alias=AliasChoices("LLM_TEMPERATURE"),
+    )
+    llm_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0.0,
+        validation_alias=AliasChoices("LLM_TIMEOUT_SECONDS"),
+    )
+    llm_max_retries: int = Field(
+        default=1,
+        ge=0,
+        le=3,
+        validation_alias=AliasChoices("LLM_MAX_RETRIES"),
+    )
+    llm_price_in: float | None = Field(
+        default=None,
+        ge=0.0,
+        validation_alias=AliasChoices("LLM_PRICE_IN"),
+    )
+    llm_price_out: float | None = Field(
+        default=None,
+        ge=0.0,
+        validation_alias=AliasChoices("LLM_PRICE_OUT"),
+    )
+    llm_strict_schema: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("LLM_STRICT_SCHEMA"),
+    )
+    # DeepSeek enables thinking by default; metadata extraction wants it off.
+    llm_thinking: Literal["default", "enabled", "disabled"] = Field(
+        default="default",
+        validation_alias=AliasChoices("LLM_THINKING"),
+    )
+    # Ranker settings live in ``[ranker]`` and ``[models.ranker]``.
+    ranker_strategy: Literal["lexical", "cross_encoder", "hybrid"] = Field(
+        default="lexical",
+        validation_alias=AliasChoices("RANKER_STRATEGY"),
+    )
+    ranker_backend: str = Field(default="onnx", validation_alias=AliasChoices("RANKER_BACKEND"))
+    ranker_model: str = Field(default="", validation_alias=AliasChoices("RANKER_MODEL"))
+    ranker_model_path: str = Field(
+        default="",
+        validation_alias=AliasChoices("RANKER_MODEL_PATH"),
+    )
+    ranker_model_version: str = Field(
+        default="",
+        validation_alias=AliasChoices("RANKER_MODEL_VERSION"),
+    )
+    ranker_license: str = Field(default="", validation_alias=AliasChoices("RANKER_LICENSE"))
+    ranker_checksum: str = Field(default="", validation_alias=AliasChoices("RANKER_CHECKSUM"))
+    ranker_size_bytes: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("RANKER_SIZE_BYTES"),
+    )
+    ranker_heavy: bool = Field(default=True, validation_alias=AliasChoices("RANKER_HEAVY"))
+    ranker_threads: int = Field(
+        default=8,
+        gt=0,
+        validation_alias=AliasChoices("RANKER_THREADS"),
+    )
+    ranker_batch_size: int = Field(
+        default=8,
+        gt=0,
+        validation_alias=AliasChoices("RANKER_BATCH_SIZE"),
+    )
+    ranker_max_length: int = Field(
+        default=256,
+        gt=0,
+        validation_alias=AliasChoices("RANKER_MAX_LENGTH"),
+    )
+    # ASR settings live in ``[models.asr]``.  The model identifier is never
+    # hardcoded: an empty value means ASR is unconfigured and degrades visibly.
+    asr_backend: Literal["faster-whisper"] = Field(
+        default="faster-whisper",
+        validation_alias=AliasChoices("ASR_BACKEND"),
+    )
+    asr_model: str = Field(default="", validation_alias=AliasChoices("ASR_MODEL"))
+    asr_model_path: str = Field(
+        default="",
+        validation_alias=AliasChoices("ASR_MODEL_PATH"),
+    )
+    asr_model_version: str = Field(
+        default="",
+        validation_alias=AliasChoices("ASR_MODEL_VERSION"),
+    )
+    asr_license: str = Field(default="", validation_alias=AliasChoices("ASR_LICENSE"))
+    asr_checksum: str = Field(default="", validation_alias=AliasChoices("ASR_CHECKSUM"))
+    asr_size_bytes: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("ASR_SIZE_BYTES"),
+    )
+    asr_heavy: bool = Field(default=True, validation_alias=AliasChoices("ASR_HEAVY"))
+    asr_compute_type: Literal["int8", "int8_float32", "float32"] = Field(
+        default="int8",
+        validation_alias=AliasChoices("ASR_COMPUTE_TYPE"),
+    )
+    asr_threads: int = Field(
+        default=8,
+        ge=1,
+        le=16,
+        validation_alias=AliasChoices("ASR_THREADS"),
+    )
+    asr_vad_filter: bool = Field(
+        # Plan 13/16 measured VAD cutting most sung vocals.  Speech users can
+        # opt in; the music-first default keeps the full mix.
+        default=False,
+        validation_alias=AliasChoices("ASR_VAD_FILTER"),
+    )
+    asr_beam_size: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        validation_alias=AliasChoices("ASR_BEAM_SIZE"),
+    )
+    asr_memory_mb: int = Field(
+        default=2048,
+        ge=512,
+        validation_alias=AliasChoices("ASR_MEMORY_MB"),
+    )
+    # Demucs settings live in ``[models.stems]`` (``[models.demucs]`` is
+    # accepted as an alias).  An empty model id keeps stems opt-in; ``full``
+    # then reports a visible model_missing skip instead of running Demucs.
+    stems_backend: Literal["demucs"] = Field(
+        default="demucs",
+        validation_alias=AliasChoices("STEMS_BACKEND"),
+    )
+    stems_model: str = Field(default="", validation_alias=AliasChoices("STEMS_MODEL"))
+    stems_model_path: str = Field(
+        default="",
+        validation_alias=AliasChoices("STEMS_MODEL_PATH"),
+    )
+    stems_model_version: str = Field(
+        default="",
+        validation_alias=AliasChoices("STEMS_MODEL_VERSION"),
+    )
+    stems_model_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("STEMS_MODEL_URL"),
+    )
+    stems_model_file: str = Field(
+        default="",
+        validation_alias=AliasChoices("STEMS_MODEL_FILE"),
+    )
+    stems_license: str = Field(default="", validation_alias=AliasChoices("STEMS_LICENSE"))
+    stems_checksum: str = Field(default="", validation_alias=AliasChoices("STEMS_CHECKSUM"))
+    stems_size_bytes: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("STEMS_SIZE_BYTES"),
+    )
+    stems_heavy: bool = Field(default=True, validation_alias=AliasChoices("STEMS_HEAVY"))
+    stems_segment: float = Field(
+        default=7.8,
+        gt=0.0,
+        validation_alias=AliasChoices("STEMS_SEGMENT"),
+    )
+    stems_overlap: float = Field(
+        default=0.25,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("STEMS_OVERLAP"),
+    )
+    stems_jobs: int = Field(
+        default=1,
+        ge=1,
+        le=1,
+        validation_alias=AliasChoices("STEMS_JOBS"),
+    )
+    stems_threads: int = Field(
+        default=8,
+        ge=1,
+        le=16,
+        validation_alias=AliasChoices("STEMS_THREADS"),
+    )
+    stems_memory_mb: int = Field(
+        default=3072,
+        ge=1024,
+        validation_alias=AliasChoices("STEMS_MEMORY_MB"),
+    )
+    models_offline: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("MODELS_OFFLINE"),
+    )
+    models_max_heavy_models: int = Field(
+        default=1,
+        ge=1,
+        le=1,
+        validation_alias=AliasChoices("MODELS_MAX_HEAVY_MODELS"),
+    )
+    send_text_to_cloud: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("PRIVACY_SEND_TEXT_TO_CLOUD"),
+    )
+    send_audio_to_cloud: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("PRIVACY_SEND_AUDIO_TO_CLOUD"),
+    )
 
     @property
     def cookies_dir(self) -> Path:
         """Per-site Netscape cookie files live under the config directory."""
 
         return Path(self.config_dir) / "cookies"
+
+    @property
+    def models_dir(self) -> Path:
+        """Local model weights live under the data directory."""
+
+        return Path(self.data_dir) / "models"
+
+    @property
+    def llm_configured(self) -> bool:
+        """Whether an endpoint and model are configured (key presence is separate)."""
+
+        return bool(self.llm_base_url.strip() and self.llm_model.strip())
+
+    @property
+    def llm_api_key_present(self) -> bool:
+        """Whether the configured credential env variable is non-empty."""
+
+        name = self.llm_api_key_env.strip()
+        return bool(name and os.environ.get(name, "").strip())
+
+    @property
+    def ranker_extra_configured(self) -> bool:
+        return self.ranker_strategy in {"cross_encoder", "hybrid"} or bool(
+            self.ranker_model.strip() or self.ranker_model_path.strip()
+        )
+
+    @property
+    def metadata_providers_enabled(self) -> bool:
+        """Whether network metadata observers should be attached to observe runs."""
+
+        return bool(
+            self.metadata_enabled
+            or self.acoustid_api_key.strip()
+            or self.musicbrainz_user_agent.strip()
+        )
 
     def __init__(self, **values: Any) -> None:
         try:
@@ -224,7 +498,7 @@ class TrackForgeConfig(BaseSettings):
                 )
             return cls()
 
-        values = _load_core_table(config_path)
+        values = _load_toml_values(config_path)
         if not values:
             return cls()
         return _build_with_toml(values)
@@ -260,7 +534,7 @@ def _default_config_path() -> Path:
     return config_dir / "config.toml"
 
 
-def _load_core_table(path: Path) -> dict[str, Any]:
+def _load_toml_values(path: Path) -> dict[str, Any]:
     try:
         with path.open("rb") as file:
             document = tomllib.load(file)
@@ -277,28 +551,198 @@ def _load_core_table(path: Path) -> dict[str, Any]:
             key="config",
         ) from None
 
-    unknown_sections = sorted(set(document) - {"core"})
+    supported = {"core", "llm", "ranker", "models", "privacy"}
+    unknown_sections = sorted(set(document) - supported)
     if unknown_sections:
         section = unknown_sections[0]
         raise ConfigError(
-            f"unsupported configuration section {section!r}; expected only [core]",
+            f"unsupported configuration section {section!r}; "
+            "expected [core], [llm], [ranker], [models], or [privacy]",
             key=section,
         )
 
-    core = document.get("core", {})
-    if not isinstance(core, dict):
-        raise ConfigError("configuration key 'core' must be a table", key="core")
+    values: dict[str, Any] = {}
+    core = _table(document, "core")
+    _reject_unknown(core, _CORE_KEYS, "core")
+    values.update(core)
 
-    allowed_keys = set(TrackForgeConfig.model_fields)
-    unknown_keys = sorted(set(core) - allowed_keys)
-    if unknown_keys:
-        unknown = unknown_keys[0]
-        raise ConfigError(
-            f"unknown configuration key 'core.{unknown}'",
-            key=f"core.{unknown}",
+    llm = _table(document, "llm")
+    _reject_unknown(llm, _LLM_KEYS, "llm")
+    values.update({f"llm_{key}": value for key, value in llm.items()})
+
+    ranker = _table(document, "ranker")
+    _reject_unknown(ranker, _RANKER_KEYS, "ranker")
+    values.update({f"ranker_{key}": value for key, value in ranker.items()})
+
+    models = _table(document, "models")
+    nested_ranker = models.pop("ranker", None)
+    nested_asr = models.pop("asr", None)
+    nested_stems = models.pop("stems", None)
+    nested_demucs = models.pop("demucs", None)
+    _reject_unknown(models, {"offline", "max_heavy_models"}, "models")
+    values.update({f"models_{key}": value for key, value in models.items()})
+    if nested_ranker is not None:
+        if not isinstance(nested_ranker, dict):
+            raise ConfigError(
+                "configuration key 'models.ranker' must be a table",
+                key="models.ranker",
+            )
+        _reject_unknown(nested_ranker, set(_RANKER_TABLE_KEYS), "models.ranker")
+        values.update(
+            {f"ranker_{_RANKER_TABLE_KEYS[key]}": value for key, value in nested_ranker.items()}
         )
+    if nested_asr is not None:
+        if not isinstance(nested_asr, dict):
+            raise ConfigError(
+                "configuration key 'models.asr' must be a table",
+                key="models.asr",
+            )
+        _reject_unknown(nested_asr, set(_ASR_TABLE_KEYS), "models.asr")
+        values.update({f"asr_{_ASR_TABLE_KEYS[key]}": value for key, value in nested_asr.items()})
+    for table_name, nested in (("demucs", nested_demucs), ("stems", nested_stems)):
+        if nested is None:
+            continue
+        if not isinstance(nested, dict):
+            raise ConfigError(
+                f"configuration key 'models.{table_name}' must be a table",
+                key=f"models.{table_name}",
+            )
+        _reject_unknown(nested, set(_STEMS_TABLE_KEYS), f"models.{table_name}")
+        values.update({f"stems_{_STEMS_TABLE_KEYS[key]}": value for key, value in nested.items()})
 
-    return dict(core)
+    privacy = _table(document, "privacy")
+    _reject_unknown(privacy, {"send_text_to_cloud", "send_audio_to_cloud"}, "privacy")
+    values.update(privacy)
+    return values
+
+
+def _table(document: dict[str, Any], name: str) -> dict[str, Any]:
+    value = document.get(name, {})
+    if not isinstance(value, dict):
+        raise ConfigError(f"configuration key {name!r} must be a table", key=name)
+    return dict(value)
+
+
+def _reject_unknown(table: dict[str, Any], allowed: set[str], section: str) -> None:
+    unknown_keys = sorted(set(table) - allowed)
+    if not unknown_keys:
+        return
+    unknown = unknown_keys[0]
+    raise ConfigError(
+        f"unknown configuration key '{section}.{unknown}'",
+        key=f"{section}.{unknown}",
+    )
+
+
+_CORE_KEYS = {
+    "config_dir",
+    "data_dir",
+    "cache_dir",
+    "state_dir",
+    "library_dir",
+    "profile",
+    "mode",
+    "log_level",
+    "offline",
+    "metadata_enabled",
+    "acoustid_api_key",
+    "musicbrainz_user_agent",
+    "ytdlp_binary",
+    "deno_binary",
+    "ytdlp_timeout_metadata",
+    "ytdlp_timeout_download",
+}
+_LLM_KEYS = {
+    "provider",
+    "base_url",
+    "model",
+    "api_key_env",
+    "max_cost_usd_per_item",
+    "max_tokens",
+    "temperature",
+    "timeout_seconds",
+    "max_retries",
+    "price_in",
+    "price_out",
+    "strict_schema",
+    "thinking",
+}
+_RANKER_KEYS = {
+    "strategy",
+    "backend",
+    "model",
+    "model_path",
+    "model_version",
+    "license",
+    "checksum",
+    "size_bytes",
+    "heavy",
+    "threads",
+    "batch_size",
+    "max_length",
+}
+_RANKER_TABLE_KEYS = {
+    "name": "model",
+    "path": "model_path",
+    "version": "model_version",
+    "license": "license",
+    "checksum": "checksum",
+    "size_bytes": "size_bytes",
+    "heavy": "heavy",
+    "threads": "threads",
+    "batch_size": "batch_size",
+    "max_length": "max_length",
+    "backend": "backend",
+}
+_ASR_TABLE_KEYS = {
+    "backend": "backend",
+    "name": "model",
+    "path": "model_path",
+    "version": "model_version",
+    "license": "license",
+    "checksum": "checksum",
+    "size_bytes": "size_bytes",
+    "heavy": "heavy",
+    "compute_type": "compute_type",
+    "threads": "threads",
+    "vad_filter": "vad_filter",
+    "beam_size": "beam_size",
+    "memory_mb": "memory_mb",
+}
+_STEMS_KEYS = {
+    "backend",
+    "model",
+    "model_path",
+    "model_version",
+    "model_url",
+    "model_file",
+    "license",
+    "checksum",
+    "size_bytes",
+    "heavy",
+    "segment",
+    "overlap",
+    "jobs",
+    "threads",
+    "memory_mb",
+}
+_STEMS_TABLE_KEYS = {
+    "backend": "backend",
+    "name": "model",
+    "path": "model_path",
+    "version": "model_version",
+    "url": "model_url",
+    "file": "model_file",
+    "license": "license",
+    "checksum": "checksum",
+    "size_bytes": "size_bytes",
+    "heavy": "heavy",
+    "segment": "segment",
+    "overlap": "overlap",
+    "jobs": "jobs",
+    "threads": "threads",
+    "memory_mb": "memory_mb",
+}
 
 
 def _build_with_toml(values: dict[str, Any]) -> TrackForgeConfig:

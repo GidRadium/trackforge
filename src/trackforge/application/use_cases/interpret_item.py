@@ -17,23 +17,49 @@ from typing import Any, Protocol, TypeVar, runtime_checkable
 from pydantic import BaseModel, ValidationError
 
 from trackforge.application.dto.decisions import InterpretationView
+from trackforge.application.dto.derivatives import (
+    DerivativeEvidencePayload,
+    DerivativeHypothesesPayload,
+    DerivativeHypothesisPayload,
+    DerivativeParametersPayload,
+)
+from trackforge.application.dto.lyrics import AsrTranscript
 from trackforge.application.dto.observations import (
     ArtworkInfo,
     AudioProbePayload,
     InitialTagsPayload,
+    NormalizedTags,
     ObservationView,
     PathStructurePayload,
     SourceMetadataPayload,
 )
+from trackforge.application.dto.providers import (
+    AcoustIdLookupPayload,
+    CoverCandidate,
+    CoverCandidatesPayload,
+    LyricsCandidatesPayload,
+    MusicBrainzRecording,
+    MusicBrainzRelease,
+    MusicBrainzSearchPayload,
+)
+from trackforge.application.dto.stems import StemsPayload
 from trackforge.application.ports.observations import (
+    ACOUSTID_ARTIFACT,
+    ASR_TRANSCRIPT_ARTIFACT,
+    COVER_ARTIFACT,
+    FINGERPRINT_ARTIFACT,
     INITIAL_TAGS_ARTIFACT,
+    LYRICS_ARTIFACT,
+    MUSICBRAINZ_ARTIFACT,
     PATH_STRUCTURE_ARTIFACT,
     PROBE_ARTIFACT,
     SOURCE_METADATA_ARTIFACT,
+    STEMS_ARTIFACT,
 )
 from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.ports.storage import ArtifactStore, StorageError
 from trackforge.application.services.canonical_json import canonical_json, sha256_hex
+from trackforge.application.use_cases.lyrics_merge import LyricsMerger
 from trackforge.domain.errors import (
     DomainValidationError,
     InvalidStateTransition,
@@ -52,29 +78,49 @@ from trackforge.domain.model.claims import Claim, Confidence, Subject
 from trackforge.domain.model.identity import ContentKind, Transformation
 from trackforge.domain.model.ids import ClaimId, ItemId, new_uuid7
 from trackforge.domain.model.item import Item, ItemStatus
+from trackforge.domain.policies.derivative import (
+    DerivativeEvidence,
+    DerivativeHypothesis,
+    DerivativeSource,
+    RelationshipEvidence,
+    TextEvidence,
+    evaluate_derivative,
+)
 from trackforge.domain.policies.normalization import (
     detect_source_noise,
-    detect_transformations,
     is_vevo,
     normalize_artist_name,
     parse_artists,
-    rank_transformations,
     strip_topic_suffix,
 )
 from trackforge.domain.policies.validators import validate_field
 
 CLAIMS_ARTIFACT = "claims.v1"
 IDENTITY_ARTIFACT = "identity.hypotheses.v1"
+DERIVATIVE_HYPOTHESES_ARTIFACT = "derivative.hypotheses.v1"
 
 INITIAL_TAGS_TYPE = str(INITIAL_TAGS_ARTIFACT)
 PATH_STRUCTURE_TYPE = str(PATH_STRUCTURE_ARTIFACT)
 PROBE_TYPE = str(PROBE_ARTIFACT)
 SOURCE_METADATA_TYPE = str(SOURCE_METADATA_ARTIFACT)
+ACOUSTID_TYPE = str(ACOUSTID_ARTIFACT)
+MUSICBRAINZ_TYPE = str(MUSICBRAINZ_ARTIFACT)
+COVER_TYPE = str(COVER_ARTIFACT)
+LYRICS_TYPE = str(LYRICS_ARTIFACT)
+ASR_TYPE = str(ASR_TRANSCRIPT_ARTIFACT)
+STEMS_TYPE = str(STEMS_ARTIFACT)
 
 SOURCE_INITIAL_TAGS = "initial_tags"
 SOURCE_PATH = "path"
 SOURCE_PROBE = "audio_probe"
 SOURCE_SITE_METADATA = "source_metadata"
+SOURCE_MUSICBRAINZ = "musicbrainz"
+SOURCE_ACOUSTID = "acoustid"
+SOURCE_COVER_ART_ARCHIVE = "cover_art_archive"
+SOURCE_LRCLIB = "lrclib"
+SOURCE_ASR = "asr"
+SOURCE_LYRICS_MERGE = "lyrics_merge"
+SOURCE_STEMS = "demucs"
 
 METHOD_TAG_READER = "mutagen_tag_reader/v1"
 METHOD_PATH = "path_structure/v1"
@@ -82,6 +128,12 @@ METHOD_KIND = "kind_classifier/v1"
 METHOD_DERIVATIVE = "derivative_detector/v1"
 METHOD_IDENTITY = "identity_resolver/v1"
 METHOD_SOURCE_METADATA = "source_metadata/v1"
+METHOD_MUSICBRAINZ = "musicbrainz/v1"
+METHOD_ACOUSTID = "acoustid/v1"
+METHOD_COVER = "cover_selection/v1"
+METHOD_LYRICS = "lrclib/v1"
+METHOD_LYRICS_MERGE = "lyrics_merge/v1"
+METHOD_ASR = "faster_whisper/v1"
 
 _GENERIC_PARENTS = frozenset(
     {
@@ -102,6 +154,46 @@ _GENERIC_PARENTS = frozenset(
 )
 _LEADING_TRACK_RE = re.compile(r"^\s*(\d{1,3})\s*(?:[-._)]\s*|\s+)(?P<rest>.+)$")
 _ARTIST_TITLE_RE = re.compile(r"^(?P<artist>.+?)\s+[-–—]\s+(?P<title>.+)$")
+_MBID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_ISRC_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$")
+
+
+def _valid_mbid(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    return text if _MBID_RE.fullmatch(text) else None
+
+
+def _valid_isrc(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip().upper().replace("-", "")
+    return text if _ISRC_RE.fullmatch(text) else None
+
+
+def _similarity(left: str | None, right: str | None) -> float:
+    if not left or not right:
+        return 0.0
+    from difflib import SequenceMatcher
+
+    return SequenceMatcher(None, left.casefold(), right.casefold()).ratio()
+
+
+def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def _value_text(claims: Sequence[Claim], field: str) -> str | None:
+    for claim in claims:
+        if claim.field == field and isinstance(claim.value, str) and claim.value.strip():
+            return claim.value.strip()
+    return None
+
+
 _MBID_FIELD_ALIASES = {
     "recording": "mb_recording_id",
     "track": "mb_recording_id",
@@ -195,7 +287,11 @@ class InterpreterResult:
     warnings: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.artifact_type not in {CLAIMS_ARTIFACT, IDENTITY_ARTIFACT}:
+        if self.artifact_type not in {
+            CLAIMS_ARTIFACT,
+            IDENTITY_ARTIFACT,
+            DERIVATIVE_HYPOTHESES_ARTIFACT,
+        }:
             raise DomainValidationError(
                 "unsupported interpreter artifact type",
                 context={"artifact_type": self.artifact_type},
@@ -331,6 +427,10 @@ class InitialTagsInterpreter:
         for genre in tags.genre:
             if genre.strip():
                 add("genre", genre.strip(), 0.25)
+        if tags.bpm is not None:
+            add("bpm", float(tags.bpm), 0.35, notes="read from existing tag")
+        if tags.key is not None and tags.key.strip():
+            add("key", tags.key.strip(), 0.30, notes="read from existing tag")
         if tags.track is not None:
             add("track", tags.track, 0.3)
         if tags.track_total is not None:
@@ -476,7 +576,7 @@ class KindClassifier:
 
 
 class DerivativeDetector:
-    """Detect derivative markers in titles/comments/tags without tempo analysis."""
+    """Turn metadata, tempo/duration, vocal and MusicBrainz evidence into hypotheses."""
 
     manifest = CapabilityManifest(
         id="derivative_detector",
@@ -487,7 +587,7 @@ class DerivativeDetector:
             PATH_STRUCTURE_ARTIFACT,
             PROBE_ARTIFACT,
         ),
-        provides=(CLAIMS_ARTIFACT,),
+        provides=(CLAIMS_ARTIFACT, DERIVATIVE_HYPOTHESES_ARTIFACT),
         cost=Cost(cpu_seconds=0.01),
         determinism=Determinism.DETERMINISTIC,
         cacheable=True,
@@ -497,88 +597,556 @@ class DerivativeDetector:
     def interpret(self, inputs: InterpreterInput) -> InterpreterResult:
         tags_artifact = inputs.require(INITIAL_TAGS_TYPE)
         path_artifact = inputs.optional(PATH_STRUCTURE_TYPE)
+        probe_artifact = inputs.optional(PROBE_TYPE)
+        metadata_artifact = inputs.optional(SOURCE_METADATA_TYPE)
+        mb_artifact = inputs.optional(MUSICBRAINZ_TYPE)
+        stems_artifact = inputs.optional(STEMS_TYPE)
+
         tags = tags_artifact.model(InitialTagsPayload).tags
         path = path_artifact.model(PathStructurePayload) if path_artifact is not None else None
+        metadata = (
+            metadata_artifact.model(SourceMetadataPayload)
+            if metadata_artifact is not None
+            else None
+        )
+        warnings: list[str] = []
 
-        text_sources: list[tuple[str, str, float, ArtifactPayload]] = []
-        if tags.title:
-            text_sources.append((tags.title, "title", 0.6, tags_artifact))
-        if path is not None and path_artifact is not None and path.stem:
-            text_sources.append((path.stem, "path", 0.45, path_artifact))
-        if tags.comment:
-            text_sources.append((tags.comment, "comment", 0.3, tags_artifact))
-        for genre in tags.genre:
-            text_sources.append((genre, "genre", 0.25, tags_artifact))
-        if tags.album:
-            text_sources.append((tags.album, "album", 0.2, tags_artifact))
+        text_sources = _derivative_text_sources(
+            tags,
+            path.stem if path is not None else None,
+            metadata,
+            tags_artifact=tags_artifact,
+            path_artifact=path_artifact,
+            metadata_artifact=metadata_artifact,
+        )
+        duration = _probe_duration(inputs)
+        recording = _derivative_recording(
+            inputs,
+            mb_artifact,
+            title=metadata.title if metadata is not None else tags.title,
+            artist=_first_artist(tags.artist),
+            duration=duration,
+            warnings=warnings,
+        )
+        relationships = tuple(
+            RelationshipEvidence(
+                type=item.type,
+                official=item.official,
+                target_title=item.target_title,
+                artifact_ref=mb_artifact.artifact_id if mb_artifact is not None else None,
+            )
+            for item in (recording.relationships if recording is not None else ())
+        )
+        stems, stems_warning = _derivative_stems(inputs, stems_artifact)
+        if stems_warning is not None:
+            warnings.append(stems_warning)
+        if stems is not None:
+            vocal_energy = (
+                stems.features.vocal_energy
+                if stems.features.vocal_energy is not None
+                else stems.ratios.vocals
+            )
+            drum_energy: float | None = stems.ratios.drums
+            bass_energy: float | None = stems.ratios.bass
+            other_energy: float | None = stems.ratios.other
+        else:
+            vocal_energy = None
+            drum_energy = None
+            bass_energy = None
+            other_energy = None
 
-        best: dict[Transformation, tuple[float, str, str, ArtifactPayload]] = {}
-        for text, origin, confidence, artifact in text_sources:
-            for transformation in detect_transformations(text):
-                current = best.get(transformation)
-                if current is None or confidence > current[0]:
-                    best[transformation] = (confidence, origin, text, artifact)
+        measured_bpm = _claim_number(inputs.claims, "bpm")
+        hypothesis = evaluate_derivative(
+            texts=text_sources,
+            measured_duration=duration,
+            original_duration=recording.duration if recording is not None else None,
+            measured_bpm=measured_bpm,
+            original_bpm=recording.bpm if recording is not None else None,
+            vocal_energy=vocal_energy,
+            drum_energy=drum_energy,
+            bass_energy=bass_energy,
+            other_energy=other_energy,
+            relationships=relationships,
+            artifact_refs={
+                DerivativeSource.METADATA: (
+                    metadata_artifact.artifact_id
+                    if metadata_artifact is not None
+                    else tags_artifact.artifact_id
+                ),
+                DerivativeSource.DURATION: (
+                    mb_artifact.artifact_id
+                    if mb_artifact is not None
+                    else (probe_artifact.artifact_id if probe_artifact is not None else None)
+                ),
+                DerivativeSource.TEMPO: tags_artifact.artifact_id,
+                DerivativeSource.VOCAL: (
+                    stems_artifact.artifact_id if stems_artifact is not None else None
+                ),
+                DerivativeSource.SPECTRAL: (
+                    stems_artifact.artifact_id if stems_artifact is not None else None
+                ),
+                DerivativeSource.MUSICBRAINZ: (
+                    mb_artifact.artifact_id if mb_artifact is not None else None
+                ),
+            },
+            derivative_title=(
+                tags.title
+                or (metadata.title if metadata is not None else None)
+                or (path.stem if path is not None else None)
+            ),
+            derivative_artist=_first_artist(tags.artist),
+        )
 
         claims: list[Claim] = []
-        for transformation in rank_transformations(tuple(best)):
-            confidence, origin, text, artifact = best[transformation]
-            claims.append(
-                _make_claim(
+        if hypothesis is not None:
+            claims.extend(
+                _derivative_hypothesis_claims(
                     inputs.item_id,
-                    subject=Subject.DERIVATIVE,
-                    field="transformation",
-                    value=transformation.value,
-                    confidence=min(0.7, confidence),
-                    source=SOURCE_INITIAL_TAGS if artifact is tags_artifact else SOURCE_PATH,
-                    method=METHOD_DERIVATIVE,
-                    evidence=artifact.artifact_id,
-                    notes=f"detected {transformation.value} in {origin}: {text[:120]}",
+                    hypothesis,
+                    tags_artifact=tags_artifact,
+                    path_artifact=path_artifact,
+                    probe_artifact=probe_artifact,
+                    metadata_artifact=metadata_artifact,
+                    mb_artifact=mb_artifact,
+                    stems_artifact=stems_artifact,
                 )
             )
+        payload = _derivative_payload(inputs.item_id, hypothesis)
+        return InterpreterResult(
+            artifact_type=DERIVATIVE_HYPOTHESES_ARTIFACT,
+            payload=payload,
+            claims=tuple(claims),
+            warnings=tuple(warnings),
+        )
 
-        if claims:
-            derivative_title = tags.title or (path.stem if path is not None else None)
-            if derivative_title:
-                title_artifact = tags_artifact if tags.title else path_artifact
-                if title_artifact is not None:
-                    claims.append(
-                        _make_claim(
-                            inputs.item_id,
-                            subject=Subject.DERIVATIVE,
-                            field="title",
-                            value=derivative_title,
-                            confidence=0.45,
-                            source=(
-                                SOURCE_INITIAL_TAGS
-                                if title_artifact is tags_artifact
-                                else SOURCE_PATH
-                            ),
-                            method=METHOD_DERIVATIVE,
-                            evidence=title_artifact.artifact_id,
-                            notes="source title retained separately from item.title",
-                        )
+
+def _derivative_text_sources(
+    tags: NormalizedTags,
+    path_stem: str | None,
+    metadata: SourceMetadataPayload | None,
+    *,
+    tags_artifact: ArtifactPayload,
+    path_artifact: ArtifactPayload | None,
+    metadata_artifact: ArtifactPayload | None,
+) -> tuple[TextEvidence, ...]:
+    entries: list[tuple[str, str, float, str]] = []
+    if tags.title:
+        entries.append((tags.title, "title", 0.75, tags_artifact.artifact_id))
+    if path_stem:
+        entries.append(
+            (
+                path_stem,
+                "path",
+                0.55,
+                (
+                    path_artifact.artifact_id
+                    if path_artifact is not None
+                    else tags_artifact.artifact_id
+                ),
+            )
+        )
+    if tags.comment:
+        entries.append((tags.comment, "comment", 0.40, tags_artifact.artifact_id))
+    for genre in tags.genre:
+        entries.append((genre, "genre", 0.30, tags_artifact.artifact_id))
+    if tags.album:
+        entries.append((tags.album, "album", 0.20, tags_artifact.artifact_id))
+    if metadata is not None and metadata_artifact is not None:
+        if metadata.title:
+            entries.append((metadata.title, "source_title", 0.70, metadata_artifact.artifact_id))
+        if metadata.description:
+            entries.append(
+                (metadata.description, "description", 0.50, metadata_artifact.artifact_id)
+            )
+        for tag in metadata.tags:
+            entries.append((tag, "source_tag", 0.55, metadata_artifact.artifact_id))
+        if metadata.uploader:
+            entries.append((metadata.uploader, "uploader", 0.35, metadata_artifact.artifact_id))
+        if metadata.album:
+            entries.append((metadata.album, "source_album", 0.20, metadata_artifact.artifact_id))
+
+    best: dict[str, tuple[str, str, float, str]] = {}
+    for text, origin, confidence, artifact_ref in entries:
+        key = text.casefold().strip()
+        if not key:
+            continue
+        current = best.get(key)
+        if current is None or confidence > current[2]:
+            best[key] = (text, origin, confidence, artifact_ref)
+    return tuple(
+        TextEvidence(
+            text=text,
+            origin=origin,
+            confidence=confidence,
+            artifact_ref=artifact_ref,
+        )
+        for text, origin, confidence, artifact_ref in best.values()
+    )
+
+
+def _derivative_recording(
+    inputs: InterpreterInput,
+    artifact: ArtifactPayload | None,
+    *,
+    title: str | None,
+    artist: str | None,
+    duration: float | None,
+    warnings: list[str],
+) -> MusicBrainzRecording | None:
+    if artifact is None:
+        return None
+    try:
+        payload = artifact.model(MusicBrainzSearchPayload)
+    except Exception:
+        warnings.append("invalid_artifact:musicbrainz.search.v1")
+        return None
+    return _best_recording_for_query(payload, title, artist, duration)
+
+
+def _derivative_stems(
+    inputs: InterpreterInput,
+    artifact: ArtifactPayload | None,
+) -> tuple[StemsPayload | None, str | None]:
+    if artifact is None:
+        return None, None
+    try:
+        return artifact.model(StemsPayload), None
+    except Exception:
+        return None, "invalid_artifact:audio.stems.v1"
+
+
+def _claim_number(claims: Sequence[Claim], field: str) -> float | None:
+    for claim in reversed(claims):
+        if claim.field != field or claim.subject is not Subject.ITEM:
+            continue
+        value = claim.value
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        number = float(value)
+        if number > 0.0:
+            return number
+    return None
+
+
+def _derivative_hypothesis_claims(
+    item_id: ItemId,
+    hypothesis: DerivativeHypothesis,
+    *,
+    tags_artifact: ArtifactPayload,
+    path_artifact: ArtifactPayload | None,
+    probe_artifact: ArtifactPayload | None,
+    metadata_artifact: ArtifactPayload | None,
+    mb_artifact: ArtifactPayload | None,
+    stems_artifact: ArtifactPayload | None,
+) -> list[Claim]:
+    claims: list[Claim] = []
+    context = {
+        "tags": tags_artifact,
+        "path": path_artifact,
+        "probe": probe_artifact,
+        "metadata": metadata_artifact,
+        "musicbrainz": mb_artifact,
+        "stems": stems_artifact,
+    }
+    for transformation in hypothesis.transformations:
+        evidence = _best_evidence(hypothesis, transformation)
+        confidence = _transformation_confidence(hypothesis, transformation)
+        source, artifact_id = _derivative_claim_provenance(evidence, context, tags_artifact)
+        claims.append(
+            _make_claim(
+                item_id,
+                subject=Subject.DERIVATIVE,
+                field="transformation",
+                value=transformation.value,
+                confidence=confidence,
+                source=source,
+                method=METHOD_DERIVATIVE,
+                evidence=artifact_id,
+                notes=(
+                    f"{hypothesis.status.value} derivative hypothesis "
+                    f"(score {hypothesis.score:.2f}); "
+                    f"{len(hypothesis.evidence)} evidence item(s)"
+                ),
+            )
+        )
+
+    best = max(hypothesis.evidence, key=lambda item: item.confidence, default=None)
+    source, artifact_id = _derivative_claim_provenance(best, context, tags_artifact)
+    claims.append(
+        _make_claim(
+            item_id,
+            subject=Subject.DERIVATIVE,
+            field="status",
+            value=hypothesis.status.value,
+            confidence=hypothesis.score,
+            source=source,
+            method=METHOD_DERIVATIVE,
+            evidence=artifact_id,
+            notes=(
+                "ambiguous evidence retained for review; resolver must not pick a winner"
+                if hypothesis.is_ambiguous
+                else "proposed hypothesis; resolver decides whether to apply it"
+            ),
+        )
+    )
+    if hypothesis.is_official is not None:
+        official_evidence = next(
+            (item for item in hypothesis.evidence if item.source is DerivativeSource.MUSICBRAINZ),
+            best,
+        )
+        source, artifact_id = _derivative_claim_provenance(
+            official_evidence, context, tags_artifact
+        )
+        claims.append(
+            _make_claim(
+                item_id,
+                subject=Subject.DERIVATIVE,
+                field="is_official",
+                value=hypothesis.is_official,
+                confidence=0.85 if hypothesis.is_official else 0.65,
+                source=source,
+                method=METHOD_DERIVATIVE,
+                evidence=artifact_id,
+                notes="official status comes only from MusicBrainz/explicit source evidence",
+            )
+        )
+
+    for field, value in hypothesis.parameters.as_dict().items():
+        claims.append(
+            _make_claim(
+                item_id,
+                subject=Subject.DERIVATIVE,
+                field=field,
+                value=value,
+                confidence=min(0.75, hypothesis.score),
+                source=source,
+                method=METHOD_DERIVATIVE,
+                evidence=artifact_id,
+                notes="estimated derivative parameter; not a measured tag value",
+            )
+        )
+
+    if hypothesis.derivative_title:
+        title_artifact = tags_artifact if tags_artifact is not None else path_artifact
+        claims.append(
+            _make_claim(
+                item_id,
+                subject=Subject.DERIVATIVE,
+                field="title",
+                value=hypothesis.derivative_title,
+                confidence=0.45,
+                source=SOURCE_INITIAL_TAGS if title_artifact is tags_artifact else SOURCE_PATH,
+                method=METHOD_DERIVATIVE,
+                evidence=(
+                    title_artifact.artifact_id
+                    if title_artifact is not None
+                    else tags_artifact.artifact_id
+                ),
+                notes="source title retained separately from item.title",
+            )
+        )
+    if hypothesis.derivative_artist:
+        claims.append(
+            _make_claim(
+                item_id,
+                subject=Subject.DERIVATIVE,
+                field="artist",
+                value=hypothesis.derivative_artist,
+                confidence=0.35,
+                source=SOURCE_INITIAL_TAGS,
+                method=METHOD_DERIVATIVE,
+                evidence=tags_artifact.artifact_id,
+                role="main",
+                notes="source artist retained separately from item.artist",
+            )
+        )
+    return claims
+
+
+def _derivative_claim_provenance(
+    evidence: DerivativeEvidence | None,
+    context: Mapping[str, ArtifactPayload | None],
+    fallback: ArtifactPayload,
+) -> tuple[str, str]:
+    if evidence is None:
+        return SOURCE_INITIAL_TAGS, fallback.artifact_id
+    artifact_id = evidence.artifact_ref or fallback.artifact_id
+    if evidence.source is DerivativeSource.MUSICBRAINZ:
+        return SOURCE_MUSICBRAINZ, artifact_id
+    if evidence.source in {DerivativeSource.VOCAL, DerivativeSource.SPECTRAL}:
+        return SOURCE_STEMS, artifact_id
+    if evidence.source is DerivativeSource.LLM:
+        return "llm", artifact_id
+    if evidence.artifact_ref is not None:
+        metadata = context["metadata"]
+        if metadata is not None and evidence.artifact_ref == metadata.artifact_id:
+            return SOURCE_SITE_METADATA, artifact_id
+        if context["path"] is not None and evidence.artifact_ref == context["path"].artifact_id:
+            return SOURCE_PATH, artifact_id
+        if context["probe"] is not None and evidence.artifact_ref == context["probe"].artifact_id:
+            return SOURCE_PROBE, artifact_id
+        if context["stems"] is not None and evidence.artifact_ref == context["stems"].artifact_id:
+            return SOURCE_STEMS, artifact_id
+    return SOURCE_INITIAL_TAGS, artifact_id
+
+
+def _evidence_supports(
+    evidence: DerivativeEvidence,
+    transformation: Transformation,
+) -> bool:
+    if evidence.source is DerivativeSource.METADATA:
+        if evidence.value == transformation.value:
+            return True
+        return (
+            transformation is Transformation.SPED_UP
+            and evidence.value == "nightcore implies sped_up"
+        )
+    if evidence.source in {
+        DerivativeSource.DURATION,
+        DerivativeSource.TEMPO,
+        DerivativeSource.SPECTRAL,
+    }:
+        return transformation in {
+            Transformation.NIGHTCORE,
+            Transformation.SPED_UP,
+            Transformation.SLOWED,
+        }
+    if evidence.source is DerivativeSource.VOCAL:
+        return transformation in {Transformation.INSTRUMENTAL, Transformation.ACAPELLA}
+    if evidence.source is DerivativeSource.MUSICBRAINZ:
+        return str(transformation.value) in str(evidence.value)
+    if evidence.source is DerivativeSource.LLM:
+        return evidence.value == transformation.value
+    return False
+
+
+def _best_evidence(
+    hypothesis: DerivativeHypothesis,
+    transformation: Transformation,
+) -> DerivativeEvidence | None:
+    items = [item for item in hypothesis.evidence if _evidence_supports(item, transformation)]
+    return max(items, key=lambda item: item.confidence, default=None)
+
+
+def _transformation_confidence(
+    hypothesis: DerivativeHypothesis,
+    transformation: Transformation,
+) -> float:
+    evidence = _best_evidence(hypothesis, transformation)
+    if evidence is None:
+        return hypothesis.score
+    return min(0.95, max(evidence.confidence, hypothesis.score * 0.85))
+
+
+def _derivative_payload(
+    item_id: ItemId,
+    hypothesis: DerivativeHypothesis | None,
+) -> dict[str, Any]:
+    if hypothesis is None:
+        return DerivativeHypothesesPayload(
+            item_id=str(item_id),
+            status="none",
+            warnings=["no_derivative_evidence"],
+        ).model_dump(mode="json")
+    return DerivativeHypothesesPayload(
+        item_id=str(item_id),
+        status="ambiguous" if hypothesis.is_ambiguous else "proposed",
+        hypotheses=[
+            DerivativeHypothesisPayload(
+                transformations=list(hypothesis.transformations),
+                parameters=DerivativeParametersPayload(**hypothesis.parameters.as_dict()),
+                derivative_title=hypothesis.derivative_title,
+                derivative_artist=hypothesis.derivative_artist,
+                is_official=hypothesis.is_official,
+                score=hypothesis.score,
+                status=hypothesis.status.value,
+                evidence=[
+                    DerivativeEvidencePayload(
+                        source=item.source.value,
+                        value=item.value,
+                        confidence=item.confidence,
+                        artifact_ref=item.artifact_ref,
                     )
-            artist = _first_artist(tags.artist)
-            if artist:
-                claims.append(
-                    _make_claim(
-                        inputs.item_id,
-                        subject=Subject.DERIVATIVE,
-                        field="artist",
-                        value=artist,
-                        confidence=0.35,
-                        source=SOURCE_INITIAL_TAGS,
-                        method=METHOD_DERIVATIVE,
-                        evidence=tags_artifact.artifact_id,
-                        role="main",
-                        notes="source artist retained separately from item.artist",
-                    )
+                    for item in hypothesis.evidence
+                ],
+            )
+        ],
+    ).model_dump(mode="json")
+
+
+class MetadataInterpreter:
+    """Turn MusicBrainz/AcoustID/cover/lyrics observations into claims."""
+
+    manifest = CapabilityManifest(
+        id="metadata_interpreter",
+        version="1",
+        kind=CapabilityKind.INTERPRETER,
+        requires=(),
+        provides=(CLAIMS_ARTIFACT,),
+        cost=Cost(cpu_seconds=0.05, memory_mb=16.0),
+        determinism=Determinism.DETERMINISTIC,
+        cacheable=True,
+        side_effects=SideEffect.NONE,
+        description="Create provenance-rich claims from external metadata observations.",
+    )
+
+    def interpret(self, inputs: InterpreterInput) -> InterpreterResult:
+        claims: list[Claim] = []
+        warnings: list[str] = []
+        mb_artifact = inputs.optional(MUSICBRAINZ_TYPE)
+        if mb_artifact is not None:
+            try:
+                mb = mb_artifact.model(MusicBrainzSearchPayload)
+            except ObservationFailed:
+                warnings.append("invalid_artifact:musicbrainz.search.v1")
+            else:
+                claims.extend(_musicbrainz_claims(inputs, mb_artifact, mb))
+        acoustid_artifact = inputs.optional(ACOUSTID_TYPE)
+        if acoustid_artifact is not None:
+            try:
+                acoustid = acoustid_artifact.model(AcoustIdLookupPayload)
+            except ObservationFailed:
+                warnings.append("invalid_artifact:acoustid.lookup.v1")
+            else:
+                claims.extend(_acoustid_claims(inputs, acoustid_artifact, acoustid, inputs.claims))
+        cover_artifact = inputs.optional(COVER_TYPE)
+        if cover_artifact is not None:
+            try:
+                cover = cover_artifact.model(CoverCandidatesPayload)
+            except ObservationFailed:
+                warnings.append("invalid_artifact:cover.candidates.v1")
+            else:
+                claims.extend(_cover_claims(inputs, cover_artifact, cover))
+        lyrics_artifact = inputs.optional(LYRICS_TYPE)
+        lyrics_payload: LyricsCandidatesPayload | None = None
+        if lyrics_artifact is not None:
+            try:
+                lyrics_payload = lyrics_artifact.model(LyricsCandidatesPayload)
+            except ObservationFailed:
+                warnings.append("invalid_artifact:lyrics.candidates.v1")
+        asr_artifact = inputs.optional(ASR_TYPE)
+        transcript: AsrTranscript | None = None
+        if asr_artifact is not None:
+            try:
+                transcript = asr_artifact.model(AsrTranscript)
+            except ObservationFailed:
+                warnings.append("invalid_artifact:asr.transcript.v1")
+        if lyrics_payload is not None or transcript is not None:
+            artifact = lyrics_artifact or asr_artifact
+            if artifact is not None:
+                lyrics_claims, lyrics_warnings = _merged_lyrics_claims(
+                    inputs,
+                    lyrics_payload,
+                    transcript,
+                    artifact,
                 )
-
+                claims.extend(lyrics_claims)
+                warnings.extend(lyrics_warnings)
         return InterpreterResult(
             artifact_type=CLAIMS_ARTIFACT,
             payload=_claims_payload(inputs.item_id, claims),
             claims=tuple(claims),
+            warnings=tuple(dict.fromkeys(warnings)),
         )
 
 
@@ -601,15 +1169,31 @@ class IdentityResolver:
         inputs.optional(PROBE_TYPE)
         claims = tuple(inputs.claims)
         by_field = _claims_by_field(claims)
-        recording = _first_value(by_field, "mb_recording_id")
-        release = _first_value(by_field, "mb_release_id")
-        release_group = _first_value(by_field, "mb_release_group_id")
-        isrc = _first_value(by_field, "isrc")
+        recording = _valid_mbid(_first_value(by_field, "mb_recording_id"))
+        release = _valid_mbid(_first_value(by_field, "mb_release_id"))
+        release_group = _valid_mbid(_first_value(by_field, "mb_release_group_id"))
+        isrc = _valid_isrc(_first_value(by_field, "isrc"))
         acoustid = _first_value(by_field, "acoustid")
-
-        hypotheses: list[dict[str, Any]] = []
         warnings: list[str] = []
-        if recording is not None:
+        candidates = _identity_candidates(inputs, claims)
+        hypotheses: list[dict[str, Any]] = []
+        for candidate in candidates[:3]:
+            external = dict(candidate["external_ids"])
+            if isrc is not None:
+                external.setdefault("isrc", isrc)
+            if acoustid is not None:
+                external.setdefault("acoustid", acoustid)
+            hypotheses.append(
+                _hypothesis(
+                    "recording",
+                    candidate["target_id"],
+                    candidate["score"],
+                    tuple(candidate["claim_ids"]),
+                    external,
+                    evidence=tuple(candidate["evidence"]),
+                )
+            )
+        if not hypotheses and recording is not None:
             claim = by_field["mb_recording_id"][0]
             external = {"musicbrainz_recording": recording}
             if isrc is not None:
@@ -619,7 +1203,7 @@ class IdentityResolver:
             hypotheses.append(
                 _hypothesis("recording", recording, float(claim.confidence), (claim.id,), external)
             )
-        elif release is not None:
+        elif not hypotheses and release is not None:
             claim = by_field["mb_release_id"][0]
             hypotheses.append(
                 _hypothesis(
@@ -630,7 +1214,7 @@ class IdentityResolver:
                     {"musicbrainz_release": release},
                 )
             )
-        elif release_group is not None:
+        elif not hypotheses and release_group is not None:
             claim = by_field["mb_release_group_id"][0]
             hypotheses.append(
                 _hypothesis(
@@ -642,9 +1226,15 @@ class IdentityResolver:
                 )
             )
 
+        status = "proposed"
         if not hypotheses:
             warnings.append("no_identity_evidence")
-        status = "proposed" if hypotheses else "ambiguous"
+            status = "ambiguous"
+        elif len(hypotheses) > 1:
+            second = float(hypotheses[1]["score"])
+            if second >= 0.55:
+                status = "ambiguous"
+                warnings.append("ambiguous_identity")
         payload: dict[str, Any] = {
             "schema_version": 1,
             "item_id": str(inputs.item_id),
@@ -754,12 +1344,859 @@ class SourceMetadataInterpreter:
         add("language", payload.language, 0.4)
         if payload.track and payload.track.strip().isdigit():
             add("track", int(payload.track.strip()), 0.4)
+        add(
+            "description",
+            payload.description[:10_000] if payload.description else None,
+            0.3,
+            notes="untrusted source description retained as LLM evidence",
+        )
         add("source", payload.webpage_url, 0.8, notes="canonical source page")
         return InterpreterResult(
             artifact_type=CLAIMS_ARTIFACT,
             payload=_claims_payload(inputs.item_id, claims),
             claims=tuple(claims),
         )
+
+
+def _musicbrainz_claims(
+    inputs: InterpreterInput,
+    artifact: ArtifactPayload,
+    mb: MusicBrainzSearchPayload,
+) -> list[Claim]:
+    claims: list[Claim] = []
+    query_title = mb.query.title or _value_text(inputs.claims, "title")
+    query_artist = mb.query.artist or _value_text(inputs.claims, "artist")
+    recording = _best_recording_for_query(mb, query_title, query_artist, mb.query.duration)
+    if recording is not None:
+        confidence = _recording_confidence(
+            recording,
+            query_title,
+            query_artist,
+            mb.query.duration,
+        )
+        if confidence >= 0.45:
+            claims.append(
+                _metadata_claim(
+                    inputs.item_id,
+                    artifact,
+                    field="title",
+                    value=recording.title,
+                    confidence=confidence,
+                    source=SOURCE_MUSICBRAINZ,
+                    method=METHOD_MUSICBRAINZ,
+                    notes="MusicBrainz recording title",
+                )
+            )
+        artist_confidence = max(0.35, confidence - 0.05)
+        for order, artist in enumerate(recording.artists):
+            claims.append(
+                _metadata_claim(
+                    inputs.item_id,
+                    artifact,
+                    field="artist",
+                    value=artist.name,
+                    confidence=artist_confidence,
+                    source=SOURCE_MUSICBRAINZ,
+                    method=METHOD_MUSICBRAINZ,
+                    role=artist.role or "main",
+                    order=order,
+                    notes="MusicBrainz artist credit",
+                )
+            )
+            mbid = _valid_mbid(artist.mbid)
+            if mbid is not None:
+                claims.append(
+                    _metadata_claim(
+                        inputs.item_id,
+                        artifact,
+                        field="mb_artist_id",
+                        value=mbid,
+                        confidence=min(0.9, confidence + 0.05),
+                        source=SOURCE_MUSICBRAINZ,
+                        method=METHOD_MUSICBRAINZ,
+                        role=artist.role or "main",
+                        order=order,
+                        notes="MusicBrainz artist MBID from artist credit",
+                    )
+                )
+        recording_mbid = _valid_mbid(recording.mbid)
+        if recording_mbid is not None:
+            claims.append(
+                _metadata_claim(
+                    inputs.item_id,
+                    artifact,
+                    field="mb_recording_id",
+                    value=recording_mbid,
+                    confidence=min(0.95, confidence + 0.05),
+                    source=SOURCE_MUSICBRAINZ,
+                    method=METHOD_MUSICBRAINZ,
+                    notes="MusicBrainz recording MBID",
+                )
+            )
+        for isrc in recording.isrcs:
+            normalized = _valid_isrc(isrc)
+            if normalized is not None:
+                claims.append(
+                    _metadata_claim(
+                        inputs.item_id,
+                        artifact,
+                        field="isrc",
+                        value=normalized,
+                        confidence=min(0.9, confidence + 0.05),
+                        source=SOURCE_MUSICBRAINZ,
+                        method=METHOD_MUSICBRAINZ,
+                        notes="ISRC from MusicBrainz recording",
+                    )
+                )
+        for order, genre in enumerate(recording.genres[:5]):
+            claims.append(
+                _metadata_claim(
+                    inputs.item_id,
+                    artifact,
+                    field="genre",
+                    value=genre,
+                    confidence=0.35,
+                    source=SOURCE_MUSICBRAINZ,
+                    method=METHOD_MUSICBRAINZ,
+                    order=order,
+                    notes="MusicBrainz genre/tag",
+                )
+            )
+        release = _choose_release(recording, mb.releases)
+        if release is not None:
+            claims.extend(
+                _release_claims(
+                    inputs,
+                    artifact,
+                    release,
+                    confidence=max(0.4, confidence - 0.08),
+                )
+            )
+        claims.extend(
+            _musicbrainz_subject_claims(
+                inputs,
+                artifact,
+                recording=recording,
+                release=release,
+                confidence=confidence,
+            )
+        )
+    elif mb.releases:
+        claims.extend(
+            _release_claims(
+                inputs,
+                artifact,
+                mb.releases[0],
+                confidence=0.55,
+            )
+        )
+        claims.extend(
+            _musicbrainz_subject_claims(
+                inputs,
+                artifact,
+                recording=None,
+                release=mb.releases[0],
+                confidence=0.55,
+            )
+        )
+    return claims
+
+
+def _release_claims(
+    inputs: InterpreterInput,
+    artifact: ArtifactPayload,
+    release: MusicBrainzRelease | Any,
+    *,
+    confidence: float,
+) -> list[Claim]:
+    claims: list[Claim] = []
+    title = getattr(release, "title", None)
+    if isinstance(title, str) and title.strip():
+        claims.append(
+            _metadata_claim(
+                inputs.item_id,
+                artifact,
+                field="album",
+                value=title.strip(),
+                confidence=min(0.85, confidence),
+                source=SOURCE_MUSICBRAINZ,
+                method=METHOD_MUSICBRAINZ,
+                notes="MusicBrainz release title",
+            )
+        )
+    for field, value, field_confidence in (
+        ("date", getattr(release, "date", None), confidence),
+        ("country", getattr(release, "country", None), 0.55),
+        ("label", getattr(release, "label", None), 0.55),
+        ("barcode", getattr(release, "barcode", None), 0.55),
+    ):
+        if isinstance(value, str) and value.strip():
+            claims.append(
+                _metadata_claim(
+                    inputs.item_id,
+                    artifact,
+                    field=field,
+                    value=value.strip(),
+                    confidence=min(0.85, field_confidence),
+                    source=SOURCE_MUSICBRAINZ,
+                    method=METHOD_MUSICBRAINZ,
+                    notes=f"MusicBrainz release {field}",
+                )
+            )
+    release_mbid = _valid_mbid(getattr(release, "mbid", None))
+    if release_mbid is not None:
+        claims.append(
+            _metadata_claim(
+                inputs.item_id,
+                artifact,
+                field="mb_release_id",
+                value=release_mbid,
+                confidence=min(0.9, confidence + 0.05),
+                source=SOURCE_MUSICBRAINZ,
+                method=METHOD_MUSICBRAINZ,
+                notes="MusicBrainz release MBID",
+            )
+        )
+    group_mbid = _valid_mbid(getattr(release, "release_group_mbid", None))
+    if group_mbid is not None:
+        claims.append(
+            _metadata_claim(
+                inputs.item_id,
+                artifact,
+                field="mb_release_group_id",
+                value=group_mbid,
+                confidence=min(0.88, confidence),
+                source=SOURCE_MUSICBRAINZ,
+                method=METHOD_MUSICBRAINZ,
+                notes="MusicBrainz release-group MBID",
+            )
+        )
+    for order, artist in enumerate(getattr(release, "artists", []) or []):
+        name = getattr(artist, "name", None)
+        if isinstance(name, str) and name.strip():
+            claims.append(
+                _metadata_claim(
+                    inputs.item_id,
+                    artifact,
+                    field="albumartist",
+                    value=name.strip(),
+                    confidence=max(0.35, confidence - 0.05),
+                    source=SOURCE_MUSICBRAINZ,
+                    method=METHOD_MUSICBRAINZ,
+                    role="albumartist",
+                    order=order,
+                    notes="MusicBrainz release artist",
+                )
+            )
+        mbid = _valid_mbid(getattr(artist, "mbid", None))
+        if mbid is not None:
+            claims.append(
+                _metadata_claim(
+                    inputs.item_id,
+                    artifact,
+                    field="mb_albumartist_id",
+                    value=mbid,
+                    confidence=max(0.4, confidence),
+                    source=SOURCE_MUSICBRAINZ,
+                    method=METHOD_MUSICBRAINZ,
+                    role="albumartist",
+                    order=order,
+                    notes="MusicBrainz release artist MBID",
+                )
+            )
+    return claims
+
+
+def _musicbrainz_subject_claims(
+    inputs: InterpreterInput,
+    artifact: ArtifactPayload,
+    *,
+    recording: MusicBrainzRecording | None,
+    release: MusicBrainzRelease | Any | None,
+    confidence: float,
+) -> list[Claim]:
+    """Emit recording/release/artist claims in addition to item-facing claims.
+
+    The resolver consumes item claims, while these subject-specific claims keep
+    the provenance graph faithful and let later plans correlate identities
+    without flattening recording, release, and artist evidence into one row.
+    """
+
+    claims: list[Claim] = []
+
+    def add(
+        subject: Subject,
+        subject_id: str | None,
+        field: str,
+        value: FieldValue,
+        claim_confidence: float,
+        *,
+        role: str | None = None,
+        order: int | None = None,
+        notes: str | None = None,
+    ) -> None:
+        if value is None:
+            return
+        claims.append(
+            _make_claim(
+                inputs.item_id,
+                subject=subject,
+                subject_id=subject_id,
+                field=field,
+                value=value,
+                confidence=claim_confidence,
+                source=SOURCE_MUSICBRAINZ,
+                method=METHOD_MUSICBRAINZ,
+                evidence=artifact.artifact_id,
+                role=role,
+                order=order,
+                notes=notes,
+            )
+        )
+
+    if recording is not None:
+        recording_id = _valid_mbid(recording.mbid)
+        add(
+            Subject.RECORDING,
+            recording_id,
+            "title",
+            recording.title,
+            confidence,
+            notes="MusicBrainz recording title",
+        )
+        if recording_id is not None:
+            add(
+                Subject.RECORDING,
+                recording_id,
+                "mbid",
+                recording_id,
+                min(0.95, confidence + 0.05),
+                notes="MusicBrainz recording MBID",
+            )
+        for order, artist in enumerate(recording.artists):
+            artist_id = _valid_mbid(artist.mbid)
+            add(
+                Subject.ARTIST,
+                artist_id,
+                "name",
+                artist.name,
+                max(0.35, confidence - 0.05),
+                role=artist.role or "main",
+                order=order,
+                notes="MusicBrainz artist credit",
+            )
+            if artist_id is not None:
+                add(
+                    Subject.ARTIST,
+                    artist_id,
+                    "mbid",
+                    artist_id,
+                    min(0.9, confidence + 0.05),
+                    role=artist.role or "main",
+                    order=order,
+                    notes="MusicBrainz artist MBID",
+                )
+            add(
+                Subject.RECORDING,
+                recording_id,
+                "artist",
+                artist.name,
+                max(0.35, confidence - 0.05),
+                role=artist.role or "main",
+                order=order,
+                notes="MusicBrainz recording artist credit",
+            )
+        for isrc in recording.isrcs:
+            normalized = _valid_isrc(isrc)
+            if normalized is not None:
+                add(
+                    Subject.RECORDING,
+                    recording_id,
+                    "isrc",
+                    normalized,
+                    min(0.9, confidence + 0.05),
+                    notes="ISRC from MusicBrainz recording",
+                )
+    if release is not None:
+        release_mbid = _valid_mbid(getattr(release, "mbid", None))
+        title = getattr(release, "title", None)
+        if isinstance(title, str) and title.strip():
+            add(
+                Subject.RELEASE,
+                release_mbid,
+                "title",
+                title.strip(),
+                min(0.85, confidence),
+                notes="MusicBrainz release title",
+            )
+        for field in ("date", "country", "label", "barcode"):
+            value = getattr(release, field, None)
+            if isinstance(value, str) and value.strip():
+                add(
+                    Subject.RELEASE,
+                    release_mbid,
+                    field,
+                    value.strip(),
+                    min(0.8, confidence),
+                    notes=f"MusicBrainz release {field}",
+                )
+        if release_mbid is not None:
+            add(
+                Subject.RELEASE,
+                release_mbid,
+                "mbid",
+                release_mbid,
+                min(0.9, confidence + 0.05),
+                notes="MusicBrainz release MBID",
+            )
+    return claims
+
+
+def _acoustid_claims(
+    inputs: InterpreterInput,
+    artifact: ArtifactPayload,
+    payload: AcoustIdLookupPayload,
+    existing: Sequence[Claim],
+) -> list[Claim]:
+    if not payload.candidates:
+        return []
+    candidate = max(payload.candidates, key=lambda item: item.score)
+    claims: list[Claim] = []
+    confidence = min(0.85, 0.25 + 0.6 * candidate.score)
+    claims.append(
+        _metadata_claim(
+            inputs.item_id,
+            artifact,
+            field="acoustid",
+            value=candidate.acoustid_id,
+            confidence=confidence,
+            source=SOURCE_ACOUSTID,
+            method=METHOD_ACOUSTID,
+            notes="AcoustID identifier",
+        )
+    )
+    for mbid in candidate.recording_mbids:
+        normalized = _valid_mbid(mbid)
+        if normalized is None:
+            continue
+        claims.append(
+            _metadata_claim(
+                inputs.item_id,
+                artifact,
+                field="mb_recording_id",
+                value=normalized,
+                confidence=min(0.8, 0.2 + 0.65 * candidate.score),
+                source=SOURCE_ACOUSTID,
+                method=METHOD_ACOUSTID,
+                notes="recording MBID from AcoustID candidate",
+            )
+        )
+    has_mb_title = _value_text(existing, "title") is not None
+    if not has_mb_title and candidate.title:
+        claims.append(
+            _metadata_claim(
+                inputs.item_id,
+                artifact,
+                field="title",
+                value=candidate.title,
+                confidence=min(0.6, 0.2 + 0.5 * candidate.score),
+                source=SOURCE_ACOUSTID,
+                method=METHOD_ACOUSTID,
+                notes="title from AcoustID candidate",
+            )
+        )
+    if _value_text(existing, "artist") is None and candidate.artist:
+        for order, credit in enumerate(parse_artists(candidate.artist)):
+            claims.append(
+                _metadata_claim(
+                    inputs.item_id,
+                    artifact,
+                    field="artist",
+                    value=credit.name,
+                    confidence=min(0.55, 0.18 + 0.45 * candidate.score),
+                    source=SOURCE_ACOUSTID,
+                    method=METHOD_ACOUSTID,
+                    role=credit.role,
+                    order=order,
+                    notes="artist from AcoustID candidate",
+                )
+            )
+    return claims
+
+
+def _cover_claims(
+    inputs: InterpreterInput,
+    artifact: ArtifactPayload,
+    payload: CoverCandidatesPayload,
+) -> list[Claim]:
+    claims: list[Claim] = []
+    ranked = sorted(
+        payload.candidates,
+        key=lambda item: (
+            item.score,
+            item.resolution,
+            _cover_source_rank(item.source),
+        ),
+        reverse=True,
+    )
+    for candidate in ranked[:3]:
+        value = candidate.artifact_ref or candidate.url
+        if not value:
+            continue
+        confidence = min(0.9, 0.35 + 0.5 * candidate.score)
+        if candidate.resolution >= 1000:
+            confidence = min(0.92, confidence + 0.05)
+        notes = f"cover candidate from {candidate.source}"
+        if candidate.width and candidate.height:
+            notes += f" ({candidate.width}x{candidate.height})"
+        claims.append(
+            _metadata_claim(
+                inputs.item_id,
+                artifact,
+                field="artwork",
+                value=value,
+                confidence=confidence,
+                source=_cover_source(candidate),
+                method=METHOD_COVER,
+                notes=notes,
+            )
+        )
+        if candidate.release_mbid:
+            claims.append(
+                _make_claim(
+                    inputs.item_id,
+                    subject=Subject.RELEASE,
+                    subject_id=candidate.release_mbid,
+                    field="artwork",
+                    value=value,
+                    confidence=confidence,
+                    source=_cover_source(candidate),
+                    method=METHOD_COVER,
+                    evidence=artifact.artifact_id,
+                    notes=notes,
+                )
+            )
+    return claims
+
+
+def _merged_lyrics_claims(
+    inputs: InterpreterInput,
+    lyrics: LyricsCandidatesPayload | None,
+    transcript: AsrTranscript | None,
+    artifact: ArtifactPayload,
+) -> tuple[list[Claim], list[str]]:
+    """Merge provider lyrics with ASR once, then expose separate fields.
+
+    ``plain`` and ``synced_lyrics`` are independent resolution fields; LRC is
+    never packed into plain lyrics.
+    """
+
+    warnings: list[str] = list(lyrics.warnings) if lyrics is not None else []
+    result = LyricsMerger().merge(
+        lyrics.candidates if lyrics is not None else [],
+        transcript,
+        inputs.claims,
+        _probe_duration(inputs),
+        title=_claim_text(inputs.claims, "title"),
+        artist=_claim_text(inputs.claims, "artist"),
+    )
+    warnings.extend(result.warnings)
+    if result.plain is None and result.lrc is None:
+        return [], list(dict.fromkeys(warnings))
+
+    if result.source == "asr":
+        source = SOURCE_ASR
+        method = METHOD_ASR
+    elif result.source == "lrclib":
+        source = SOURCE_LRCLIB
+        method = METHOD_LYRICS_MERGE
+    else:
+        source = SOURCE_LYRICS_MERGE
+        method = METHOD_LYRICS_MERGE
+    confidence = max(0.0, min(0.9, result.confidence))
+    notes = (
+        f"merged lyrics ({result.source}); timing={result.timing_source or 'none'}; "
+        f"language={result.language or 'unknown'}"
+    )
+    claims: list[Claim] = []
+    if result.plain:
+        claims.append(
+            _metadata_claim(
+                inputs.item_id,
+                artifact,
+                field="lyrics",
+                value=result.plain,
+                confidence=confidence,
+                source=source,
+                method=method,
+                notes=notes,
+            )
+        )
+    if result.lrc:
+        claims.append(
+            _metadata_claim(
+                inputs.item_id,
+                artifact,
+                field="synced_lyrics",
+                value=result.lrc,
+                confidence=confidence,
+                source=source,
+                method=method,
+                notes=f"{notes}; LRC sidecar only",
+            )
+        )
+    if result.elrc:
+        claims.append(
+            _metadata_claim(
+                inputs.item_id,
+                artifact,
+                field="elrc",
+                value=result.elrc,
+                confidence=confidence * 0.9,
+                source=source,
+                method=method,
+                notes=f"{notes}; ELRC sidecar only",
+            )
+        )
+    if result.language:
+        claims.append(
+            _metadata_claim(
+                inputs.item_id,
+                artifact,
+                field="language",
+                value=result.language,
+                confidence=max(0.35, min(0.8, confidence)),
+                source=source,
+                method=method,
+                notes="language evidence from merged lyrics/ASR",
+            )
+        )
+    return claims, list(dict.fromkeys(warnings))
+
+
+def _claim_text(claims: Sequence[Claim], field: str) -> str | None:
+    for claim in claims:
+        if claim.field == field and isinstance(claim.value, str) and claim.value.strip():
+            return claim.value.strip()
+    return None
+
+
+def _probe_duration(inputs: InterpreterInput) -> float | None:
+    probe = inputs.optional(PROBE_TYPE)
+    if probe is None:
+        return None
+    try:
+        payload = AudioProbePayload.model_validate_json(probe.payload)
+    except Exception:
+        return None
+    return payload.duration_seconds
+
+
+def _metadata_claim(
+    item_id: ItemId,
+    artifact: ArtifactPayload,
+    *,
+    field: str,
+    value: FieldValue,
+    confidence: float,
+    source: str,
+    method: str,
+    role: str | None = None,
+    order: int | None = None,
+    notes: str | None = None,
+) -> Claim:
+    return _make_claim(
+        item_id,
+        subject=Subject.ITEM,
+        field=field,
+        value=value,
+        confidence=confidence,
+        source=source,
+        method=method,
+        evidence=artifact.artifact_id,
+        role=role,
+        order=order,
+        notes=notes,
+    )
+
+
+def _best_recording_for_query(
+    mb: MusicBrainzSearchPayload,
+    title: str | None,
+    artist: str | None,
+    duration: float | None,
+) -> MusicBrainzRecording | None:
+    if not mb.recordings:
+        return None
+    return max(
+        mb.recordings,
+        key=lambda item: (
+            _recording_confidence(item, title, artist, duration),
+            item.score or 0.0,
+        ),
+    )
+
+
+def _recording_confidence(
+    recording: MusicBrainzRecording,
+    title: str | None,
+    artist: str | None,
+    duration: float | None,
+) -> float:
+    provider_score = recording.score if recording.score is not None else 0.6
+    title_score = _similarity(title, recording.title) if title else 0.5
+    artist_score = (
+        max((_similarity(artist, item.name) for item in recording.artists), default=0.0)
+        if artist
+        else 0.5
+    )
+    duration_score = 0.5
+    if duration is not None and recording.duration is not None:
+        delta = abs(duration - recording.duration)
+        duration_score = max(0.0, 1.0 - delta / 15.0)
+    return _clamp(
+        0.45 * provider_score + 0.25 * title_score + 0.15 * artist_score + 0.15 * duration_score
+    )
+
+
+def _choose_release(
+    recording: MusicBrainzRecording,
+    releases: Sequence[MusicBrainzRelease],
+) -> MusicBrainzRelease | Any | None:
+    by_mbid = {release.mbid: release for release in releases}
+    for ref in recording.releases:
+        if ref.mbid and ref.mbid in by_mbid:
+            return by_mbid[ref.mbid]
+    if recording.releases:
+        return recording.releases[0]
+    if releases:
+        official = [item for item in releases if not item.status or item.status == "Official"]
+        return (official or list(releases))[0]
+    return None
+
+
+def _identity_candidates(
+    inputs: InterpreterInput,
+    claims: Sequence[Claim],
+) -> list[dict[str, Any]]:
+    candidates: dict[str, dict[str, Any]] = {}
+    sources: dict[str, set[str]] = {}
+
+    def add(
+        target_id: str,
+        *,
+        score: float,
+        source: str,
+        claim_ids: Sequence[ClaimId] = (),
+        evidence: Sequence[str] = (),
+        external: Mapping[str, str] | None = None,
+    ) -> None:
+        target = _valid_mbid(target_id)
+        if target is None:
+            return
+        current = candidates.get(target)
+        if current is None:
+            candidates[target] = {
+                "target_id": target,
+                "score": _clamp(score),
+                "claim_ids": list(claim_ids),
+                "evidence": list(evidence),
+                "external_ids": dict(external or {}),
+            }
+            sources[target] = {source}
+            return
+        current["score"] = max(float(current["score"]), _clamp(score))
+        current["claim_ids"] = list(dict.fromkeys([*current["claim_ids"], *claim_ids]))
+        current["evidence"] = list(dict.fromkeys([*current["evidence"], *evidence]))
+        if external:
+            current["external_ids"].update(external)
+        sources[target].add(source)
+
+    for claim in claims:
+        if claim.field in {"mb_recording_id", "mb_recording"}:
+            mbid = _valid_mbid(claim.value)
+            if mbid is not None:
+                add(
+                    mbid,
+                    score=float(claim.confidence),
+                    source=claim.source,
+                    claim_ids=(claim.id,),
+                    evidence=(claim.evidence[0] if claim.evidence else str(claim.id),),
+                    external={"musicbrainz_recording": mbid},
+                )
+    mb_artifact = inputs.optional(MUSICBRAINZ_TYPE)
+    if mb_artifact is not None:
+        try:
+            mb = mb_artifact.model(MusicBrainzSearchPayload)
+        except ObservationFailed:
+            mb = None
+        if mb is not None:
+            title = mb.query.title or _value_text(claims, "title")
+            artist = mb.query.artist or _value_text(claims, "artist")
+            for recording in mb.recordings:
+                confidence = _recording_confidence(
+                    recording,
+                    title,
+                    artist,
+                    mb.query.duration,
+                )
+                external = {"musicbrainz_recording": recording.mbid}
+                if recording.isrcs:
+                    isrc = _valid_isrc(recording.isrcs[0])
+                    if isrc is not None:
+                        external["isrc"] = isrc
+                add(
+                    recording.mbid,
+                    score=confidence,
+                    source=SOURCE_MUSICBRAINZ,
+                    evidence=(mb_artifact.artifact_id,),
+                    external=external,
+                )
+    acoustid_artifact = inputs.optional(ACOUSTID_TYPE)
+    if acoustid_artifact is not None:
+        try:
+            acoustid = acoustid_artifact.model(AcoustIdLookupPayload)
+        except ObservationFailed:
+            acoustid = None
+        if acoustid is not None:
+            for candidate in acoustid.candidates:
+                for mbid in candidate.recording_mbids:
+                    add(
+                        mbid,
+                        score=candidate.score * 0.85,
+                        source=SOURCE_ACOUSTID,
+                        evidence=(acoustid_artifact.artifact_id,),
+                        external={"acoustid": candidate.acoustid_id},
+                    )
+    for target, source_set in sources.items():
+        if len(source_set) > 1:
+            candidates[target]["score"] = _clamp(
+                float(candidates[target]["score"]) + 0.05 * (len(source_set) - 1),
+                maximum=0.95,
+            )
+    return sorted(
+        candidates.values(),
+        key=lambda item: (float(item["score"]), item["target_id"]),
+        reverse=True,
+    )
+
+
+def _cover_source(candidate: CoverCandidate) -> str:
+    if candidate.source in {"cover_art_archive", "itunes", "deezer"}:
+        return candidate.source
+    if candidate.source in {"source_thumbnail", "thumbnail"}:
+        return "source_thumbnail"
+    return SOURCE_COVER_ART_ARCHIVE
+
+
+def _cover_source_rank(source: str) -> int:
+    return {
+        "cover_art_archive": 4,
+        "itunes": 3,
+        "deezer": 2,
+        "source_thumbnail": 1,
+        "thumbnail": 1,
+    }.get(source, 0)
 
 
 def _normalize_upload_date(value: str | None) -> str | None:
@@ -779,6 +2216,7 @@ initial_tags_interpreter = InitialTagsInterpreter()
 source_metadata_interpreter = SourceMetadataInterpreter()
 kind_classifier = KindClassifier()
 derivative_detector = DerivativeDetector()
+metadata_interpreter = MetadataInterpreter()
 identity_resolver = IdentityResolver()
 
 DEFAULT_INTERPRETERS: tuple[Interpreter, ...] = (
@@ -786,6 +2224,7 @@ DEFAULT_INTERPRETERS: tuple[Interpreter, ...] = (
     source_metadata_interpreter,
     kind_classifier,
     derivative_detector,
+    metadata_interpreter,
     identity_resolver,
 )
 
@@ -867,6 +2306,7 @@ class InterpretItem:
                 warnings.append("missing_artifact:initial.tags.v1")
             accumulated = list(existing)
             identity_payload: Mapping[str, Any] | None = None
+            derivative_payload: Mapping[str, Any] | None = None
 
             for interpreter in self._interpreters:
                 missing = _missing_requirements(interpreter, artifacts, accumulated)
@@ -889,6 +2329,8 @@ class InterpretItem:
                 payloads.append(result.payload)
                 if result.artifact_type == IDENTITY_ARTIFACT:
                     identity_payload = result.payload
+                elif result.artifact_type == DERIVATIVE_HYPOTHESES_ARTIFACT:
+                    derivative_payload = result.payload
                 for claim in result.claims:
                     key = _claim_key(claim)
                     if key in known:
@@ -906,11 +2348,14 @@ class InterpretItem:
 
         if identity_payload is None:
             identity_payload = _empty_identity_payload(item_id)
+        if derivative_payload is None:
+            derivative_payload = _empty_derivative_payload(item_id)
         return InterpretationView(
             item_id=item_id,
             status=status,
             claims=tuple(produced) if produced else tuple(existing),
             identity=identity_payload,
+            derivative=derivative_payload,
             warnings=tuple(dict.fromkeys(warnings)),
             artifact_payloads=tuple(payloads),
         )
@@ -966,6 +2411,13 @@ class InterpretItem:
             PATH_STRUCTURE_TYPE,
             PROBE_TYPE,
             SOURCE_METADATA_TYPE,
+            str(FINGERPRINT_ARTIFACT),
+            str(ACOUSTID_ARTIFACT),
+            str(MUSICBRAINZ_ARTIFACT),
+            str(COVER_ARTIFACT),
+            str(LYRICS_ARTIFACT),
+            str(ASR_TRANSCRIPT_ARTIFACT),
+            STEMS_TYPE,
         }
         steps = await uow.runs.list_steps_for_item(item.id)
         for step in reversed(steps):
@@ -1162,6 +2614,7 @@ def _make_claim(
     item_id: ItemId,
     *,
     subject: Subject,
+    subject_id: str | None = None,
     field: str,
     value: FieldValue,
     confidence: float,
@@ -1176,6 +2629,7 @@ def _make_claim(
         id=ClaimId(new_uuid7()),
         item_id=item_id,
         subject=subject,
+        subject_id=subject_id,
         field=field,
         value=value,
         role=role,
@@ -1254,13 +2708,16 @@ def _hypothesis(
     score: float,
     claim_ids: tuple[ClaimId, ...],
     external_ids: Mapping[str, str],
+    *,
+    evidence: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    combined = list(dict.fromkeys([*evidence, *(str(item) for item in claim_ids)]))
     return {
         "target_type": target_type,
         "target_id": target_id,
         "score": min(1.0, max(0.0, score)),
         "external_ids": dict(external_ids),
-        "evidence": [str(item) for item in claim_ids],
+        "evidence": combined,
         "status": "proposed",
     }
 
@@ -1275,9 +2732,20 @@ def _empty_identity_payload(item_id: ItemId) -> dict[str, Any]:
     }
 
 
+def _empty_derivative_payload(item_id: ItemId) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "item_id": str(item_id),
+        "status": "none",
+        "hypotheses": [],
+        "warnings": ["no_derivative_evidence"],
+    }
+
+
 __all__ = [
     "CLAIMS_ARTIFACT",
     "DEFAULT_INTERPRETERS",
+    "DERIVATIVE_HYPOTHESES_ARTIFACT",
     "IDENTITY_ARTIFACT",
     "ArtifactPayload",
     "DerivativeDetector",
@@ -1288,6 +2756,7 @@ __all__ = [
     "InterpreterInput",
     "InterpreterResult",
     "KindClassifier",
+    "MetadataInterpreter",
     "MissingArtifactError",
     "SourceMetadataInterpreter",
     "ObservationSource",
@@ -1295,5 +2764,6 @@ __all__ = [
     "identity_resolver",
     "initial_tags_interpreter",
     "kind_classifier",
+    "metadata_interpreter",
     "source_metadata_interpreter",
 ]

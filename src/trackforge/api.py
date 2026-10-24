@@ -15,6 +15,10 @@ from types import TracebackType
 from typing import Any
 
 from trackforge.application.dto.decisions import ExplanationView
+from trackforge.application.dto.feedback import (
+    FeedbackExportResult,
+    FeedbackStatsReport,
+)
 from trackforge.application.dto.plan import PlanOptions, PlanView
 from trackforge.application.dto.results import (
     AnalysisView,
@@ -64,11 +68,20 @@ class AsyncTrackForge:
         self._context: CatalogContext | None = None
         self._process: ProcessItem | None = None
         self._importer: ImportPath | None = None
+        self._feedback: _AsyncFeedbackAPI | None = None
         self._closed = False
 
     @property
     def config(self) -> TrackForgeConfig:
         return self._config
+
+    @property
+    def feedback(self) -> _AsyncFeedbackAPI:
+        """Namespaced feedback API matching ``feedback.export/stats``."""
+
+        if self._feedback is None:
+            self._feedback = _AsyncFeedbackAPI(self)
+        return self._feedback
 
     async def __aenter__(self) -> AsyncTrackForge:
         await self._ensure_open()
@@ -131,7 +144,12 @@ class AsyncTrackForge:
             plan_options = options
         else:
             opts = options or RunOptions()
-            plan_options = PlanOptions(profile=opts.profile, offline=opts.offline)
+            plan_options = PlanOptions(
+                profile=opts.profile,
+                enabled=opts.enabled if isinstance(opts.enabled, tuple) else (),
+                disabled=opts.disabled if isinstance(opts.disabled, tuple) else (),
+                offline=opts.offline,
+            )
         return await build_plan_item(config=self._config).plan(ref, plan_options)
 
     async def run(
@@ -206,7 +224,11 @@ class AsyncTrackForge:
             status = item.status
         observations = None
         if status is ItemStatus.ACQUIRED:
-            observations = await context.observe_item().observe(target, opts.profile)
+            observations = await context.observe_item().observe(
+                target,
+                opts.profile,
+                refresh=opts.refresh,
+            )
         interpretation = None
         if status in {
             ItemStatus.OBSERVED,
@@ -329,6 +351,9 @@ class AsyncTrackForge:
         value: Any = None,
         lock: bool = False,
         reason: str | None = None,
+        reason_code: str | None = None,
+        reason_text: str | None = None,
+        scope: str = "item",
         mode: str | None = None,
         auto: bool = False,
     ) -> ReviewView:
@@ -352,14 +377,22 @@ class AsyncTrackForge:
                     entry_value = entry.get("value")
                     entry_lock = bool(entry.get("lock", True))
                     entry_reason = entry.get("reason") or reason
+                    entry_reason_code = entry.get("reason_code") or reason_code
+                    entry_reason_text = entry.get("reason_text") or reason_text
+                    entry_scope = entry.get("scope") or scope
                 elif isinstance(entry, tuple) and len(entry) >= 2:
                     entry_field, entry_value = entry[0], entry[1]
                     entry_lock, entry_reason = True, reason
+                    entry_reason_code, entry_reason_text = reason_code, reason_text
+                    entry_scope = scope
                 else:
                     entry_field = getattr(entry, "field", None)
                     entry_value = getattr(entry, "value", None)
                     entry_lock = bool(getattr(entry, "lock", True))
                     entry_reason = getattr(entry, "reason", None) or reason
+                    entry_reason_code = getattr(entry, "reason_code", None) or reason_code
+                    entry_reason_text = getattr(entry, "reason_text", None) or reason_text
+                    entry_scope = getattr(entry, "scope", scope)
                 if not isinstance(entry_field, str):
                     raise DomainValidationError("correction requires a field")
                 view = await review_service.review(
@@ -369,6 +402,9 @@ class AsyncTrackForge:
                     value=entry_value,
                     lock=entry_lock,
                     reason=entry_reason,
+                    reason_code=entry_reason_code,
+                    reason_text=entry_reason_text,
+                    scope=entry_scope,
                     mode=mode_name,
                 )
             if view is None:
@@ -381,6 +417,9 @@ class AsyncTrackForge:
             value=value,
             lock=lock,
             reason=reason,
+            reason_code=reason_code,
+            reason_text=reason_text,
+            scope=scope,
             mode=mode_name,
             auto=auto,
         )
@@ -390,6 +429,44 @@ class AsyncTrackForge:
 
         context = await self._ensure_open()
         return await context.explain_item().explain(ItemId(str(item_id)), field)
+
+    async def feedback_export(
+        self,
+        *,
+        format: str = "jsonl",
+        output: Path | str | None = None,
+        item_id: ItemId | str | None = None,
+        field: str | None = None,
+        since: Any = None,
+    ) -> FeedbackExportResult:
+        """Export redacted feedback without sending anything to the network."""
+
+        context = await self._ensure_open()
+        return await context.export_feedback().export(
+            format=format,
+            output=output,
+            item_id=item_id,
+            field=field,
+            since=since,
+        )
+
+    async def feedback_stats(
+        self,
+        *,
+        group_by: str = "field",
+        item_id: ItemId | str | None = None,
+        field: str | None = None,
+        since: Any = None,
+    ) -> FeedbackStatsReport:
+        """Return correction/review/unknown statistics without claiming accuracy."""
+
+        context = await self._ensure_open()
+        return await context.feedback_stats().calculate(
+            group_by=group_by,
+            item_id=item_id,
+            field=field,
+            since=since,
+        )
 
     async def doctor(self) -> DoctorReport:
         """Check the environment without requiring an open catalog."""
@@ -438,12 +515,45 @@ class AsyncTrackForge:
         self._closed = True
 
 
+class _AsyncFeedbackAPI:
+    """Small namespace object exposed as ``AsyncTrackForge.feedback``."""
+
+    def __init__(self, facade: AsyncTrackForge) -> None:
+        self._facade = facade
+
+    async def export(self, **kwargs: Any) -> FeedbackExportResult:
+        return await self._facade.feedback_export(**kwargs)
+
+    async def stats(self, **kwargs: Any) -> FeedbackStatsReport:
+        return await self._facade.feedback_stats(**kwargs)
+
+
+class _SyncFeedbackAPI:
+    """Small namespace object exposed as ``TrackForge.feedback``."""
+
+    def __init__(self, facade: TrackForge) -> None:
+        self._facade = facade
+
+    def export(self, **kwargs: Any) -> FeedbackExportResult:
+        return self._facade.feedback_export(**kwargs)
+
+    def stats(self, **kwargs: Any) -> FeedbackStatsReport:
+        return self._facade.feedback_stats(**kwargs)
+
+
 class TrackForge:
     """Synchronous facade; use :class:`AsyncTrackForge` inside an event loop."""
 
     def __init__(self, config: TrackForgeConfig | None = None) -> None:
         self._async = AsyncTrackForge(config)
         self._entered = False
+        self._feedback: _SyncFeedbackAPI | None = None
+
+    @property
+    def feedback(self) -> _SyncFeedbackAPI:
+        if self._feedback is None:
+            self._feedback = _SyncFeedbackAPI(self)
+        return self._feedback
 
     @property
     def config(self) -> TrackForgeConfig:
@@ -536,6 +646,12 @@ class TrackForge:
     def explain(self, item_id: ItemId | str, field: str) -> ExplanationView:
         return self._call(self._async.explain, item_id, field)
 
+    def feedback_export(self, **kwargs: Any) -> FeedbackExportResult:
+        return self._call(self._async.feedback_export, **kwargs)
+
+    def feedback_stats(self, **kwargs: Any) -> FeedbackStatsReport:
+        return self._call(self._async.feedback_stats, **kwargs)
+
     def doctor(self) -> DoctorReport:
         return self._call(self._async.doctor)
 
@@ -608,6 +724,8 @@ def _looks_like_item_id(value: str) -> bool:
 
 __all__ = [
     "AsyncTrackForge",
+    "FeedbackExportResult",
+    "FeedbackStatsReport",
     "LibraryEntryView",
     "RunOptions",
     "TrackForge",

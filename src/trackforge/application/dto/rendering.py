@@ -36,8 +36,24 @@ RENDER_NAMING_TEMPLATE = "track.{ext}"
 COVER_MAX_BYTES = 10 * 1024 * 1024
 COVER_MAX_DIMENSION = 4_000
 COVER_SIDECAR_NAME = "cover.jpg"
-LYRICS_SIDECAR_NAME = "lyrics.lrc"
+LRC_SIDECAR_SUFFIX = ".lrc"
+ELRC_SIDECAR_SUFFIX = ".elrc"
 SIDECAR_NAME = "trackforge.json"
+
+
+def lyrics_sidecar_name(audio_name: str, *, enhanced: bool = False) -> str:
+    """Return the sibling sidecar name for an audio basename.
+
+    ``track.mp3`` becomes ``track.mp3.lrc`` (or ``.elrc``).  Publication later
+    renames the pair to the library stem, but the bundle itself keeps the
+    audio basename so the sidecar is unambiguous.
+    """
+
+    if not isinstance(audio_name, str) or not audio_name.strip():
+        raise DomainValidationError("audio_name must be a non-empty string")
+    suffix = ELRC_SIDECAR_SUFFIX if enhanced else LRC_SIDECAR_SUFFIX
+    return f"{audio_name}{suffix}"
+
 
 _SUPPORTED_EXTENSIONS: dict[TargetFormat, str] = {
     TargetFormat.MP3: "mp3",
@@ -799,7 +815,8 @@ __all__ = [
     "COVER_MAX_BYTES",
     "COVER_MAX_DIMENSION",
     "COVER_SIDECAR_NAME",
-    "LYRICS_SIDECAR_NAME",
+    "ELRC_SIDECAR_SUFFIX",
+    "LRC_SIDECAR_SUFFIX",
     "RENDER_NAMING_TEMPLATE",
     "SIDECAR_NAME",
     "TAG_MAPPING_VERSION",
@@ -812,5 +829,6 @@ __all__ = [
     "extension_for",
     "is_supported_container",
     "is_synced_lyrics",
+    "lyrics_sidecar_name",
     "target_format_for",
 ]

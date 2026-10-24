@@ -32,6 +32,9 @@ from trackforge.adapters.persistence.sqlite.repositories.locks import (
 from trackforge.adapters.persistence.sqlite.repositories.media import (
     SqliteMediaRepository,
 )
+from trackforge.adapters.persistence.sqlite.repositories.models import (
+    SqliteModelRepository,
+)
 from trackforge.adapters.persistence.sqlite.repositories.renders import (
     SqliteRenderRepository,
 )
@@ -50,6 +53,7 @@ __all__ = [
     "SqliteLibraryRepository",
     "SqliteLockRepository",
     "SqliteMediaRepository",
+    "SqliteModelRepository",
     "SqliteRenderRepository",
     "SqliteRunRepository",
 ]

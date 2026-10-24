@@ -50,6 +50,20 @@ def add_command(
         str | None,
         typer.Option("--force", help="Comma-separated step names to recompute."),
     ] = None,
+    enable: Annotated[
+        str | None,
+        typer.Option(
+            "--enable",
+            help="Comma-separated capabilities to enable (for example asr, stems).",
+        ),
+    ] = None,
+    disable: Annotated[
+        str | None,
+        typer.Option(
+            "--disable",
+            help="Comma-separated capabilities to disable (for example asr, stems).",
+        ),
+    ] = None,
     target_format: Annotated[
         str | None,
         typer.Option("--target-format", help="Output format: mp3, m4a, flac, ogg, opus."),
@@ -57,6 +71,10 @@ def add_command(
     offline: Annotated[
         bool,
         typer.Option("--offline", help="Disable network access."),
+    ] = False,
+    refresh: Annotated[
+        bool,
+        typer.Option("--refresh", help="Refresh external metadata despite its TTL."),
     ] = False,
     data_dir: Annotated[
         str | None,
@@ -85,9 +103,12 @@ def add_command(
             review=review,
             dry_run=dry_run,
             force=force,
+            enable=enable,
+            disable=disable,
             target_format=target_format,
             format_id=format_id,
             offline=offline,
+            refresh=refresh,
         )
         is_url = source.strip().casefold().startswith(("http://", "https://"))
 

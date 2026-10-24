@@ -13,9 +13,11 @@ license-files = ["LICENSE"]
 authors = [{ name = "GidRadium" }]
 dependencies = [
     "alembic>=1.13,<2",
+    "httpx>=0.27,<1",
     "platformdirs>=4.3,<5",
     "pydantic>=2.14,<3",
     "pydantic-settings>=2.16,<3",
+    "rapidfuzz>=3.9,<4",
     "rich>=13.9,<15",
     "sqlalchemy>=2.0,<3",
     "typer>=0.12.5,<1",
@@ -25,6 +27,28 @@ dependencies = [
 # Mutagen is GPL-2.0-or-later; it is imported only by the tagging adapter and
 # never by domain/application/pipeline code (see the license-boundary contract).
 tagging = ["mutagen>=1.47"]
+# Optional cross-encoder runtime. Lexical ranking works without this extra.
+ranker = [
+    "onnxruntime>=1.18,<2",
+    "tokenizers>=0.20,<1",
+    "numpy>=1.26,<3",
+]
+# CPU Whisper inference and explicit model downloads.  Model weights are not
+# package dependencies and stay under the models directory.
+asr = [
+    "faster-whisper>=1.1,<2",
+    "huggingface-hub>=0.24,<1",
+    # faster-whisper 1.2.x passes ``metadata_errors`` to av.open; PyAV 19
+    # removed that keyword, so keep the decoder on the compatible series.
+    "av>=11,<16",
+]
+# Optional CPU Demucs separation.  Weights are not package dependencies and
+# are downloaded only by `trackforge models download demucs`.
+stems = [
+    "demucs>=4.0,<5",
+    "torch>=2.2,<3",
+    "torchaudio>=2.2,<3",
+]
 
 [project.scripts]
 trackforge = "trackforge.interfaces.cli.main:app"
@@ -35,6 +59,7 @@ dev = [
     "mypy>=1.11,<2",
     "pytest>=8.3,<10",
     "pytest-asyncio>=0.24,<2",
+    "respx>=0.21,<1",
     "ruff>=0.9,<1",
 ]
 
@@ -79,3 +104,12 @@ markers = [
     "slow: long-running tests",
     "spike: exploratory tests not part of the regular suite",
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchaudio = { index = "pytorch-cpu" }

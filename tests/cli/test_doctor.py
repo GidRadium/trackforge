@@ -83,3 +83,72 @@ def test_doctor_does_not_print_environment_values(
 
     assert "super-secret-value" not in result.stdout
     assert "super-secret-value" not in result.stderr
+
+
+def test_doctor_reports_metadata_provider_checks_without_values(
+    tmp_path: Path,
+    cli_dirs: tuple[Path, Path],
+    clean_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data, library = cli_dirs
+    monkeypatch.setenv("TRACKFORGE_ACOUSTID_API_KEY", "super-secret-value")
+    monkeypatch.setenv("TRACKFORGE_MUSICBRAINZ_USER_AGENT", "person@example.com")
+
+    result = invoke("doctor", *cli_paths(data, library), "--json")
+
+    assert result.exit_code == 0, result.stderr
+    payload = parse_json(result)
+    checks = {check["name"]: check for check in payload["checks"]}
+    assert checks["acoustid_api_key"]["status"] == "ok"
+    assert checks["musicbrainz_user_agent"]["status"] == "ok"
+    assert checks["acoustid_api_key"]["details"] == {
+        "configured": True,
+        "env": "TRACKFORGE_ACOUSTID_API_KEY",
+    }
+    assert "super-secret-value" not in result.stdout
+    assert "person@example.com" not in result.stdout
+
+
+def test_doctor_reports_missing_asr_model_without_downloading(
+    cli_dirs: tuple[Path, Path],
+    clean_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data, library = cli_dirs
+    monkeypatch.setenv("TRACKFORGE_ASR_MODEL", "Systran/faster-whisper-small")
+    monkeypatch.setenv("TRACKFORGE_ASR_MODEL_PATH", str(data / "models" / "absent"))
+    monkeypatch.setenv("TRACKFORGE_ASR_LICENSE", "MIT")
+
+    result = invoke("doctor", *cli_paths(data, library), "--json")
+
+    assert result.exit_code == 0, result.stderr
+    payload = parse_json(result)
+    checks = {check["name"]: check for check in payload["checks"]}
+    assert checks["asr"]["status"] == "warning"
+    assert checks["asr"]["details"]["configured"] is True
+    assert checks["asr"]["details"]["path_exists"] is False
+    assert isinstance(checks["asr"]["details"]["faster_whisper"], bool)
+    assert not (data / "models" / "absent").exists()
+
+
+def test_doctor_reports_missing_demucs_model_without_downloading(
+    cli_dirs: tuple[Path, Path],
+    clean_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data, library = cli_dirs
+    monkeypatch.setenv("TRACKFORGE_STEMS_MODEL", "htdemucs")
+    monkeypatch.setenv("TRACKFORGE_STEMS_LICENSE", "MIT")
+
+    result = invoke("doctor", *cli_paths(data, library), "--json")
+
+    assert result.exit_code == 0, result.stderr
+    payload = parse_json(result)
+    checks = {check["name"]: check for check in payload["checks"]}
+    assert checks["stems"]["status"] == "warning"
+    assert checks["stems"]["details"]["configured"] is True
+    assert checks["stems"]["details"]["path_exists"] is False
+    assert isinstance(checks["stems"]["details"]["torch"], bool)
+    assert isinstance(checks["stems"]["details"]["demucs"], bool)
+    assert not (data / "models" / "stems").exists()

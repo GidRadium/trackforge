@@ -1,5 +1,22 @@
-"""HTTP boundary helpers (URL safety, redirect policy)."""
+"""HTTP boundary helpers: one client, pacing, and URL safety."""
 
+from trackforge.adapters.http.client import HttpClient, HttpResponse, build_user_agent
+from trackforge.adapters.http.rate_limit import (
+    ACOUSTID_RATE,
+    CONSERVATIVE_RATE,
+    DEFAULT_HOST_RATES,
+    DEFAULT_RATES,
+    GLOBAL_RATE,
+    MUSICBRAINZ_RATE,
+    RATE_LIMITS,
+    HostRateLimiter,
+    PerHostRateLimiter,
+    RateLimiter,
+    host_rate,
+    normalize_host,
+    parse_retry_after,
+    rate_limit_for,
+)
 from trackforge.adapters.http.url_safety import (
     SafeUrl,
     SSRFGuard,
@@ -15,14 +32,31 @@ from trackforge.adapters.http.url_safety import (
 )
 
 __all__ = [
+    "ACOUSTID_RATE",
+    "CONSERVATIVE_RATE",
+    "DEFAULT_HOST_RATES",
+    "DEFAULT_RATES",
+    "GLOBAL_RATE",
+    "MUSICBRAINZ_RATE",
+    "RATE_LIMITS",
+    "HostRateLimiter",
+    "HttpClient",
+    "HttpResponse",
+    "PerHostRateLimiter",
+    "RateLimiter",
     "SSRFGuard",
     "SafeUrl",
     "UnsafeUrl",
     "UrlGuard",
     "UrlSafetyGuard",
+    "build_user_agent",
     "ensure_safe_url",
+    "host_rate",
     "is_private_address",
     "is_safe_url",
+    "normalize_host",
+    "parse_retry_after",
+    "rate_limit_for",
     "redact_url",
     "sanitize_url",
     "validate_url",

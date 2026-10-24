@@ -86,6 +86,7 @@ class FeedbackEvent:
     system_decision_id: DecisionId | None = None
     user_claim_id: ClaimId | None = None
     review_session_id: ReviewSessionId | None = None
+    reason_code: ReasonCode | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", require_id(self.id, "id"))
@@ -131,6 +132,15 @@ class FeedbackEvent:
         )
         object.__setattr__(
             self,
+            "reason_code",
+            (
+                coerce_enum(self.reason_code, ReasonCode, "reason_code")
+                if self.reason_code is not None
+                else None
+            ),
+        )
+        object.__setattr__(
+            self,
             "created_at",
             ensure_datetime(self.created_at, "created_at"),
         )
@@ -153,6 +163,7 @@ class Correction:
     context_snapshot: dict[str, Any] = _UNSET
     created_at: datetime = dc_field(default_factory=utc_now)
     applied: bool = False
+    review_session_id: ReviewSessionId | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", require_id(self.id, "id"))
@@ -212,6 +223,23 @@ class Correction:
             ensure_datetime(self.created_at, "created_at"),
         )
         object.__setattr__(self, "applied", ensure_bool(self.applied, "applied"))
+        object.__setattr__(
+            self,
+            "review_session_id",
+            optional_id(self.review_session_id, "review_session_id"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewSessionItem:
+    """Association between a review session and one item."""
+
+    session_id: ReviewSessionId
+    item_id: ItemId
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "session_id", require_id(self.session_id, "session_id"))
+        object.__setattr__(self, "item_id", require_id(self.item_id, "item_id"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,4 +289,5 @@ __all__ = [
     "FeedbackKind",
     "ReasonCode",
     "ReviewSession",
+    "ReviewSessionItem",
 ]

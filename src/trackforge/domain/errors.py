@@ -290,9 +290,32 @@ class ResolutionFailed(TrackForgeError):
 class UnsupportedMode(TrackForgeError):
     """Raised when a resolution mode is not implemented in this build."""
 
-    default_user_action = (
-        "Use policy mode; LLM-assisted, autopilot, and manual modes arrive in later plans."
-    )
+    default_user_action = "Use policy, llm_assisted, llm_autopilot, or manual resolution."
+
+
+class LLMInvalidOutput(TrackForgeError):
+    """Raised when a provider response violates the strict output schema."""
+
+    default_user_action = "Retry the request or fall back to policy mode."
+
+
+class LLMConfigurationError(ProviderUnavailable):
+    """Raised when the LLM endpoint, model, or credential is not configured."""
+
+    default_retryable = False
+    default_user_action = "Configure [llm] base_url/model and set the api_key_env variable."
+
+
+class BudgetExceeded(TrackForgeError):
+    """Raised when one item would exceed its configured LLM budget."""
+
+    default_user_action = "Raise max_cost_usd_per_item or switch to policy mode."
+
+
+class ModelUnavailable(TrackForgeError):
+    """Raised when an optional local model or runtime is unavailable."""
+
+    default_user_action = "Install the matching extra or disable the optional model."
 
 
 class RenderFailed(TrackForgeError):
@@ -343,6 +366,12 @@ class StorageError(TrackForgeError):
     """Base class for expected storage failures."""
 
     default_user_action = "Check the TrackForge data and cache directories."
+
+
+class FeedbackStorageError(StorageError):
+    """Raised when feedback JSONL or correction files cannot be read or written."""
+
+    default_user_action = "Check the feedback directory permissions and free space."
 
 
 class InvalidStorageKey(StorageError, ValueError):
@@ -413,6 +442,10 @@ class DuplicateLock(DuplicateRecord):
     """Raised when an item/field lock already exists."""
 
 
+class DuplicateCorrection(DuplicateRecord, FeedbackStorageError):
+    """Raised when a correction id already exists in the append-only journal."""
+
+
 class ForeignKeyViolation(CatalogError, ValueError):
     """Raised when a catalog write references a missing row."""
 
@@ -447,6 +480,7 @@ __all__ = [
     "DomainValidationError",
     "DuplicateCacheKey",
     "DuplicateContentHash",
+    "DuplicateCorrection",
     "DuplicateLock",
     "CookiesExpired",
     "CookiesPermissionsError",
@@ -455,6 +489,7 @@ __all__ = [
     "DrmProtected",
     "DuplicateRecord",
     "ExtractorBroken",
+    "FeedbackStorageError",
     "ForeignKeyViolation",
     "GeoBlocked",
     "LoginRequired",

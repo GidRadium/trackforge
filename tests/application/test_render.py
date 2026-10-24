@@ -111,6 +111,8 @@ async def build_setup(
     tmp_path: Path,
     *,
     lyrics: str | None = "plain lyrics",
+    synced_lyrics: str | None = None,
+    elrc: str | None = None,
     status: ItemStatus = ItemStatus.RESOLVED,
 ) -> RenderSetup:
     cas_path = tmp_path / "cas" / "source.mp3"
@@ -148,6 +150,8 @@ async def build_setup(
         "language": "eng",
         "comment": "short",
         "lyrics": lyrics,
+        "synced_lyrics": synced_lyrics,
+        "elrc": elrc,
         "source_url": "https://example.com/watch?v=abc&token=secret",
         "mb_recording_id": "11111111-1111-1111-1111-111111111111",
     }
@@ -175,6 +179,7 @@ async def build_setup(
             created_at=NOW,
         )
         for field_name, value in fields.items()
+        if value is not None
     )
     record = DecisionRecord(
         id=record_id,
@@ -330,8 +335,8 @@ async def test_lrc_is_written_only_to_sidecar(
 
     tagset, _, _ = writer.writes[0]
     assert tagset.lyrics is None
-    assert (result.directory / "lyrics.lrc").read_text(encoding="utf-8") == LRC_TEXT
-    assert "lyrics.lrc" in result.bundle.files
+    assert (result.directory / "track.mp3.lrc").read_text(encoding="utf-8") == LRC_TEXT
+    assert "track.mp3.lrc" in result.bundle.files
     sidecar = json.loads((result.directory / "trackforge.json").read_text(encoding="utf-8"))
     assert sidecar["metadata"]["lyrics"] is None
 
@@ -424,3 +429,36 @@ def test_sidecar_hash_is_stable_and_sensitive_to_files() -> None:
     final = finalize_sidecar(document, first)
     assert final["trackforge"]["bundle_hash"] == first
     assert json.loads(sidecar_bytes(final))["schema_version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_plain_lrc_and_elrc_sidecars_coexist(
+    catalog_context: CatalogContext,
+    config: Any,
+    tmp_path: Path,
+) -> None:
+    elrc_text = "[00:01.00]<00:01.00>First <00:01.40>line\n"
+    setup = await build_setup(
+        catalog_context,
+        tmp_path,
+        lyrics="plain lyrics",
+        synced_lyrics=LRC_TEXT,
+        elrc=elrc_text,
+    )
+    use_case, _, writer, _ = build_use_case(catalog_context, config=config)
+
+    result = await use_case.render(
+        setup.item_id,
+        RenderOptions(lyrics_sidecar=True),
+        render_id=FIXED_RENDER_ID,
+        bundle_id=FIXED_BUNDLE_ID,
+        created_at=FIXED_TIME,
+    )
+
+    tagset, _, _ = writer.writes[0]
+    assert tagset.lyrics == "plain lyrics"
+    assert (result.directory / "track.mp3.lrc").read_text(encoding="utf-8") == LRC_TEXT
+    assert (result.directory / "track.mp3.elrc").read_text(encoding="utf-8") == elrc_text
+    assert {"track.mp3.lrc", "track.mp3.elrc"} <= set(result.bundle.files)
+    sidecar = json.loads((result.directory / "trackforge.json").read_text(encoding="utf-8"))
+    assert sidecar["metadata"]["lyrics"] == "plain lyrics"

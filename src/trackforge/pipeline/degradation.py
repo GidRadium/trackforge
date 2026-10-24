@@ -37,6 +37,8 @@ class WarningCode(StrEnum):
     CANCELLED = "cancelled"
     SKIPPED = "skipped"
     DEGRADED = "degraded"
+    OFFLINE = "offline"
+    STALE = "stale"
 
 
 class OutputClass(StrEnum):

@@ -154,3 +154,35 @@ async def test_local_e2e_observe(
 
     assert hashlib.sha256(fixture.path.read_bytes()).hexdigest() == original_hash
     assert fixture.path.stat().st_mtime_ns == original_mtime
+
+
+@pytest.mark.asyncio
+async def test_full_profile_without_asr_model_skips_but_observes(
+    tmp_path: Path,
+    config: TrackForgeConfig,
+) -> None:
+    skip_without_media_tools()
+    fixture = generate_media(tmp_path / "media", "mp3")
+
+    with build_catalog_context(config) as context:
+        plan = await context.plan_item().plan(
+            LocalPath(str(fixture.path)),
+            PlanOptions(profile="full"),
+            context.source_resolvers(),
+        )
+        assert plan.blocked_reason is None
+        assert any("asr.transcript.v1" in step.provides for step in plan.steps)
+
+        acquired = await context.acquire_item().acquire(
+            plan.candidates[0],
+            AcquireOptions(),
+            context.acquirers(),
+        )
+        view = await context.observe_item().observe(acquired.item_id, "full")
+
+        assert view.status is ItemStatus.OBSERVED
+        assert view.artifact("asr.transcript.v1") is None
+        steps = {step.capability_id: step for step in view.steps}
+        assert steps["whisper"].status == "skipped"
+        assert "model_missing" in steps["whisper"].warning_codes
+        assert "model_missing" in {warning.code for warning in view.warnings}

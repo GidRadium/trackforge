@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -104,6 +104,12 @@ class SqliteItemRepository(SqliteRepository):
             return [item_from_row(row) for row in rows]
 
         return await self._run(_list)
+
+    async def count_items(self) -> int:
+        def _count(session: Session) -> int:
+            return int(session.scalar(select(func.count()).select_from(ItemRow)) or 0)
+
+        return await self._run(_count)
 
 
 __all__ = ["SqliteItemRepository"]

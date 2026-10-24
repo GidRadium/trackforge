@@ -215,6 +215,8 @@ class DecisionRecordRow(Base):
     llm_model: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     input_claim_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    llm_cost_usd: Mapped[float | None] = mapped_column(REAL, nullable=True)
+    llm_usage_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
@@ -250,6 +252,48 @@ class DecisionRow(Base):
         server_default=text("0"),
     )
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ModelRegistryRow(Base):
+    __tablename__ = "model_registry"
+    __table_args__ = (Index("ix_model_registry_kind", "kind"),)
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    version: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text("''"),
+    )
+    kind: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text("'ranker'"),
+    )
+    license: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text("''"),
+    )
+    status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text("'missing'"),
+    )
+    path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    checksum: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    heavy: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("0"),
+    )
+    metadata_json: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text("'{}'"),
+    )
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class LockRow(Base):
@@ -496,6 +540,7 @@ __all__ = [
     "LibraryEntryRow",
     "LockRow",
     "MediaObjectRow",
+    "ModelRegistryRow",
     "OutputBundleRow",
     "RenderRow",
     "ReviewSessionItemRow",

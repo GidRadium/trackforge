@@ -122,7 +122,12 @@ class ProcessItem:
         opts = options or RunOptions()
         return await self._plan_item.plan(
             source,
-            PlanOptions(profile=opts.profile, offline=opts.offline),
+            PlanOptions(
+                profile=opts.profile,
+                enabled=opts.enabled if isinstance(opts.enabled, tuple) else (),
+                disabled=opts.disabled if isinstance(opts.disabled, tuple) else (),
+                offline=opts.offline,
+            ),
         )
 
     async def run(
@@ -433,6 +438,7 @@ class ProcessItem:
     ) -> dict[str, Any]:
         steps = await self._ensure_steps(run_id, item_id)
         cached_steps: list[str] = []
+        observation_warnings: list[str] = []
         await self._finish_step(
             steps["plan"],
             StepStatus.CACHED if acquire_cached else StepStatus.SUCCEEDED,
@@ -455,12 +461,23 @@ class ProcessItem:
                     user_action="Import the source again.",
                     context={"item_id": item_id},
                 )
-        if item.status is ItemStatus.ACQUIRED or "observe" in options.force_steps:
+        if (
+            item.status is ItemStatus.ACQUIRED
+            or "observe" in options.force_steps
+            or options.refresh
+        ):
             self._check_cancelled(cancel)
-            await self._run_stage(
+            observation = await self._run_stage(
                 steps["observe"],
-                self._observe_item.observe(item_id, options.profile),
+                self._observe_item.observe(
+                    item_id,
+                    options.profile,
+                    refresh=options.refresh,
+                    enabled=options.enabled,
+                    disabled=options.disabled,
+                ),
             )
+            observation_warnings.extend(warning.message for warning in observation.warnings)
             await self._finish_step(steps["observe"], StepStatus.SUCCEEDED)
             self._publish_event(
                 EventType.STEP_FINISHED,
@@ -475,6 +492,7 @@ class ProcessItem:
         if (
             item.status in {ItemStatus.ACQUIRED, ItemStatus.OBSERVED}
             or "interpret" in options.force_steps
+            or options.refresh
         ):
             self._check_cancelled(cancel)
             await self._run_stage(
@@ -492,7 +510,10 @@ class ProcessItem:
             self._resolve_item.resolve(item_id, options.mode),
         )
         await self._finish_step(steps["resolve"], StepStatus.SUCCEEDED)
-        warnings: list[str] = list(resolved.warnings)
+        warnings: list[str] = [
+            *dict.fromkeys(observation_warnings),
+            *resolved.warnings,
+        ]
 
         render: Render | None = None
         bundle: OutputBundle | None = None

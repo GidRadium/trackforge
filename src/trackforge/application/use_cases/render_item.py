@@ -18,7 +18,6 @@ from pathlib import Path
 
 from trackforge.application.dto.rendering import (
     COVER_SIDECAR_NAME,
-    LYRICS_SIDECAR_NAME,
     RENDER_NAMING_TEMPLATE,
     SIDECAR_NAME,
     TAG_MAPPING_VERSION,
@@ -29,6 +28,7 @@ from trackforge.application.dto.rendering import (
     extension_for,
     is_supported_container,
     is_synced_lyrics,
+    lyrics_sidecar_name,
     target_format_for,
 )
 from trackforge.application.ports.rendering import Renderer, TagReader, TagWriter
@@ -164,7 +164,7 @@ class RenderItem:
         derivative = _derivatives(claims)
         warnings: list[str] = list(resolved.warnings)
         try:
-            tagset, synced_lyrics = _tagset_for(resolved, derivative)
+            tagset, lrc_lyrics, elrc_lyrics = _tagset_for(resolved, derivative)
         except DomainValidationError as exc:
             raise RenderFailed(
                 "resolved metadata cannot be mapped to canonical tags",
@@ -190,7 +190,7 @@ class RenderItem:
                 warnings.append("cover_read_failed")
         if loaded_cover is None:
             warnings.append("cover_missing")
-        if synced_lyrics and not target_options.lyrics_sidecar:
+        if (lrc_lyrics or elrc_lyrics) and not target_options.lyrics_sidecar:
             warnings.append("lyrics_sidecar_disabled")
 
         target = target_format_for(media.container, target_options.target_format)
@@ -272,10 +272,16 @@ class RenderItem:
                 cover_path_final = temporary_directory / COVER_SIDECAR_NAME
                 _write_bytes(cover_path_final, loaded_cover.data)
                 file_hashes.append((COVER_SIDECAR_NAME, sha256_file(cover_path_final)))
-            if target_options.lyrics_sidecar and synced_lyrics:
-                lyrics_path = temporary_directory / LYRICS_SIDECAR_NAME
-                _write_text(lyrics_path, synced_lyrics)
-                file_hashes.append((LYRICS_SIDECAR_NAME, sha256_file(lyrics_path)))
+            if target_options.lyrics_sidecar and lrc_lyrics:
+                lyrics_relative = lyrics_sidecar_name(audio_relative)
+                lyrics_path = temporary_directory / lyrics_relative
+                _write_text(lyrics_path, lrc_lyrics)
+                file_hashes.append((lyrics_relative, sha256_file(lyrics_path)))
+            if target_options.lyrics_sidecar and elrc_lyrics:
+                elrc_relative = lyrics_sidecar_name(audio_relative, enhanced=True)
+                elrc_path = temporary_directory / elrc_relative
+                _write_text(elrc_path, elrc_lyrics)
+                file_hashes.append((elrc_relative, sha256_file(elrc_path)))
 
             sidecar_data = SidecarData(
                 item_id=item_id,
@@ -425,13 +431,19 @@ def _derivatives(claims: Sequence[Claim]) -> tuple[str, ...]:
 def _tagset_for(
     resolved: ResolvedMetadata,
     derivative: Sequence[str],
-) -> tuple[TagSet, str | None]:
+) -> tuple[TagSet, str | None, str | None]:
     raw_lyrics = resolved.fields.get("lyrics")
-    lyrics = raw_lyrics if isinstance(raw_lyrics, str) else None
-    synced = lyrics if is_synced_lyrics(lyrics) else None
-    plain = None if synced is not None else lyrics
+    lyrics = raw_lyrics if isinstance(raw_lyrics, str) and raw_lyrics.strip() else None
+    raw_synced = resolved.fields.get("synced_lyrics")
+    synced = raw_synced if isinstance(raw_synced, str) and raw_synced.strip() else None
+    if synced is None and is_synced_lyrics(lyrics):
+        synced = lyrics
+        lyrics = None
+    plain = None if is_synced_lyrics(lyrics) else lyrics
+    raw_elrc = resolved.fields.get("elrc")
+    elrc = raw_elrc if isinstance(raw_elrc, str) and raw_elrc.strip() else None
     tagset = TagSet.from_resolved(resolved, derivative=derivative).with_lyrics(plain)
-    return tagset, synced
+    return tagset, synced, elrc
 
 
 def _sidecar_source(

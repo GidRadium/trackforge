@@ -10,6 +10,7 @@ from trackforge.application.dto.decisions import (
     ExplanationView,
     ResolvedMetadata,
 )
+from trackforge.application.dto.feedback import CorrectionView, LockView, ReviewSessionView
 from trackforge.domain.errors import DomainValidationError
 from trackforge.domain.model._validation import (
     FieldValue,
@@ -21,6 +22,7 @@ from trackforge.domain.model.decisions import DecidedBy, DecisionMode
 from trackforge.domain.model.ids import DecisionRecordId, ItemId
 from trackforge.domain.model.item import ItemStatus
 from trackforge.domain.model.outputs import LibraryEntry, LibraryStatus, TargetFormat
+from trackforge.domain.policies.normalization import FIELD_ALIASES
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +145,11 @@ class ReviewView:
     decision_record_id: DecisionRecordId | None = None
     explanation: ExplanationView | None = None
     action: str = "show"
+    correction: CorrectionView | None = None
+    lock: LockView | None = None
+    session: ReviewSessionView | None = None
+    actions: tuple[str, ...] = ()
+    requires_render: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -153,16 +160,27 @@ class ReviewView:
         object.__setattr__(self, "fields", tuple(self.fields))
         object.__setattr__(self, "locked_fields", tuple(self.locked_fields))
         object.__setattr__(self, "warnings", tuple(self.warnings))
+        object.__setattr__(self, "actions", tuple(self.actions))
 
     def field(self, name: str) -> ReviewFieldView | None:
+        normalized = FIELD_ALIASES.get(name.strip().lower(), name.strip().lower())
         for field_view in self.fields:
-            if field_view.field == name:
+            if field_view.field in {name, normalized}:
                 return field_view
         return None
 
     @property
     def decisions(self) -> tuple[ReviewFieldView, ...]:
         return self.fields
+
+    @property
+    def review_session_id(self) -> str | None:
+        return None if self.session is None else str(self.session.id)
+
+
+# The contract in Plan 15 calls the result object ``ReviewResult``.  Keep the
+# historical ``ReviewView`` name for API compatibility.
+ReviewResult = ReviewView
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,5 +259,6 @@ __all__ = [
     "LibraryEntryView",
     "ResolveView",
     "ReviewFieldView",
+    "ReviewResult",
     "ReviewView",
 ]

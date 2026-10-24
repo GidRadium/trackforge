@@ -53,6 +53,7 @@ from trackforge.domain.model.feedback import (
     FeedbackKind,
     ReasonCode,
     ReviewSession,
+    ReviewSessionItem,
 )
 from trackforge.domain.model.identity import (
     Artist,
@@ -224,6 +225,7 @@ __all__ = [
     "ResolvedMetadata",
     "ReviewSession",
     "ReviewSessionId",
+    "ReviewSessionItem",
     "RunId",
     "SelectionStrategy",
     "SideEffect",

@@ -6,10 +6,21 @@ HTTP, CLI, or framework modules.
 
 from __future__ import annotations
 
+from trackforge.domain.policies import derivative as derivative
 from trackforge.domain.policies import normalization as normalization
 from trackforge.domain.policies import registry as registry
 from trackforge.domain.policies import strategies as strategies
 from trackforge.domain.policies import validators as validators
+from trackforge.domain.policies.derivative import (
+    DerivativeEvidence,
+    DerivativeHypothesis,
+    DerivativeParameters,
+    DerivativeSource,
+    DerivativeStatus,
+    RelationshipEvidence,
+    TextEvidence,
+    evaluate_derivative,
+)
 from trackforge.domain.policies.normalization import (
     ArtistCredit,
     ParsedDate,
@@ -65,6 +76,13 @@ __all__ = [
     "DEFAULT_POLICIES",
     "DEFAULT_POLICY_REGISTRY",
     "ArtistCredit",
+    "DerivativeEvidence",
+    "DerivativeHypothesis",
+    "DerivativeParameters",
+    "DerivativeSource",
+    "DerivativeStatus",
+    "RelationshipEvidence",
+    "TextEvidence",
     "ParsedDate",
     "FieldPolicyRegistry",
     "PolicyRegistry",
@@ -79,9 +97,11 @@ __all__ = [
     "comparison_key",
     "default_registry",
     "derive_title",
+    "derivative",
     "detect_source_noise",
     "detect_transformations",
     "display_qualifier",
+    "evaluate_derivative",
     "merge_results",
     "normalization",
     "normalize_artist_name",

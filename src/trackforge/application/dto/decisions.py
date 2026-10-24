@@ -168,6 +168,7 @@ class InterpretationView:
     status: ItemStatus
     claims: tuple[Claim, ...] = ()
     identity: Mapping[str, Any] | None = None
+    derivative: Mapping[str, Any] | None = None
     warnings: tuple[str, ...] = ()
     artifact_payloads: tuple[Mapping[str, Any], ...] = ()
 

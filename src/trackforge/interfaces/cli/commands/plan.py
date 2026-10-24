@@ -17,6 +17,20 @@ def plan_command(
     source: Annotated[str, typer.Argument(help="Local audio file to plan.")],
     profile: Annotated[str | None, typer.Option("--profile")] = None,
     mode: Annotated[str | None, typer.Option("--mode")] = None,
+    enable: Annotated[
+        str | None,
+        typer.Option(
+            "--enable",
+            help="Comma-separated capabilities to enable (for example asr, stems).",
+        ),
+    ] = None,
+    disable: Annotated[
+        str | None,
+        typer.Option(
+            "--disable",
+            help="Comma-separated capabilities to disable (for example asr, stems).",
+        ),
+    ] = None,
     target_format: Annotated[
         str | None,
         typer.Option("--target-format", help="Accepted for command parity; plan does not render."),
@@ -41,6 +55,8 @@ def plan_command(
             profile=profile,
             mode=mode,
             dry_run=True,
+            enable=enable,
+            disable=disable,
             offline=offline,
             target_format=target_format,
         )

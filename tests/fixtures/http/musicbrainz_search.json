@@ -1,0 +1,65 @@
+{
+  "count": 1,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "title": "Fixture Song",
+      "length": 750,
+      "score": 100,
+      "isrcs": ["USRC17607839", "invalid-isrc"],
+      "artist-credit": [
+        {
+          "name": "MusicBrainz Artist",
+          "joinphrase": "",
+          "artist": {
+            "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "name": "MusicBrainz Artist",
+            "sort-name": "Artist, MusicBrainz"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          "title": "MusicBrainz Album",
+          "date": "2024-05-03",
+          "country": "US",
+          "status": "Official",
+          "barcode": "1234567890123",
+          "label-info": [
+            {
+              "catalog-number": "CAT-001",
+              "label": {
+                "id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                "name": "Fixture Label"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+            "title": "MusicBrainz Album",
+            "primary-type": "Album"
+          },
+          "media": [
+            {
+              "position": 1,
+              "track-count": 1,
+              "tracks": [
+                {
+                  "id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                  "number": "1",
+                  "title": "Fixture Song"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "genres": [
+        {"name": "Rock", "count": 3},
+        {"name": "Pop", "count": 1}
+      ]
+    }
+  ]
+}

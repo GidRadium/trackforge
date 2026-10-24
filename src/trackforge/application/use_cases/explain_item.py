@@ -14,10 +14,9 @@ from trackforge.domain.errors import (
     DomainValidationError,
     RecordNotFound,
     ResolutionFailed,
-    UnsupportedMode,
 )
 from trackforge.domain.model.claims import Claim, Subject
-from trackforge.domain.model.decisions import Decision, DecisionMode, DecisionRecord
+from trackforge.domain.model.decisions import Decision, DecisionRecord
 from trackforge.domain.model.ids import DecisionRecordId, ItemId
 from trackforge.domain.policies.normalization import canonical_field, value_equal
 from trackforge.domain.policies.validators import validate_cross_fields, validate_field
@@ -67,11 +66,6 @@ class ExplainItem:
                         "field": field_name,
                         "record_id": record.id,
                     },
-                )
-            if decision.mode is not DecisionMode.POLICY:
-                raise UnsupportedMode(
-                    f"decision mode {decision.mode.value!r} cannot be explained by policy",
-                    context={"field": field_name, "mode": decision.mode.value},
                 )
             claims = await uow.claims.list_by_item(item.id)
 

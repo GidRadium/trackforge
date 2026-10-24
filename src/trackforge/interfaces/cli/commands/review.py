@@ -35,7 +35,18 @@ def review_command(
     skip: Annotated[bool, typer.Option("--skip", help="Keep the current value.")] = False,
     accept: Annotated[bool, typer.Option("--accept", help="Accept current decisions.")] = False,
     auto: Annotated[bool, typer.Option("--auto", help="Accept all current decisions.")] = False,
-    reason: Annotated[str | None, typer.Option("--reason")] = None,
+    reason: Annotated[
+        str | None,
+        typer.Option("--reason", "--reason-text", help="Free-text correction reason."),
+    ] = None,
+    reason_code: Annotated[
+        str | None,
+        typer.Option("--reason-code", help="Structured correction reason code."),
+    ] = None,
+    scope: Annotated[
+        str,
+        typer.Option("--scope", help="Correction scope; only item is executable in v1."),
+    ] = "item",
     mode: Annotated[str | None, typer.Option("--mode")] = None,
     as_json: Annotated[bool, typer.Option("--json")] = False,
     data_dir: Annotated[str | None, typer.Option("--data-dir")] = None,
@@ -47,6 +58,8 @@ def review_command(
         selected_actions = [unlock, unknown, why, skip, accept]
         if sum(bool(value) for value in selected_actions) > 1:
             fail("choose only one review action", as_json=as_json)
+        if lock and unlock:
+            fail("--lock and --unlock are mutually exclusive", as_json=as_json)
         field_name = field.strip() if isinstance(field, str) and field.strip() else None
         raw_value: object = set_value
         if set_value is not None and field_name is None:
@@ -91,6 +104,9 @@ def review_command(
                     value=raw_value,
                     lock=lock and action == "edit",
                     reason=reason,
+                    reason_code=reason_code,
+                    reason_text=reason,
+                    scope=scope,
                     mode=options.mode,
                     auto=auto,
                 )

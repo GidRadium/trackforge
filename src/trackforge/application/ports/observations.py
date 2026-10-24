@@ -27,6 +27,21 @@ INITIAL_TAGS_ARTIFACT = ArtifactType.parse("initial.tags.v1")
 PATH_STRUCTURE_ARTIFACT = ArtifactType.parse("path.structure.v1")
 SOURCE_SNAPSHOT_ARTIFACT = ArtifactType.parse("source.snapshot.v1")
 SOURCE_METADATA_ARTIFACT = ArtifactType.parse("source.metadata.v1")
+FINGERPRINT_ARTIFACT = ArtifactType.parse("audio.fingerprint.v1")
+ACOUSTID_ARTIFACT = ArtifactType.parse("acoustid.lookup.v1")
+MUSICBRAINZ_ARTIFACT = ArtifactType.parse("musicbrainz.search.v1")
+COVER_ARTIFACT = ArtifactType.parse("cover.candidates.v1")
+LYRICS_ARTIFACT = ArtifactType.parse("lyrics.candidates.v1")
+ASR_TRANSCRIPT_ARTIFACT = ArtifactType.parse("asr.transcript.v1")
+STEMS_ARTIFACT = ArtifactType.parse("audio.stems.v1")
+
+METADATA_ARTIFACTS = (
+    FINGERPRINT_ARTIFACT,
+    ACOUSTID_ARTIFACT,
+    MUSICBRAINZ_ARTIFACT,
+    COVER_ARTIFACT,
+    LYRICS_ARTIFACT,
+)
 
 
 def media_input(step_input: StepInput) -> MediaInput:
@@ -52,12 +67,20 @@ class Observer(Capability, Protocol):
 
 
 __all__ = [
+    "ACOUSTID_ARTIFACT",
+    "ASR_TRANSCRIPT_ARTIFACT",
+    "COVER_ARTIFACT",
+    "FINGERPRINT_ARTIFACT",
     "INITIAL_TAGS_ARTIFACT",
+    "LYRICS_ARTIFACT",
     "MEDIA_ARTIFACT",
+    "METADATA_ARTIFACTS",
+    "MUSICBRAINZ_ARTIFACT",
     "PATH_STRUCTURE_ARTIFACT",
     "PROBE_ARTIFACT",
     "SOURCE_METADATA_ARTIFACT",
     "SOURCE_SNAPSHOT_ARTIFACT",
+    "STEMS_ARTIFACT",
     "Observer",
     "media_input",
 ]

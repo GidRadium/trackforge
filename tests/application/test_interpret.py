@@ -312,3 +312,68 @@ async def test_interpreter_returns_claims_v1_payload() -> None:
 
 def _artifact(artifact_type: str, payload: bytes) -> ArtifactPayload:
     return ArtifactPayload(type=artifact_type, payload=payload, artifact_id="artifact-1")
+
+
+async def test_asr_and_plain_lyrics_merge_into_separate_fields(
+    catalog_context: CatalogContext,
+    create_item: Callable[..., Any],
+    make_observations: Callable[..., dict[str, bytes]],
+) -> None:
+    from trackforge.application.dto.lyrics import (
+        AsrModelInfo,
+        AsrSegment,
+        AsrTranscript,
+        AsrWord,
+    )
+    from trackforge.application.dto.providers import LyricsCandidate, LyricsCandidatesPayload
+
+    item_id = await create_item()
+    observed = make_observations(lyrics=None)
+    observed["lyrics.candidates.v1"] = (
+        LyricsCandidatesPayload(
+            candidates=[
+                LyricsCandidate(
+                    source="lrclib",
+                    title="Song",
+                    artist="Artist",
+                    duration=180.0,
+                    plain="hello world",
+                    score=0.8,
+                )
+            ]
+        )
+        .model_dump_json()
+        .encode("utf-8")
+    )
+    observed["asr.transcript.v1"] = (
+        AsrTranscript(
+            language="en",
+            segments=[
+                AsrSegment(
+                    start=1.0,
+                    end=2.0,
+                    text="hello world",
+                    words=[
+                        AsrWord(word="hello", start=1.0, end=1.4, probability=0.9),
+                        AsrWord(word="world", start=1.5, end=2.0, probability=0.9),
+                    ],
+                )
+            ],
+            avg_logprob=-0.2,
+            no_speech_prob=0.05,
+            model=AsrModelInfo(id="test/whisper", version="1"),
+            duration_seconds=180.0,
+        )
+        .model_dump_json()
+        .encode("utf-8")
+    )
+
+    view = await catalog_context.interpret_item().interpret(item_id, observed)
+    fields = _field_values(view)
+
+    assert fields["lyrics"] == ["hello world"]
+    assert len(fields["synced_lyrics"]) == 1
+    assert fields["synced_lyrics"][0].startswith("[00:01.00]hello world")
+    assert fields["elrc"][0].startswith("[00:01.00]<00:01.00>hello")
+    assert fields["language"] == ["en"]
+    assert "[00:" not in fields["lyrics"][0]

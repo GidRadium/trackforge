@@ -7,12 +7,19 @@ from collections.abc import Sequence
 from trackforge.application.dto.plan import PlanOptions, PlanStepView, PlanView
 from trackforge.application.ports.execution import Capability
 from trackforge.application.ports.observations import (
+    ACOUSTID_ARTIFACT,
+    ASR_TRANSCRIPT_ARTIFACT,
+    COVER_ARTIFACT,
+    FINGERPRINT_ARTIFACT,
     INITIAL_TAGS_ARTIFACT,
+    LYRICS_ARTIFACT,
     MEDIA_ARTIFACT,
+    MUSICBRAINZ_ARTIFACT,
     PATH_STRUCTURE_ARTIFACT,
     PROBE_ARTIFACT,
     SOURCE_METADATA_ARTIFACT,
     SOURCE_SNAPSHOT_ARTIFACT,
+    STEMS_ARTIFACT,
 )
 from trackforge.application.ports.sources import SourceResolver
 from trackforge.domain.errors import CookiesPermissionsError, OfflineModeError, UnsupportedSource
@@ -25,7 +32,85 @@ DEFAULT_OBSERVE_OUTPUTS = (
     INITIAL_TAGS_ARTIFACT,
     PATH_STRUCTURE_ARTIFACT,
 )
+METADATA_OBSERVE_OUTPUTS = (
+    FINGERPRINT_ARTIFACT,
+    ACOUSTID_ARTIFACT,
+    MUSICBRAINZ_ARTIFACT,
+    COVER_ARTIFACT,
+    LYRICS_ARTIFACT,
+)
+ASR_CAPABILITY_ALIASES = frozenset({"asr", "whisper"})
+STEMS_CAPABILITY_ALIASES = frozenset({"stems", "demucs"})
 DEFAULT_REQUIRED_OUTPUTS = (PROBE_ARTIFACT,)
+
+
+def _names(values: Sequence[str] | str) -> tuple[str, ...]:
+    if isinstance(values, str):
+        return tuple(part.strip() for part in values.split(",") if part.strip())
+    return tuple(str(item).strip() for item in values if str(item).strip())
+
+
+def asr_requested(
+    profile: str,
+    enabled: Sequence[str] | str = (),
+    disabled: Sequence[str] | str = (),
+) -> bool:
+    """Return whether the profile/flags request ASR."""
+
+    enabled_names = {item.casefold() for item in _names(enabled)}
+    disabled_names = {item.casefold() for item in _names(disabled)}
+    if ASR_CAPABILITY_ALIASES.intersection(disabled_names):
+        return False
+    return profile.strip().casefold() == "full" or bool(
+        ASR_CAPABILITY_ALIASES.intersection(enabled_names)
+    )
+
+
+def stems_requested(
+    profile: str,
+    enabled: Sequence[str] | str = (),
+    disabled: Sequence[str] | str = (),
+) -> bool:
+    """Return whether the profile/flags request Demucs stems."""
+
+    enabled_names = {item.casefold() for item in _names(enabled)}
+    disabled_names = {item.casefold() for item in _names(disabled)}
+    if STEMS_CAPABILITY_ALIASES.intersection(disabled_names):
+        return False
+    return profile.strip().casefold() == "full" or bool(
+        STEMS_CAPABILITY_ALIASES.intersection(enabled_names)
+    )
+
+
+def planner_enabled(enabled: Sequence[str] | str) -> tuple[str, ...]:
+    """Drop user-facing capability aliases from capability-id filters."""
+
+    aliases = ASR_CAPABILITY_ALIASES | STEMS_CAPABILITY_ALIASES
+    return tuple(item for item in _names(enabled) if item.casefold() not in aliases)
+
+
+def planner_disabled(
+    profile: str,
+    enabled: Sequence[str] | str,
+    disabled: Sequence[str] | str,
+) -> tuple[str, ...]:
+    """Map an explicit ``--disable asr`` to the Whisper capability id."""
+
+    aliases = ASR_CAPABILITY_ALIASES | STEMS_CAPABILITY_ALIASES
+    names = [item for item in _names(disabled) if item.casefold() not in aliases]
+    disabled_names = {item.casefold() for item in _names(disabled)}
+    enabled_names = {item.casefold() for item in _names(enabled)}
+    if profile.strip().casefold() == "full":
+        if ASR_CAPABILITY_ALIASES.intersection(disabled_names) and not (
+            ASR_CAPABILITY_ALIASES.intersection(enabled_names)
+        ):
+            names.append("whisper")
+        if STEMS_CAPABILITY_ALIASES.intersection(disabled_names) and not (
+            STEMS_CAPABILITY_ALIASES.intersection(enabled_names)
+        ):
+            names.append("demucs")
+    return tuple(names)
+
 
 # Local copying is cheap relative to the analysis steps.  The estimate is
 # deliberately coarse; Plan 09 will replace it with measured throughput.
@@ -98,8 +183,8 @@ class PlanItem:
 
         profile = AnalysisProfile(
             name=opts.profile,
-            enabled=opts.enabled,
-            disabled=opts.disabled,
+            enabled=planner_enabled(opts.enabled),
+            disabled=planner_disabled(opts.profile, opts.enabled, opts.disabled),
         )
         is_url = isinstance(source, Url)
         observe_outputs: tuple[ArtifactType, ...] = tuple(
@@ -107,6 +192,40 @@ class PlanItem:
             for output in DEFAULT_OBSERVE_OUTPUTS
             if not (is_url and output == PATH_STRUCTURE_ARTIFACT)
         )
+        provided = {
+            artifact
+            for capability in self._capabilities
+            for artifact in capability.manifest.provides
+            if isinstance(artifact, ArtifactType)
+        }
+        for output in METADATA_OBSERVE_OUTPUTS:
+            if output not in provided:
+                continue
+            if output == ACOUSTID_ARTIFACT and FINGERPRINT_ARTIFACT not in provided:
+                continue
+            if output == COVER_ARTIFACT and MUSICBRAINZ_ARTIFACT not in provided:
+                continue
+            observe_outputs = (*observe_outputs, output)
+        if ASR_TRANSCRIPT_ARTIFACT in provided and (
+            asr_requested(opts.profile, opts.enabled, opts.disabled)
+            or (
+                opts.profile.strip().casefold() == "full"
+                and ASR_CAPABILITY_ALIASES.intersection(
+                    {item.strip().casefold() for item in opts.disabled if item.strip()}
+                )
+            )
+        ):
+            observe_outputs = (*observe_outputs, ASR_TRANSCRIPT_ARTIFACT)
+        if STEMS_ARTIFACT in provided and (
+            stems_requested(opts.profile, opts.enabled, opts.disabled)
+            or (
+                opts.profile.strip().casefold() == "full"
+                and STEMS_CAPABILITY_ALIASES.intersection(
+                    {item.strip().casefold() for item in opts.disabled if item.strip()}
+                )
+            )
+        ):
+            observe_outputs = (*observe_outputs, STEMS_ARTIFACT)
         inputs: tuple[ArtifactType, ...] = (MEDIA_ARTIFACT,)
         has_source_metadata = any(
             SOURCE_METADATA_ARTIFACT in capability.manifest.provides
@@ -165,4 +284,14 @@ class PlanItem:
         )
 
 
-__all__ = ["DEFAULT_OBSERVE_OUTPUTS", "DEFAULT_REQUIRED_OUTPUTS", "PlanItem"]
+__all__ = [
+    "DEFAULT_OBSERVE_OUTPUTS",
+    "DEFAULT_REQUIRED_OUTPUTS",
+    "METADATA_OBSERVE_OUTPUTS",
+    "PlanItem",
+    "STEMS_CAPABILITY_ALIASES",
+    "asr_requested",
+    "planner_disabled",
+    "planner_enabled",
+    "stems_requested",
+]

@@ -10,6 +10,7 @@ SQLAlchemy work in a worker thread so callers never block the event loop.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from types import TracebackType
 from typing import Any, Protocol, runtime_checkable
@@ -26,10 +27,11 @@ from trackforge.application.dto.db import (
     StepRecord,
     StepStatus,
 )
+from trackforge.application.ports.models import ModelRegistry
 from trackforge.domain.model._validation import FieldValue
 from trackforge.domain.model.claims import Claim, ClaimStatus
 from trackforge.domain.model.decisions import Decision, DecisionRecord
-from trackforge.domain.model.feedback import FeedbackEvent, FeedbackKind
+from trackforge.domain.model.feedback import FeedbackEvent, FeedbackKind, ReviewSession
 from trackforge.domain.model.ids import (
     ArtifactId,
     ClaimId,
@@ -39,6 +41,7 @@ from trackforge.domain.model.ids import (
     ItemId,
     LibraryEntryId,
     MediaId,
+    ReviewSessionId,
     RunId,
     StepId,
 )
@@ -76,6 +79,8 @@ class ItemRepository(Protocol):
         *,
         limit: int | None = None,
     ) -> list[Item]: ...
+
+    async def count_items(self) -> int: ...
 
 
 @runtime_checkable
@@ -167,6 +172,13 @@ class DecisionRepository(Protocol):
 
     async def list_decisions(self, record_id: DecisionRecordId) -> list[Decision]: ...
 
+    async def count_decisions(
+        self,
+        *,
+        item_id: ItemId | None = None,
+        unknown_only: bool = False,
+    ) -> int: ...
+
 
 @runtime_checkable
 class LockRepository(Protocol):
@@ -209,7 +221,36 @@ class FeedbackRepository(Protocol):
 
     async def list_by_field(self, item_id: ItemId, field: str) -> list[FeedbackEvent]: ...
 
+    async def list_all(
+        self,
+        *,
+        kind: FeedbackKind | str | None = None,
+        item_id: ItemId | None = None,
+        field: str | None = None,
+        since: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[FeedbackEvent]: ...
+
     async def stats(self, *, item_id: ItemId | None = None) -> FeedbackStats: ...
+
+    async def save_session(self, session: ReviewSession) -> ReviewSession: ...
+
+    async def get_session(self, session_id: ReviewSessionId) -> ReviewSession | None: ...
+
+    async def list_sessions(
+        self,
+        *,
+        item_id: ItemId | None = None,
+        limit: int | None = None,
+    ) -> list[ReviewSession]: ...
+
+    async def update_session(
+        self,
+        session_id: ReviewSessionId,
+        *,
+        finished_at: datetime | None = None,
+        notes: Sequence[str] | None = None,
+    ) -> ReviewSession: ...
 
 
 @runtime_checkable
@@ -343,6 +384,7 @@ class UnitOfWork(Protocol):
     runs: RunRepository
     renders: RenderRepository
     library: LibraryRepository
+    models: ModelRegistry
 
     async def __aenter__(self) -> UnitOfWork: ...
 
@@ -369,6 +411,7 @@ __all__ = [
     "LibraryRepository",
     "LockRepository",
     "MediaRepository",
+    "ModelRegistry",
     "RenderRepository",
     "RunRepository",
     "UnitOfWork",

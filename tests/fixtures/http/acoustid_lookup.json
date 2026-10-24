@@ -1,0 +1,27 @@
+{
+  "status": "ok",
+  "results": [
+    {
+      "id": "9f5d2b3e-7a61-4a0e-9f6f-2f4e4f6d1a2b",
+      "score": 0.97,
+      "recordings": [
+        {
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "title": "Fixture Song",
+          "artists": [{"id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "name": "MusicBrainz Artist"}]
+        }
+      ]
+    },
+    {
+      "id": "1b6f3c4d-8b72-4b1f-8a70-3a5f5a7e2b3c",
+      "score": 0.41,
+      "recordings": [
+        {
+          "id": "99999999-9999-4999-8999-999999999999",
+          "title": "Other Song",
+          "artists": [{"name": "Other Artist"}]
+        }
+      ]
+    }
+  ]
+}

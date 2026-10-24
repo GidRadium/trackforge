@@ -20,6 +20,7 @@ from trackforge.adapters.persistence.sqlite.models import (
     LibraryEntryRow,
     LockRow,
     MediaObjectRow,
+    ModelRegistryRow,
     OutputBundleRow,
     RenderRow,
     RunItemRow,
@@ -36,6 +37,7 @@ from trackforge.application.dto.db import (
     StepRecord,
     StepStatus,
 )
+from trackforge.application.ports.models import ModelInfo, ModelKind, ModelStatus
 from trackforge.application.services.canonical_json import canonical_json
 from trackforge.domain.errors import InvalidCatalogData
 from trackforge.domain.model.claims import (
@@ -54,6 +56,7 @@ from trackforge.domain.model.feedback import (
     CorrectionScope,
     FeedbackEvent,
     FeedbackKind,
+    ReasonCode,
 )
 from trackforge.domain.model.identity import ContentKind
 from trackforge.domain.model.ids import (
@@ -430,7 +433,30 @@ def decision_record_from_row(
             ClaimId(str(item))
             for item in json_list_from_row(row.input_claim_ids_json, "input_claim_ids")
         ),
+        llm_cost_usd=row.llm_cost_usd,
+        llm_usage=(
+            json_mapping_from_row(row.llm_usage_json, "llm_usage_json")
+            if row.llm_usage_json is not None
+            else None
+        ),
         created_at=from_iso_z(row.created_at),
+    )
+
+
+def model_from_row(row: ModelRegistryRow) -> ModelInfo:
+    return ModelInfo(
+        id=row.id,
+        version=row.version,
+        kind=ModelKind(row.kind),
+        license=row.license,
+        status=ModelStatus(row.status),
+        path=row.path,
+        checksum=row.checksum,
+        size_bytes=row.size_bytes,
+        source=row.source,
+        heavy=bool(row.heavy),
+        metadata=json_mapping_from_row(row.metadata_json, "metadata_json"),
+        updated_at=from_iso_z(row.updated_at),
     )
 
 
@@ -499,6 +525,7 @@ def feedback_from_row(row: FeedbackEventRow) -> FeedbackEvent:
         review_session_id=(
             ReviewSessionId(row.review_session_id) if row.review_session_id else None
         ),
+        reason_code=(ReasonCode(row.reason_code) if row.reason_code is not None else None),
     )
 
 
@@ -649,6 +676,7 @@ __all__ = [
     "library_entry_from_row",
     "lock_from_row",
     "media_from_row",
+    "model_from_row",
     "optional_from_iso_z",
     "optional_iso_z",
     "render_from_row",

@@ -1,0 +1,23 @@
+{
+  "audio": "music.ogg",
+  "duration_seconds": 245.352,
+  "elapsed_seconds": 247.548,
+  "instrumental_ratio": 0.739244,
+  "model": {
+    "backend": "demucs",
+    "id": "htdemucs",
+    "jobs": 1,
+    "overlap": 0.25,
+    "segment": 7.8,
+    "version": "955717e8-8726e21a"
+  },
+  "peak_rss_mb": 2217.7,
+  "rms": 0.297809898853302,
+  "rss_before_mb": 255.0,
+  "rtf": 1.009,
+  "spectral_centroid": 3130.524607389683,
+  "status": "succeeded",
+  "vocal_energy": 0.260756,
+  "vocals_ratio": 0.260756,
+  "warnings": []
+}

@@ -31,6 +31,7 @@ from trackforge.application.ports.execution import (
     StepWarning,
 )
 from trackforge.application.ports.storage import (
+    ArtifactConflict,
     ArtifactCorrupted,
     ArtifactNotFound,
     ArtifactRef,
@@ -427,16 +428,43 @@ class Cache:
         forced key ignores the lookup without deleting the old artifact.
         """
 
+        ref, _ = await self.lookup_with_status(
+            key,
+            schema_version,
+            expected_type=expected_type,
+            refresh=refresh,
+            force=force,
+        )
+        return ref
+
+    async def lookup_with_status(
+        self,
+        key: str,
+        schema_version: int | Mapping[str, int] | ArtifactType | None = None,
+        *,
+        expected_type: ArtifactType | str | None = None,
+        refresh: bool | None = None,
+        force: bool | None = None,
+        allow_stale: bool = False,
+    ) -> tuple[ArtifactRef | None, bool]:
+        """Return ``(ref, stale)``; stale entries are optional.
+
+        ``allow_stale`` is used by network-backed steps: an expired external
+        response can still be reused with a visible ``stale`` warning.  A
+        refresh/force lookup never returns a stale entry.
+        """
+
         cache_key = require_cache_key(key)
-        if (self._force if force is None else force) or cache_key in self._force_keys:
-            return None
+        force_lookup = (self._force if force is None else force) or cache_key in self._force_keys
+        if force_lookup:
+            return None, False
         try:
             ref = await self._store.find(cache_key)
             if ref is None:
-                return None
+                return None, False
             manifest, _ = await self._store.load(ref)
         except (ArtifactCorrupted, ArtifactNotFound, StorageError, ValueError, KeyError):
-            return None
+            return None, False
 
         if expected_type is not None:
             expected = (
@@ -445,10 +473,10 @@ class Cache:
                 else ArtifactType.parse(expected_type)
             )
             if manifest.type != str(expected):
-                return None
+                return None, False
 
         if not self._schema_matches(manifest, schema_version):
-            return None
+            return None, False
 
         if not (self._refresh if refresh is None else refresh):
             expires_at = manifest.expires_at
@@ -456,8 +484,10 @@ class Cache:
             if now.tzinfo is None:
                 now = now.replace(tzinfo=UTC)
             if expires_at is not None and _parse_iso_z(expires_at) <= now:
-                return None
-        return ref
+                if allow_stale:
+                    return ref, True
+                return None, False
+        return ref, False
 
     async def load(
         self,
@@ -580,7 +610,13 @@ class Cache:
         params: Mapping[str, Any] | None = None,
         inputs: object = None,
     ) -> list[ArtifactRef]:
-        """Persist a successful/degraded step result; skipped results are ignored."""
+        """Persist a successful/degraded step result; skipped results are ignored.
+
+        A forced/refreshed step may produce a different payload for the same
+        deterministic key.  Artifacts are immutable, so the new result is
+        written under a payload-derived sibling key; the old artifact remains
+        available.  Re-running an unchanged result keeps the normal key.
+        """
 
         cache_key = require_cache_key(key)
         if not isinstance(result, StepResult):
@@ -590,6 +626,45 @@ class Cache:
 
         producer_model = _coerce_producer(producer)
         artifact_inputs = _coerce_inputs(inputs)
+        try:
+            return await self._store_result(
+                cache_key,
+                result,
+                producer_model,
+                artifact_inputs,
+                params or {},
+            )
+        except ArtifactConflict:
+            primary = result.artifacts[0]
+            primary_payload = (
+                canonical_json(primary.payload)
+                if primary.payload_format == "json"
+                else bytes(primary.payload)
+            )
+            refreshed_key = sha256_hex(
+                canonical_json(
+                    {
+                        "cache_key": cache_key,
+                        "payload_hash": sha256_hex(primary_payload),
+                    }
+                )
+            )
+            return await self._store_result(
+                refreshed_key,
+                result,
+                producer_model,
+                artifact_inputs,
+                params or {},
+            )
+
+    async def _store_result(
+        self,
+        cache_key: str,
+        result: StepResult,
+        producer: ArtifactProducer,
+        artifact_inputs: list[ArtifactInput],
+        params: Mapping[str, Any],
+    ) -> list[ArtifactRef]:
         now = self._clock()
         entries: list[dict[str, Any]] = []
         for index, draft in enumerate(result.artifacts):
@@ -623,7 +698,7 @@ class Cache:
         ordered = list(enumerate(result.artifacts))
         for index, draft in reversed(ordered):
             entry_key = cast(str, entries[index]["cache_key"])
-            manifest_params = {**dict(params or {}), **dict(draft.params)}
+            manifest_params = {**dict(params), **dict(draft.params)}
             if index == 0:
                 manifest_params[_CACHE_META_KEY] = meta
             warnings = list(draft.warnings) + list(result.warnings)
@@ -631,7 +706,7 @@ class Cache:
                 artifact_id=draft.artifact_id,
                 type=str(draft.type),
                 schema_version=draft.type.schema_version,
-                producer=producer_model,
+                producer=producer,
                 inputs=artifact_inputs,
                 params=manifest_params,
                 warnings=[warning.to_dict() for warning in warnings],

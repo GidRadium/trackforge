@@ -49,6 +49,8 @@ from trackforge.domain.model.feedback import (
     CorrectionScope,
     FeedbackEvent,
     FeedbackKind,
+    ReasonCode,
+    ReviewSession,
 )
 from trackforge.domain.model.ids import (
     CandidateId,
@@ -74,15 +76,31 @@ NOW = datetime(2026, 10, 22, 13, 0, tzinfo=UTC)
 def test_repository_protocols_match_concrete_implementations() -> None:
     assert issubclass(SqliteUnitOfWork, object)
     methods = {
-        "items": ["get", "save", "update_status", "find_by_media", "list_by_status"],
+        "items": ["get", "save", "update_status", "find_by_media", "list_by_status", "count_items"],
         "media": ["get", "find_by_hash", "save"],
         "file_instances": ["get", "find_by_media", "find_by_path", "save"],
         "intakes": ["get", "find_by_item", "save"],
         "artifacts": ["get", "find_by_cache_key", "save"],
         "claims": ["append", "list_by_item", "list_by_field", "append_status_event"],
-        "decisions": ["save_record", "get_record", "list_records", "list_decisions"],
+        "decisions": [
+            "save_record",
+            "get_record",
+            "list_records",
+            "list_decisions",
+            "count_decisions",
+        ],
         "locks": ["get", "list_by_item", "upsert", "delete"],
-        "feedback": ["append_event", "list_by_item", "list_by_field", "stats"],
+        "feedback": [
+            "append_event",
+            "list_by_item",
+            "list_by_field",
+            "list_all",
+            "stats",
+            "save_session",
+            "get_session",
+            "list_sessions",
+            "update_session",
+        ],
         "runs": [
             "create_run",
             "get_run",
@@ -433,6 +451,81 @@ async def test_feedback_round_trip_filters_and_stats(
         assert stats.total == 2
         assert stats.by_kind == {"correction": 1, "approval": 1}
         assert stats.by_field == {"title": 1, "artist": 1}
+
+
+@pytest.mark.asyncio
+async def test_review_session_round_trip_and_feedback_dimensions(
+    uow_factory: Callable[[], SqliteUnitOfWork],
+    make_item: Callable[..., Item],
+) -> None:
+    item = make_item()
+    session = ReviewSession(
+        id=new_uuid7(),
+        item_ids=(item.id,),
+        fields=("title",),
+        started_at=NOW,
+        finished_at=NOW,
+        notes=("action:edit",),
+    )
+    event = FeedbackEvent(
+        id=new_uuid7(),
+        kind=FeedbackKind.CORRECTION,
+        item_id=item.id,
+        field="title",
+        system_value="Old",
+        user_value="New",
+        scope=CorrectionScope.ITEM,
+        reason_code=ReasonCode.WRONG_TITLE,
+        context_snapshot={
+            "system_source": "musicbrainz",
+            "system_method": "musicbrainz-api/v1",
+            "chosen_claim_id": "claim-1",
+            "claims": [
+                {
+                    "id": "claim-1",
+                    "field": "title",
+                    "value": "Old",
+                    "source": "musicbrainz",
+                    "method": "musicbrainz-api/v1",
+                    "confidence": 0.9,
+                }
+            ],
+        },
+        review_session_id=session.id,
+        created_at=NOW,
+    )
+
+    async with uow_factory() as uow:
+        await uow.items.save(item)
+        saved = await uow.feedback.save_session(session)
+        assert saved.id == session.id
+        await uow.feedback.append_event(event)
+
+    async with uow_factory() as uow:
+        loaded = await uow.feedback.get_session(session.id)
+        assert loaded is not None
+        assert loaded.item_ids == (item.id,)
+        assert loaded.fields == ("title",)
+        assert loaded.corrections == (event.id,)
+        sessions = await uow.feedback.list_sessions(item_id=item.id)
+        assert [value.id for value in sessions] == [session.id]
+        updated = await uow.feedback.update_session(
+            session.id,
+            finished_at=NOW + timedelta(minutes=1),
+            notes=("action:edit", "reviewed"),
+        )
+        assert updated.notes == ("action:edit", "reviewed")
+        assert updated.finished_at == NOW + timedelta(minutes=1)
+
+        stats = await uow.feedback.stats(item_id=item.id)
+        assert stats.corrections == 1
+        assert stats.by_source == {"musicbrainz": 1}
+        assert stats.by_method == {"musicbrainz-api/v1": 1}
+        assert stats.unknowns == 0
+
+        events = await uow.feedback.list_all(item_id=item.id)
+        assert [value.id for value in events] == [event.id]
+        assert events[0].reason_code is ReasonCode.WRONG_TITLE
 
 
 @pytest.mark.asyncio

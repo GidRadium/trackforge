@@ -64,6 +64,7 @@ class Transformation(StrEnum):
     LIVE = "live"
     ACOUSTIC = "acoustic"
     DEMO = "demo"
+    OTHER = "other"
 
 
 class IdentityTargetType(StrEnum):

@@ -196,6 +196,16 @@ def print_review(view: ReviewView) -> None:
             )
     if view.locked_fields:
         typer.echo(f"Locked: {', '.join(view.locked_fields)}")
+    if view.correction is not None:
+        typer.echo(
+            f"Correction: {view.correction.field} "
+            f"{_short(view.correction.system_value)} → {_short(view.correction.user_value)} "
+            f"({view.correction.reason_code.value})"
+        )
+    if view.session is not None:
+        typer.echo(f"Review session: {view.session.id}")
+    if view.requires_render:
+        typer.echo("Next: run render/publish to apply the reviewed decisions.")
     if view.explanation is not None:
         print_explanation(view.explanation)
     for warning in view.warnings:

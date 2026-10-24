@@ -127,6 +127,8 @@ class NormalizedTags(BaseModel):
     albumartist: list[str] = Field(default_factory=list)
     date: str | None = None
     genre: list[str] = Field(default_factory=list)
+    bpm: float | None = Field(default=None, gt=0.0)
+    key: str | None = None
     track: int | None = Field(default=None, ge=0)
     track_total: int | None = Field(default=None, ge=0)
     disc: int | None = Field(default=None, ge=0)

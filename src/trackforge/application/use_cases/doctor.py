@@ -22,12 +22,13 @@ from trackforge.application.dto.results import (
     DoctorStatus,
 )
 
-_CURRENT_SCHEMA_REVISION = "0001"
+_CURRENT_SCHEMA_REVISION = "0002"
 _REQUIRED_TABLES = frozenset(
     {
         "alembic_version",
         "items",
         "media_objects",
+        "model_registry",
         "runs",
         "steps",
         "renders",
@@ -94,6 +95,8 @@ class Doctor:
         checks.append(self._catalog_check())
         checks.append(self._disk_check())
         checks.append(_binary_check("fpcalc", self._which, status=DoctorStatus.WARNING))
+        checks.append(_acoustid_key_check(self._config))
+        checks.append(_musicbrainz_user_agent_check(self._config))
         checks.append(
             _tool_version_check(
                 "yt-dlp",
@@ -112,6 +115,10 @@ class Doctor:
             )
         )
         checks.append(_ytdlp_ejs_check(self._module_available))
+        checks.append(_llm_check(self._config))
+        checks.append(_ranker_check(self._config, self._module_available))
+        checks.append(_asr_check(self._config, self._module_available))
+        checks.append(_stems_check(self._config, self._module_available))
         checks.append(_cookies_check(Path(self._config.config_dir) / "cookies"))
         checks.append(_settings_check(self._config))
         return DoctorReport(checks=tuple(checks), generated_at=self._clock(), version=_version())
@@ -233,6 +240,294 @@ def _python_check() -> DoctorCheck:
             "Python version is supported" if supported else "Python 3.12 or newer is required"
         ),
         details={"version": f"{info.major}.{info.minor}.{info.micro}"},
+    )
+
+
+def _llm_check(config: object) -> DoctorCheck:
+    base_url = bool(str(getattr(config, "llm_base_url", "") or "").strip())
+    model = bool(str(getattr(config, "llm_model", "") or "").strip())
+    key_env = str(getattr(config, "llm_api_key_env", "TRACKFORGE_LLM_API_KEY") or "")
+    key_present = bool(key_env and os.environ.get(key_env, "").strip())
+    if not key_present and key_env:
+        config_dir = getattr(config, "config_dir", None)
+        if config_dir is not None:
+            key_present = _dotenv_key_present(Path(config_dir) / ".env", key_env)
+    configured = base_url and model
+    if configured and key_present:
+        status = DoctorStatus.OK
+        message = "LLM endpoint/model and API key are configured"
+    elif configured:
+        status = DoctorStatus.WARNING
+        message = "LLM endpoint/model are configured but the API key is absent; LLM modes fall back"
+    else:
+        status = DoctorStatus.WARNING
+        message = "LLM endpoint/model are not configured; policy mode is available"
+    return DoctorCheck(
+        name="llm",
+        status=status,
+        message=message,
+        details={
+            "base_url_configured": base_url,
+            "model_configured": model,
+            "api_key_env": key_env,
+            "api_key_present": key_present,
+        },
+    )
+
+
+def _dotenv_key_present(path: Path, name: str) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == name and value.strip():
+            return True
+    return False
+
+
+def _ranker_check(
+    config: object,
+    module_available: Callable[[str], bool],
+) -> DoctorCheck:
+    strategy = str(getattr(config, "ranker_strategy", "lexical") or "lexical")
+    model = bool(str(getattr(config, "ranker_model", "") or "").strip())
+    path_value = str(getattr(config, "ranker_model_path", "") or "").strip()
+    path = bool(path_value)
+    model_path = Path(path_value).expanduser() if path else None
+    models_dir = getattr(config, "models_dir", None)
+    if model_path is not None and not model_path.is_absolute() and models_dir is not None:
+        model_path = Path(models_dir) / model_path
+    path_exists = model_path is not None and model_path.exists()
+    license_name = str(getattr(config, "ranker_license", "") or "").strip()
+    if strategy == "lexical" and not model and not path:
+        return DoctorCheck(
+            name="ranker",
+            status=DoctorStatus.OK,
+            message="lexical ranker is available; cross-encoder is opt-in",
+            details={"strategy": strategy, "cross_encoder": False},
+        )
+    problems: list[str] = []
+    if not model and not path:
+        problems.append("model/path is not configured")
+    if path and not path_exists:
+        problems.append("configured model path does not exist")
+    if not license_name:
+        problems.append("model license is not configured")
+    if not module_available("onnxruntime"):
+        problems.append("install the [ranker] extra")
+    status = DoctorStatus.WARNING if problems else DoctorStatus.OK
+    return DoctorCheck(
+        name="ranker",
+        status=status,
+        message=(
+            "; ".join(problems)
+            if problems
+            else "cross-encoder ranker is configured with an ONNX runtime"
+        ),
+        details={
+            "strategy": strategy,
+            "model_configured": model,
+            "path_configured": path,
+            "path_exists": path_exists if path else None,
+            "license_configured": bool(license_name),
+            "onnxruntime": module_available("onnxruntime"),
+        },
+    )
+
+
+def _asr_check(
+    config: object,
+    module_available: Callable[[str], bool],
+) -> DoctorCheck:
+    model = str(getattr(config, "asr_model", "") or "").strip()
+    path_value = str(getattr(config, "asr_model_path", "") or "").strip()
+    if not model and not path_value:
+        return DoctorCheck(
+            name="asr",
+            status=DoctorStatus.OK,
+            message="ASR is not configured; profiles without ASR run normally",
+            details={"configured": False},
+        )
+    models_dir = getattr(config, "models_dir", None)
+    if path_value:
+        model_path = Path(path_value).expanduser()
+        if not model_path.is_absolute() and models_dir is not None:
+            model_path = Path(models_dir) / model_path
+    else:
+        directory = _asr_model_directory(model)
+        model_path = Path(directory) if models_dir is None else Path(models_dir) / "asr" / directory
+    path_exists = model_path is not None and model_path.exists()
+    license_name = str(getattr(config, "asr_license", "") or "").strip()
+    checksum = str(getattr(config, "asr_checksum", "") or "").strip()
+    required_memory = int(getattr(config, "asr_memory_mb", 2048) or 2048)
+    available_memory = _available_memory_mb()
+    problems: list[str] = []
+    if not path_exists:
+        problems.append("model path does not exist; run `trackforge models download asr`")
+    if not license_name:
+        problems.append("model license is not configured")
+    if not checksum:
+        problems.append("model checksum is not configured")
+    if not module_available("faster_whisper"):
+        problems.append("install the [asr] extra")
+    if available_memory is not None and available_memory < required_memory:
+        problems.append(
+            f"only {available_memory:.0f} MB available; the estimate is {required_memory} MB"
+        )
+    return DoctorCheck(
+        name="asr",
+        status=DoctorStatus.WARNING if problems else DoctorStatus.OK,
+        message="; ".join(problems) if problems else "ASR model and runtime are ready",
+        details={
+            "configured": True,
+            "model": model or Path(path_value).stem,
+            "path_exists": path_exists,
+            "license_configured": bool(license_name),
+            "checksum_configured": bool(checksum),
+            "faster_whisper": module_available("faster_whisper"),
+            "available_memory_mb": (
+                round(available_memory) if available_memory is not None else None
+            ),
+            "required_memory_mb": required_memory,
+        },
+    )
+
+
+def _stems_check(
+    config: object,
+    module_available: Callable[[str], bool],
+) -> DoctorCheck:
+    model = str(getattr(config, "stems_model", "") or "").strip()
+    path_value = str(getattr(config, "stems_model_path", "") or "").strip()
+    if not model and not path_value:
+        return DoctorCheck(
+            name="stems",
+            status=DoctorStatus.OK,
+            message=(
+                "Demucs is not configured; full reports a visible model_missing skip "
+                "and derivative analysis uses metadata/duration evidence only"
+            ),
+            details={"configured": False},
+        )
+    models_dir = getattr(config, "models_dir", None)
+    if path_value:
+        model_path = Path(path_value).expanduser()
+        if not model_path.is_absolute() and models_dir is not None:
+            model_path = Path(models_dir) / model_path
+    else:
+        version = str(getattr(config, "stems_model_version", "") or "").strip()
+        if not version and model == "htdemucs":
+            version = "955717e8-8726e21a"
+        file_name = str(getattr(config, "stems_model_file", "") or "").strip()
+        if not file_name:
+            file_name = f"{version or model or 'demucs-model'}.th"
+        directory = _asr_model_directory(model)
+        model_path = (
+            Path("stems") / directory / file_name
+            if models_dir is None
+            else Path(models_dir) / "stems" / directory / file_name
+        )
+    path_exists = model_path is not None and model_path.exists()
+    license_name = str(getattr(config, "stems_license", "") or "").strip()
+    checksum = str(getattr(config, "stems_checksum", "") or "").strip()
+    required_memory = int(getattr(config, "stems_memory_mb", 3072) or 3072)
+    available_memory = _available_memory_mb()
+    problems: list[str] = []
+    if not path_exists:
+        problems.append("model path does not exist; run `trackforge models download demucs`")
+    if not license_name:
+        problems.append("model license is not configured")
+    if not checksum:
+        problems.append("model checksum is not configured")
+    if not module_available("torch") or not module_available("demucs"):
+        problems.append("install the [stems] extra")
+    if available_memory is not None and available_memory < required_memory:
+        problems.append(
+            f"only {available_memory:.0f} MB available; the estimate is {required_memory} MB"
+        )
+    return DoctorCheck(
+        name="stems",
+        status=DoctorStatus.WARNING if problems else DoctorStatus.OK,
+        message="; ".join(problems) if problems else "Demucs model and runtime are ready",
+        details={
+            "configured": True,
+            "model": model or Path(path_value).stem,
+            "path_exists": path_exists,
+            "license_configured": bool(license_name),
+            "checksum_configured": bool(checksum),
+            "torch": module_available("torch"),
+            "demucs": module_available("demucs"),
+            "memory_available_mb": (
+                round(available_memory, 1) if available_memory is not None else None
+            ),
+            "required_memory_mb": required_memory,
+        },
+    )
+
+
+def _asr_model_directory(model_id: str) -> str:
+    text = re.sub(r"[^A-Za-z0-9._-]+", "--", model_id.strip()).strip(".-")
+    return text or "asr-model"
+
+
+def _available_memory_mb() -> float | None:
+    try:
+        with Path("/proc/meminfo").open(encoding="utf-8") as file:
+            for line in file:
+                if line.startswith("MemAvailable:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return int(parts[1]) / 1024.0
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def _acoustid_key_check(config: object) -> DoctorCheck:
+    configured = bool(str(getattr(config, "acoustid_api_key", "") or "").strip())
+    return DoctorCheck(
+        name="acoustid_api_key",
+        status=DoctorStatus.OK if configured else DoctorStatus.WARNING,
+        message=(
+            "AcoustID API key is configured"
+            if configured
+            else "AcoustID API key is not configured; fingerprint lookup is disabled"
+        ),
+        details={
+            "configured": configured,
+            "env": "TRACKFORGE_ACOUSTID_API_KEY",
+        },
+    )
+
+
+def _musicbrainz_user_agent_check(config: object) -> DoctorCheck:
+    value = str(getattr(config, "musicbrainz_user_agent", "") or "").strip()
+    has_contact = bool(value) and (
+        "@" in value or "://" in value or value.casefold().startswith("trackforge/")
+    )
+    if has_contact:
+        return DoctorCheck(
+            name="musicbrainz_user_agent",
+            status=DoctorStatus.OK,
+            message="MusicBrainz User-Agent contact is configured",
+            details={"configured": True, "contact": True},
+        )
+    return DoctorCheck(
+        name="musicbrainz_user_agent",
+        status=DoctorStatus.WARNING,
+        message=(
+            "MusicBrainz User-Agent contact is missing; MusicBrainz search is disabled"
+            if not value
+            else "MusicBrainz User-Agent has no contact; add an email address or URL"
+        ),
+        details={"configured": bool(value), "contact": False},
     )
 
 
