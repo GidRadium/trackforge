@@ -31,6 +31,8 @@ APP_TABLES = {
     "artifacts",
     "claim_events",
     "claims",
+    "collection_items",
+    "collections",
     "decision_records",
     "decisions",
     "feedback_events",
@@ -50,8 +52,6 @@ APP_TABLES = {
     "steps",
 }
 FORBIDDEN_TABLES = {
-    "collections",
-    "collection_items",
     "schema_migrations",
     "recordings",
     "releases",
@@ -70,7 +70,7 @@ def test_empty_data_dir_upgrades_to_all_mvp_tables(
         assert tables.isdisjoint(FORBIDDEN_TABLES)
         with catalog.connect() as connection:
             version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0002"
+        assert version == "0003"
     finally:
         catalog.close()
 
@@ -84,7 +84,7 @@ def test_repeated_upgrade_is_idempotent(config: TrackForgeConfig) -> None:
         with second.connect() as connection:
             assert inspect(connection).get_table_names().count("items") == 1
             versions = connection.execute(text("SELECT version_num FROM alembic_version")).all()
-        assert versions == [("0002",)]
+        assert versions == [("0003",)]
     finally:
         second.close()
 

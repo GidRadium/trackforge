@@ -302,7 +302,8 @@ class FilesystemPublisher:
                 user_action="Use copy mode for managed-library publication.",
             )
         view = self._inspect_bundle(bundle, bundle_dir)
-        root = self._prepare_root(library_root)
+        library_base = self._prepare_root(library_root)
+        root = _prepare_collection_subfolder(library_base, options.subfolder)
         temp_dir = _prepare_temp_dir(root)
 
         audio_name = format_library_name(
@@ -559,6 +560,37 @@ def _prepare_temp_dir(root: Path) -> Path:
             context={"path": str(temp), "error": str(exc)},
         ) from exc
     return temp
+
+
+def _prepare_collection_subfolder(root: Path, subfolder: str | None) -> Path:
+    if subfolder is None:
+        return root
+    name = sanitize_component(subfolder, fallback="Collection")
+    if name in {".", ".."}:
+        raise PublishFailed("collection folder name is not safe")
+    target = _safe_destination(root, name)
+    if target.is_symlink():
+        raise PublishFailed(
+            "collection folder must not be a symlink",
+            context={"path": str(target)},
+        )
+    try:
+        target.mkdir(parents=False, exist_ok=True, mode=0o755)
+        if not target.is_dir():
+            raise PublishFailed(
+                "collection folder path is not a directory",
+                context={"path": str(target)},
+            )
+        resolved = target.resolve(strict=True)
+        resolved.relative_to(root)
+    except PublishFailed:
+        raise
+    except (OSError, ValueError) as exc:
+        raise PublishFailed(
+            "collection folder could not be created inside the library",
+            context={"path": str(target), "error": str(exc)},
+        ) from exc
+    return resolved
 
 
 def _stage_file(source: Path, temp_dir: Path) -> Path:

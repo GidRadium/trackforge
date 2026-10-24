@@ -12,9 +12,10 @@ import asyncio
 import os
 import re
 import shutil
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from trackforge.application.dto.rendering import (
     COVER_SIDECAR_NAME,
@@ -40,6 +41,7 @@ from trackforge.application.ports.storage import (
 )
 from trackforge.application.services.sidecar import (
     SidecarArtifacts,
+    SidecarCollection,
     SidecarData,
     SidecarIdentity,
     SidecarSource,
@@ -120,6 +122,9 @@ class RenderItem:
         render_id: RenderId | str | None = None,
         bundle_id: BundleId | str | None = None,
         created_at: datetime | None = None,
+        collection: SidecarCollection | None = None,
+        tag_basis: str | None = None,
+        tag_alternatives: Mapping[str, Any] | None = None,
     ) -> RenderResult:
         """Render, tag, verify, and persist one output bundle."""
 
@@ -312,6 +317,9 @@ class RenderItem:
                 artifacts=SidecarArtifacts(probe=media.probe_artifact_id),
                 warnings=tuple(dict.fromkeys(warnings)),
                 unknowns=resolved.unknowns,
+                collection=collection,
+                tag_basis=tag_basis,
+                tag_alternatives=dict(tag_alternatives or {}),
             )
             placeholder = build_sidecar_document(sidecar_data)
             bundle_hash = compute_bundle_hash(file_hashes, placeholder)

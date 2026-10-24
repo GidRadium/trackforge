@@ -17,6 +17,10 @@ from uuid import UUID
 
 import typer
 
+from trackforge.application.dto.collections import (
+    CollectionPlanView,
+    CollectionRunResult,
+)
 from trackforge.application.dto.decisions import ExplanationView
 from trackforge.application.dto.plan import PlanView
 from trackforge.application.dto.results import (
@@ -55,6 +59,13 @@ def to_jsonable(value: Any) -> Any:
             document["summary"] = value.summary
         elif isinstance(value, PlanView):
             document["blocked"] = value.blocked
+        elif isinstance(value, CollectionPlanView):
+            document["blocked"] = value.blocked
+            document["tag_basis"] = to_jsonable(value.tag_basis)
+            document["collection_id"] = to_jsonable(value.collection_id)
+            document["selected_positions"] = [item.position for item in value.selected_items]
+        elif isinstance(value, CollectionRunResult):
+            document["succeeded"] = value.succeeded
         elif isinstance(value, RenderView):
             document["path"] = to_jsonable(value.audio_path)
             document["bundle"] = {
@@ -143,6 +154,61 @@ def print_plan(plan: PlanView) -> None:
         typer.echo(f"warning: {warning}", err=True)
     if not plan.blocked_reason:
         typer.echo("Plan is ready.")
+
+
+def print_collection_plan(plan: CollectionPlanView) -> None:
+    collection = plan.collection
+    typer.echo(f"Collection: {collection.title} ({collection.kind.value})")
+    typer.echo(f"Id: {collection.id}")
+    typer.echo(f"Tag basis: {collection.tag_basis.value}")
+    if collection.owner:
+        typer.echo(f"Owner: {collection.owner}")
+    typer.echo(f"Items: {len(plan.selected_items)} selected of {len(collection.items)}")
+    for item in plan.selected_items:
+        typer.echo(f"  {item.position:>4}. {item.candidate.title}")
+    typer.echo(
+        f"Estimated cost: {plan.estimated_cost.network_calls} network call(s), "
+        f"{plan.estimated_cost.cpu_seconds:.1f}s CPU"
+    )
+    for warning in plan.warnings:
+        typer.echo(f"warning: {warning}", err=True)
+    if plan.blocked_reason:
+        typer.echo(f"Blocked: {plan.blocked_reason}", err=True)
+    else:
+        typer.echo("Plan is ready.")
+
+
+def print_collection_run(result: CollectionRunResult) -> None:
+    typer.echo(f"Collection {result.collection_id} — {result.status.value}")
+    typer.echo(
+        f"Processed: {result.processed}; failed: {result.failed}; "
+        f"skipped: {result.skipped}; remaining: {result.remaining}"
+    )
+    for item in result.items:
+        typer.echo(f"  {item.position:>4}. {item.status.value}")
+        if item.output_path:
+            typer.echo(f"       {item.output_path}")
+        if item.error:
+            typer.echo(f"       error: {item.error}", err=True)
+    for warning in result.warnings:
+        typer.echo(f"warning: {warning}", err=True)
+    for error in result.errors:
+        typer.echo(f"error: {error}", err=True)
+
+
+def print_collection(collection: Any) -> None:
+    typer.echo(f"Collection: {collection.title} ({collection.kind.value})")
+    typer.echo(f"Id: {collection.id}")
+    typer.echo(f"Tag basis: {collection.tag_basis.value}")
+    if collection.owner:
+        typer.echo(f"Owner: {collection.owner}")
+    for item in collection.items:
+        item_id = f" {item.item_id}" if item.item_id else ""
+        typer.echo(f"  {item.position:>4}. {item.status.value:<9} {item.candidate.title}{item_id}")
+        if item.error:
+            typer.echo(f"       error: {item.error}", err=True)
+    for warning in collection.warnings:
+        typer.echo(f"warning: {warning}", err=True)
 
 
 def print_run(result: RunResult) -> None:
@@ -272,6 +338,9 @@ __all__ = [
     "emit_error",
     "emit_internal_error",
     "emit_json",
+    "print_collection",
+    "print_collection_plan",
+    "print_collection_run",
     "print_doctor",
     "print_explanation",
     "print_plan",

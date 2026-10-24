@@ -9,11 +9,26 @@ from typing import Annotated
 import typer
 
 from trackforge.api import AsyncTrackForge
+from trackforge.application.dto.collections import (
+    CollectionPlanOptions,
+    CollectionPlanView,
+    CollectionRunResult,
+)
 from trackforge.application.dto.plan import PlanView
 from trackforge.application.dto.results import RunResult
 from trackforge.domain.errors import CandidateNotFound, DomainValidationError
+from trackforge.interfaces.cli.commands.collection import (
+    is_collection_input,
+    make_collection_options,
+)
 from trackforge.interfaces.cli.common import build_config, build_run_options, execute
-from trackforge.interfaces.cli.presenters import emit_json, print_plan, print_run
+from trackforge.interfaces.cli.presenters import (
+    emit_json,
+    print_collection_plan,
+    print_collection_run,
+    print_plan,
+    print_run,
+)
 
 
 def add_command(
@@ -38,6 +53,38 @@ def add_command(
         str | None,
         typer.Option("--format", help="yt-dlp format id selected by plan."),
     ] = None,
+    playlist_start: Annotated[
+        int | None,
+        typer.Option("--playlist-start", help="First collection position to process."),
+    ] = None,
+    playlist_end: Annotated[
+        int | None,
+        typer.Option("--playlist-end", help="Last collection position to process."),
+    ] = None,
+    playlist_items: Annotated[
+        str | None,
+        typer.Option("--playlist-items", help="Collection positions, such as 1,3-5."),
+    ] = None,
+    skip: Annotated[
+        str | None,
+        typer.Option("--skip", help="Collection positions to skip."),
+    ] = None,
+    tag_basis: Annotated[
+        str | None,
+        typer.Option("--tag-basis", help="album_first, playlist_first, or ask."),
+    ] = None,
+    min_sleep: Annotated[
+        float | None,
+        typer.Option("--min-sleep", help="Seconds to pause between collection items."),
+    ] = None,
+    resume: Annotated[
+        bool,
+        typer.Option("--resume", help="Continue an existing collection for this source."),
+    ] = False,
+    fail_fast: Annotated[
+        bool,
+        typer.Option("--fail-fast", help="Stop a collection after the first failed item."),
+    ] = False,
     dry_run: Annotated[
         bool,
         typer.Option("--dry-run", help="Only print the plan; download nothing."),
@@ -111,26 +158,65 @@ def add_command(
             refresh=refresh,
         )
         is_url = source.strip().casefold().startswith(("http://", "https://"))
+        collection_source = is_collection_input(source)
+        collection_options: CollectionPlanOptions | None = None
+        collection_warnings: tuple[str, ...] = ()
+        if collection_source:
+            collection_options, collection_warnings = make_collection_options(
+                config,
+                start=playlist_start,
+                end=playlist_end,
+                items=playlist_items,
+                skip=skip,
+                tag_basis=tag_basis,
+                auto=auto,
+                as_json=as_json,
+                prompt=not dry_run,
+            )
 
-        async def operation() -> RunResult | PlanView:
+        async def operation() -> RunResult | PlanView | CollectionPlanView | CollectionRunResult:
             facade = AsyncTrackForge(config)
-            if dry_run:
-                return await facade.add(source, options)
-            async with facade:
-                if not is_url or format_id is not None or auto or review:
-                    return await facade.add(source, options)
-                plan = await facade.plan(source, options)
-                if plan.blocked_reason is not None or not plan.candidates:
-                    raise CandidateNotFound(
-                        plan.blocked_reason or "source resolved to zero candidates",
-                        context={"warnings": list(plan.warnings)},
+            try:
+                if collection_source and collection_options is not None:
+                    result = await facade.collection_add(
+                        source,
+                        options,
+                        collection_options=collection_options,
+                        resume=resume,
+                        fail_fast=fail_fast,
+                        min_sleep=(config.collection_min_sleep if min_sleep is None else min_sleep),
                     )
-                chosen = _choose_format(plan, as_json=as_json)
-                return await facade.add(source, replace(options, format_id=chosen))
+                    if collection_warnings:
+                        result = replace(
+                            result,
+                            warnings=tuple(dict.fromkeys((*collection_warnings, *result.warnings))),
+                        )
+                    return result
+                if dry_run:
+                    return await facade.add(source, options)
+                async with facade:
+                    if not is_url or format_id is not None or auto or review:
+                        return await facade.add(source, options)
+                    plan = await facade.plan(source, options)
+                    if not isinstance(plan, PlanView):
+                        return await facade.add(source, options)
+                    if plan.blocked_reason is not None or not plan.candidates:
+                        raise CandidateNotFound(
+                            plan.blocked_reason or "source resolved to zero candidates",
+                            context={"warnings": list(plan.warnings)},
+                        )
+                    chosen = _choose_format(plan, as_json=as_json)
+                    return await facade.add(source, replace(options, format_id=chosen))
+            finally:
+                await facade.close()
 
         result = asyncio.run(operation())
         if as_json:
             emit_json(result)
+        elif isinstance(result, CollectionPlanView):
+            print_collection_plan(result)
+        elif isinstance(result, CollectionRunResult):
+            print_collection_run(result)
         elif isinstance(result, PlanView):
             print_plan(result)
         else:

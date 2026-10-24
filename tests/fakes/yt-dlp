@@ -39,6 +39,10 @@ def _url(argv: list[str]) -> str:
 
 def _fixture(url: str) -> dict:
     folded = url.casefold()
+    if "playlist-fail" in folded:
+        return json.loads((FIXTURE_DIR / "playlist_5_failed.json").read_text(encoding="utf-8"))
+    if "playlist" in folded:
+        return json.loads((FIXTURE_DIR / "playlist_5.json").read_text(encoding="utf-8"))
     if "soundcloud" in folded:
         name = "single_soundcloud.json"
     else:
@@ -48,13 +52,6 @@ def _fixture(url: str) -> dict:
         document["has_drm"] = True
         for item in document.get("formats", []):
             item["has_drm"] = True
-    if "playlist" in folded:
-        document = {
-            "_type": "playlist",
-            "id": "fixture-playlist",
-            "title": "Fixture Playlist",
-            "entries": [{"id": "one"}, {"id": "two"}],
-        }
     if "missing-formats" in folded:
         document["formats"] = []
     return document

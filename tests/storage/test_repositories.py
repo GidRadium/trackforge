@@ -82,6 +82,7 @@ def test_repository_protocols_match_concrete_implementations() -> None:
         "intakes": ["get", "find_by_item", "save"],
         "artifacts": ["get", "find_by_cache_key", "save"],
         "claims": ["append", "list_by_item", "list_by_field", "append_status_event"],
+        "collections": ["get", "find_by_source", "list_all", "save", "update_item"],
         "decisions": [
             "save_record",
             "get_record",
@@ -124,6 +125,7 @@ def test_repository_protocols_match_concrete_implementations() -> None:
         "intakes": repositories.SqliteIntakeRepository,
         "artifacts": repositories.SqliteArtifactRepository,
         "claims": repositories.SqliteClaimRepository,
+        "collections": repositories.SqliteCollectionRepository,
         "decisions": repositories.SqliteDecisionRepository,
         "locks": repositories.SqliteLockRepository,
         "feedback": repositories.SqliteFeedbackRepository,

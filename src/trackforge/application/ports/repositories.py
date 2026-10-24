@@ -30,11 +30,13 @@ from trackforge.application.dto.db import (
 from trackforge.application.ports.models import ModelRegistry
 from trackforge.domain.model._validation import FieldValue
 from trackforge.domain.model.claims import Claim, ClaimStatus
+from trackforge.domain.model.collection import Collection, CollectionItemStatus
 from trackforge.domain.model.decisions import Decision, DecisionRecord
 from trackforge.domain.model.feedback import FeedbackEvent, FeedbackKind, ReviewSession
 from trackforge.domain.model.ids import (
     ArtifactId,
     ClaimId,
+    CollectionId,
     DecisionRecordId,
     FileInstanceId,
     IntakeId,
@@ -53,6 +55,7 @@ from trackforge.domain.model.outputs import (
     OutputBundle,
     Render,
 )
+from trackforge.domain.model.source import SourceRef
 
 
 @runtime_checkable
@@ -254,6 +257,29 @@ class FeedbackRepository(Protocol):
 
 
 @runtime_checkable
+class CollectionRepository(Protocol):
+    """Persist collections and per-item resume state."""
+
+    async def get(self, collection_id: CollectionId) -> Collection | None: ...
+
+    async def find_by_source(self, source_ref: SourceRef) -> Collection | None: ...
+
+    async def list_all(self) -> list[Collection]: ...
+
+    async def save(self, collection: Collection) -> Collection: ...
+
+    async def update_item(
+        self,
+        collection_id: CollectionId,
+        position: int,
+        *,
+        status: CollectionItemStatus | str,
+        item_id: ItemId | None = None,
+        error: str | None = None,
+    ) -> Collection: ...
+
+
+@runtime_checkable
 class RunRepository(Protocol):
     """Persist pipeline runs, run items, and steps."""
 
@@ -378,6 +404,7 @@ class UnitOfWork(Protocol):
     intakes: IntakeRepository
     artifacts: ArtifactRepository
     claims: ClaimRepository
+    collections: CollectionRepository
     decisions: DecisionRepository
     locks: LockRepository
     feedback: FeedbackRepository
@@ -403,6 +430,7 @@ class UnitOfWork(Protocol):
 __all__ = [
     "ArtifactRepository",
     "ClaimRepository",
+    "CollectionRepository",
     "DecisionRepository",
     "FeedbackRepository",
     "FileInstanceRepository",

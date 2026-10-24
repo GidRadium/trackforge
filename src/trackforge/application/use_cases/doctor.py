@@ -23,10 +23,12 @@ from trackforge.application.dto.results import (
     DoctorStatus,
 )
 
-_CURRENT_SCHEMA_REVISION = "0002"
+_CURRENT_SCHEMA_REVISION = "0003"
 _REQUIRED_TABLES = frozenset(
     {
         "alembic_version",
+        "collection_items",
+        "collections",
         "items",
         "media_objects",
         "model_registry",

@@ -7,6 +7,7 @@ publisher never needs to open SQLite.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
@@ -29,6 +30,7 @@ class PublishOptions:
     sidecar: bool = True
     lrc: bool = True
     collision: CollisionPolicy = "suffix"
+    subfolder: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.copy, bool):
@@ -42,6 +44,21 @@ class PublishOptions:
                 "only the 'suffix' collision policy is supported in v1",
                 context={"collision": str(self.collision)},
             )
+        if self.subfolder is not None:
+            if not isinstance(self.subfolder, str) or not self.subfolder.strip():
+                raise DomainValidationError("subfolder must be a non-empty string")
+            text = self.subfolder.strip()
+            segments = [part for part in re.split(r"[\\/]+", text) if part]
+            if (
+                Path(text).is_absolute()
+                or not segments
+                or any(part in {".", ".."} for part in segments)
+            ):
+                raise DomainValidationError(
+                    "subfolder must not contain path traversal",
+                    context={"subfolder": text},
+                )
+            object.__setattr__(self, "subfolder", text)
 
 
 @dataclass(frozen=True, slots=True)

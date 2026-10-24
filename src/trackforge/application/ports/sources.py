@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from trackforge.domain.errors import DomainValidationError
+from trackforge.domain.model.collection import Collection
 from trackforge.domain.model.source import Candidate, SourceRef
 
 # The extension set supported by the local MVP.  It is a policy constant, not
@@ -81,4 +82,26 @@ class SourceResolver(Protocol):
         ...
 
 
-__all__ = ["CandidateList", "SourceResolver"]
+@runtime_checkable
+class CollectionResolver(Protocol):
+    """Discover an ordered collection without downloading media bytes."""
+
+    id: str
+    version: str
+
+    def supports_collection(self, ref: SourceRef) -> bool:
+        """Return whether this resolver can enumerate ``ref`` as a collection."""
+
+        ...
+
+    async def resolve_collection(
+        self,
+        ref: SourceRef,
+        opts: Mapping[str, Any] | None = None,
+    ) -> Collection:
+        """Return the collection or raise a typed source error."""
+
+        ...
+
+
+__all__ = ["CandidateList", "CollectionResolver", "SourceResolver"]

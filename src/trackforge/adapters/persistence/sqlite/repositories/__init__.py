@@ -8,6 +8,9 @@ from trackforge.adapters.persistence.sqlite.repositories.artifacts import (
 from trackforge.adapters.persistence.sqlite.repositories.claims import (
     SqliteClaimRepository,
 )
+from trackforge.adapters.persistence.sqlite.repositories.collections import (
+    SqliteCollectionRepository,
+)
 from trackforge.adapters.persistence.sqlite.repositories.decisions import (
     SqliteDecisionRepository,
 )
@@ -45,6 +48,7 @@ from trackforge.adapters.persistence.sqlite.repositories.runs import (
 __all__ = [
     "SqliteArtifactRepository",
     "SqliteClaimRepository",
+    "SqliteCollectionRepository",
     "SqliteDecisionRepository",
     "SqliteFeedbackRepository",
     "SqliteFileInstanceRepository",

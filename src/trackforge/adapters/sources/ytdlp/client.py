@@ -64,11 +64,38 @@ class DumpOptions:
     site_hint: str | None = None
     extra_args: tuple[str, ...] = ()
     max_metadata_bytes: int | None = None
+    playlist: bool = False
+    flat_playlist: bool = False
+    playlist_start: int | None = None
+    playlist_end: int | None = None
+    playlist_items: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _positive_optional(self.timeout_seconds, "timeout_seconds")
         _positive_optional(self.max_metadata_bytes, "max_metadata_bytes")
+        for name in ("playlist", "flat_playlist", "cookie_validated"):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be a boolean")
+        for name in ("playlist_start", "playlist_end"):
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 1
+            ):
+                raise ValueError(f"{name} must be a positive integer")
+        if (
+            self.playlist_start is not None
+            and self.playlist_end is not None
+            and self.playlist_start > self.playlist_end
+        ):
+            raise ValueError("playlist_start must not be greater than playlist_end")
         object.__setattr__(self, "extra_args", tuple(str(item) for item in self.extra_args))
+        object.__setattr__(
+            self,
+            "playlist_items",
+            tuple(str(item).strip() for item in self.playlist_items if str(item).strip()),
+        )
+        if self.flat_playlist or self.playlist_start or self.playlist_end or self.playlist_items:
+            object.__setattr__(self, "playlist", True)
         if self.cookies is not None and self.cookies_path is None:
             object.__setattr__(self, "cookies_path", Path(self.cookies))
 
@@ -208,9 +235,19 @@ class YtDlpClient:
             "--dump-single-json",
             "--no-download",
             "--no-warnings",
-            "--no-playlist",
             "--no-progress",
         ]
+        if options.playlist:
+            if options.flat_playlist:
+                command.append("--flat-playlist")
+            if options.playlist_start is not None:
+                command.extend(["--playlist-start", str(options.playlist_start)])
+            if options.playlist_end is not None:
+                command.extend(["--playlist-end", str(options.playlist_end)])
+            if options.playlist_items:
+                command.extend(["--playlist-items", ",".join(options.playlist_items)])
+        else:
+            command.append("--no-playlist")
         command.extend(
             self._cookie_arguments(
                 url,

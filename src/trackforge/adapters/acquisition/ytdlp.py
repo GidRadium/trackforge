@@ -532,6 +532,11 @@ def _selected_format(candidate: Candidate, options: AcquireOptions) -> Format:
         )
         if selected is not None:
             return selected
+    if not candidate.formats:
+        # Flat playlist enumeration intentionally omits formats.  yt-dlp still
+        # downloads the configured bestaudio selector; the downloaded
+        # snapshot supplies the concrete format facts afterwards.
+        return Format()
     return select_best_audio(candidate.formats)
 
 

@@ -10,10 +10,17 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncIterator, Callable, Coroutine, Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
 from typing import Any
 
+from trackforge.application.dto.collections import (
+    CollectionPlanOptions,
+    CollectionPlanView,
+    CollectionRunResult,
+    parse_positions,
+)
 from trackforge.application.dto.decisions import ExplanationView
 from trackforge.application.dto.feedback import (
     FeedbackExportResult,
@@ -44,7 +51,9 @@ from trackforge.application.use_cases.process_item import (
 from trackforge.bootstrap.container import (
     CatalogContext,
     build_catalog_context,
+    build_collection_resolvers,
     build_doctor,
+    build_plan_collection,
     build_plan_item,
     build_process_item,
 )
@@ -54,7 +63,8 @@ from trackforge.domain.errors import (
     RecordNotFound,
     UnsupportedSource,
 )
-from trackforge.domain.model.ids import ItemId, RunId
+from trackforge.domain.model.collection import Collection
+from trackforge.domain.model.ids import CollectionId, ItemId, RunId
 from trackforge.domain.model.item import ItemStatus
 from trackforge.domain.model.source import LocalPath, SourceRef, Url
 from trackforge.pipeline.events import Event
@@ -131,15 +141,34 @@ class AsyncTrackForge:
             self._importer = ImportPath(process, process.plan_item)
         return self._importer
 
+    def _is_collection(self, source: SourceRef) -> bool:
+        return any(
+            resolver.supports_collection(source)
+            for resolver in build_collection_resolvers(self._config)
+        )
+
     async def plan(
         self,
         source: SourceRef | str | Path,
         options: RunOptions | PlanOptions | None = None,
-    ) -> PlanView:
+    ) -> PlanView | CollectionPlanView:
         """Resolve a source and build a side-effect-free plan."""
 
         await self._ensure_not_closed()
         ref = _coerce_source(source)
+        if self._is_collection(ref):
+            offline = (
+                options.offline
+                if isinstance(options, (RunOptions, PlanOptions))
+                else self._config.offline
+            )
+            return await self.collection_plan(
+                ref,
+                CollectionPlanOptions(
+                    tag_basis=self._config.tag_basis,
+                    offline=offline,
+                ),
+            )
         if isinstance(options, PlanOptions):
             plan_options = options
         else:
@@ -152,11 +181,99 @@ class AsyncTrackForge:
             )
         return await build_plan_item(config=self._config).plan(ref, plan_options)
 
+    async def collection_plan(
+        self,
+        source: SourceRef | str | Path,
+        options: CollectionPlanOptions | None = None,
+    ) -> CollectionPlanView:
+        """Enumerate a playlist/folder and show the selected items, without writes."""
+
+        await self._ensure_not_closed()
+        ref = _coerce_source(source)
+        opts = options or CollectionPlanOptions(
+            tag_basis=self._config.tag_basis,
+            offline=self._config.offline,
+        )
+        return await build_plan_collection(self._config).plan(ref, opts)
+
+    async def collection_add(
+        self,
+        source: SourceRef | str | Path,
+        options: RunOptions | None = None,
+        *,
+        collection_options: CollectionPlanOptions | None = None,
+        resume: bool = False,
+        fail_fast: bool = False,
+        min_sleep: float | None = None,
+    ) -> CollectionPlanView | CollectionRunResult:
+        """Plan and sequentially process a playlist or folder collection."""
+
+        opts = options or RunOptions()
+        ref = _coerce_source(source)
+        target_offline = opts.offline or self._config.offline
+        plan_options = collection_options or CollectionPlanOptions(
+            tag_basis=self._config.tag_basis,
+            offline=target_offline,
+        )
+        if plan_options.offline != target_offline:
+            plan_options = replace(plan_options, offline=target_offline)
+        plan = await self.collection_plan(ref, plan_options)
+        if opts.dry_run:
+            return plan
+        context = await self._ensure_open()
+        return await context.process_collection().process_plan(
+            plan,
+            opts,
+            resume=resume,
+            fail_fast=fail_fast,
+            min_sleep=(self._config.collection_min_sleep if min_sleep is None else min_sleep),
+            skip_positions=parse_positions(plan_options.skip),
+        )
+
+    async def collection_resume(
+        self,
+        collection_id: CollectionId | str,
+        options: RunOptions | None = None,
+        *,
+        fail_fast: bool = False,
+        min_sleep: float | None = None,
+    ) -> CollectionRunResult:
+        """Continue a persisted collection from its planned/acquired items."""
+
+        context = await self._ensure_open()
+        return await context.resume_collection().resume(
+            CollectionId(str(collection_id)),
+            options,
+            fail_fast=fail_fast,
+            min_sleep=(self._config.collection_min_sleep if min_sleep is None else min_sleep),
+        )
+
+    async def list_collections(self) -> tuple[Collection, ...]:
+        """Return persisted collections, newest first."""
+
+        context = await self._ensure_open()
+        async with context.unit_of_work() as uow:
+            return tuple(await uow.collections.list_all())
+
+    async def get_collection(self, collection_id: CollectionId | str) -> Collection:
+        """Return one persisted collection."""
+
+        context = await self._ensure_open()
+        target = CollectionId(str(collection_id))
+        async with context.unit_of_work() as uow:
+            collection = await uow.collections.get(target)
+        if collection is None:
+            raise RecordNotFound(
+                "collection not found",
+                context={"collection_id": target},
+            )
+        return collection
+
     async def run(
         self,
         plan_or_source: PlanView | SourceRef | str | Path,
         options: RunOptions | None = None,
-    ) -> RunResult | PlanView:
+    ) -> RunResult | PlanView | CollectionPlanView | CollectionRunResult:
         """Run a source, plan, or an existing item id."""
 
         opts = options or RunOptions()
@@ -165,22 +282,28 @@ class AsyncTrackForge:
                 return plan_or_source
             await self._ensure_open()
             return await self._process_item().run(plan_or_source.source, opts)
-        if opts.dry_run:
-            return await self.plan(plan_or_source, opts)
-        await self._ensure_open()
         if isinstance(plan_or_source, str) and _looks_like_item_id(plan_or_source):
+            await self._ensure_open()
             return await self._process_item().run_item(ItemId(plan_or_source), opts)
-        return await self._process_item().run(_coerce_source(plan_or_source), opts)
+        ref = _coerce_source(plan_or_source)
+        if self._is_collection(ref):
+            return await self.collection_add(ref, opts)
+        if opts.dry_run:
+            return await self.plan(ref, opts)
+        await self._ensure_open()
+        return await self._process_item().run(ref, opts)
 
     async def add(
         self,
         source: SourceRef | str | Path,
         options: RunOptions | None = None,
-    ) -> RunResult | PlanView:
-        """Plan and run one source (URL or local path)."""
+    ) -> RunResult | PlanView | CollectionPlanView | CollectionRunResult:
+        """Plan and run one source (URL, file, folder, or playlist)."""
 
         opts = options or RunOptions()
         ref = _coerce_source(source)
+        if self._is_collection(ref):
+            return await self.collection_add(ref, opts)
         if opts.dry_run:
             return await self.plan(ref, opts)
         await self._ensure_open()
@@ -189,7 +312,7 @@ class AsyncTrackForge:
         if isinstance(ref, LocalPath):
             return await self.import_path(ref.path, opts)
         raise UnsupportedSource(
-            "add supports URLs and local files",
+            "add supports URLs, local files, and collection folders",
             user_action="Pass an http(s) URL or a local audio path.",
             context={"source_type": type(ref).__name__},
         )
@@ -203,7 +326,13 @@ class AsyncTrackForge:
 
         opts = options or RunOptions()
         if opts.dry_run:
-            return await self.plan(resolve_local_import_path(path), opts)
+            plan = await self.plan(resolve_local_import_path(path), opts)
+            if isinstance(plan, PlanView):
+                return plan
+            raise UnsupportedSource(
+                "a local file cannot resolve to a collection",
+                context={"path": str(path)},
+            )
         await self._ensure_open()
         return await self._import_service().import_path(path, opts)
 
@@ -588,21 +717,70 @@ class TrackForge:
         self,
         source: SourceRef | str | Path,
         options: RunOptions | PlanOptions | None = None,
-    ) -> PlanView:
+    ) -> PlanView | CollectionPlanView:
         return self._call(self._async.plan, source, options)
+
+    def collection_plan(
+        self,
+        source: SourceRef | str | Path,
+        options: CollectionPlanOptions | None = None,
+    ) -> CollectionPlanView:
+        return self._call(self._async.collection_plan, source, options)
+
+    def collection_add(
+        self,
+        source: SourceRef | str | Path,
+        options: RunOptions | None = None,
+        *,
+        collection_options: CollectionPlanOptions | None = None,
+        resume: bool = False,
+        fail_fast: bool = False,
+        min_sleep: float | None = None,
+    ) -> CollectionPlanView | CollectionRunResult:
+        return self._call(
+            self._async.collection_add,
+            source,
+            options,
+            collection_options=collection_options,
+            resume=resume,
+            fail_fast=fail_fast,
+            min_sleep=min_sleep,
+        )
+
+    def collection_resume(
+        self,
+        collection_id: CollectionId | str,
+        options: RunOptions | None = None,
+        *,
+        fail_fast: bool = False,
+        min_sleep: float | None = None,
+    ) -> CollectionRunResult:
+        return self._call(
+            self._async.collection_resume,
+            collection_id,
+            options,
+            fail_fast=fail_fast,
+            min_sleep=min_sleep,
+        )
+
+    def list_collections(self) -> tuple[Collection, ...]:
+        return self._call(self._async.list_collections)
+
+    def get_collection(self, collection_id: CollectionId | str) -> Collection:
+        return self._call(self._async.get_collection, collection_id)
 
     def run(
         self,
         plan_or_source: PlanView | SourceRef | str | Path,
         options: RunOptions | None = None,
-    ) -> RunResult | PlanView:
+    ) -> RunResult | PlanView | CollectionPlanView | CollectionRunResult:
         return self._call(self._async.run, plan_or_source, options)
 
     def add(
         self,
         source: SourceRef | str | Path,
         options: RunOptions | None = None,
-    ) -> RunResult | PlanView:
+    ) -> RunResult | PlanView | CollectionPlanView | CollectionRunResult:
         return self._call(self._async.add, source, options)
 
     def import_path(
@@ -724,6 +902,9 @@ def _looks_like_item_id(value: str) -> bool:
 
 __all__ = [
     "AsyncTrackForge",
+    "CollectionPlanOptions",
+    "CollectionPlanView",
+    "CollectionRunResult",
     "FeedbackExportResult",
     "FeedbackStatsReport",
     "LibraryEntryView",

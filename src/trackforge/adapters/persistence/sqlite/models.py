@@ -526,11 +526,63 @@ class LibraryEntryRow(Base):
     published_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class CollectionRow(Base):
+    __tablename__ = "collections"
+    __table_args__ = (Index("ix_collections_source_ref", "source_ref_json"),)
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    source_ref_json: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    owner: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_claims_json: Mapped[str] = mapped_column(Text, nullable=False)
+    tag_basis: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text("'album_first'"),
+    )
+    warnings_json: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text("'[]'"),
+    )
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class CollectionItemRow(Base):
+    __tablename__ = "collection_items"
+    __table_args__ = (Index("ix_collection_items_status", "collection_id", "status"),)
+
+    collection_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("collections.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_json: Mapped[str] = mapped_column(Text, nullable=False)
+    item_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("items.id"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text("'planned'"),
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 __all__ = [
     "ArtifactRow",
     "Base",
     "ClaimEventRow",
     "ClaimRow",
+    "CollectionItemRow",
+    "CollectionRow",
     "DecisionRecordRow",
     "DecisionRow",
     "FeedbackEventRow",

@@ -17,6 +17,7 @@ from trackforge.domain.errors import (
     BudgetExceeded,
     CandidateNotFound,
     CatalogError,
+    CollectionTooLarge,
     DomainValidationError,
     InvalidStateTransition,
     MigrationError,
@@ -55,6 +56,7 @@ _USER_ERRORS = (
     ReviewRequired,
     BudgetExceeded,
     ModelUnavailable,
+    CollectionTooLarge,
 )
 _PROVIDER_ERRORS = (ProviderUnavailable, RateLimited, AcquisitionFailed)
 _INTERNAL_ERRORS = (

@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 from trackforge.interfaces.cli.commands.add import add_command
+from trackforge.interfaces.cli.commands.collection import collection_app
 from trackforge.interfaces.cli.commands.doctor import doctor_command
 from trackforge.interfaces.cli.commands.explain import explain_command
 from trackforge.interfaces.cli.commands.feedback import feedback_app
@@ -33,6 +34,7 @@ def register_commands(app: typer.Typer) -> None:
     app.command("resume")(resume_command)
     app.add_typer(models_app, name="models")
     app.add_typer(feedback_app, name="feedback")
+    app.add_typer(collection_app, name="collection")
 
 
 __all__ = ["register_commands"]

@@ -142,6 +142,53 @@ class SidecarArtifacts:
 
 
 @dataclass(frozen=True, slots=True)
+class SidecarCollection:
+    """Portable collection context and the tag-basis decision."""
+
+    id: str
+    title: str
+    kind: str
+    position: int
+    tag_basis: str
+    owner: str | None = None
+    alternatives: Mapping[str, Any] = field(default_factory=dict)
+    context: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for name in ("id", "title", "kind", "tag_basis"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise DomainValidationError(f"collection {name} must be a non-empty string")
+        if isinstance(self.position, bool) or not isinstance(self.position, int):
+            raise DomainValidationError("collection position must be an integer")
+        if self.position < 1:
+            raise DomainValidationError("collection position must be positive")
+        object.__setattr__(self, "owner", _optional(self.owner))
+        object.__setattr__(
+            self,
+            "alternatives",
+            _json_mapping(_without_url_secrets(self.alternatives)),
+        )
+        object.__setattr__(
+            self,
+            "context",
+            _json_mapping(_without_url_secrets(self.context)),
+        )
+
+    def document(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "kind": self.kind,
+            "owner": self.owner,
+            "position": self.position,
+            "tag_basis": self.tag_basis,
+            "alternatives": dict(self.alternatives),
+            "context": dict(self.context),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SidecarData:
     """Everything needed to serialize one sidecar."""
 
@@ -155,6 +202,9 @@ class SidecarData:
     artifacts: SidecarArtifacts = field(default_factory=SidecarArtifacts)
     warnings: tuple[str, ...] = ()
     unknowns: tuple[str, ...] = ()
+    collection: SidecarCollection | None = None
+    tag_basis: str | None = None
+    tag_alternatives: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in ("item_id", "content_hash", "decision_record_id"):
@@ -167,6 +217,10 @@ class SidecarData:
             char not in "0123456789abcdef" for char in self.content_hash
         ):
             raise DomainValidationError("content_hash must be a SHA-256 digest")
+        if self.collection is not None and not isinstance(self.collection, SidecarCollection):
+            raise DomainValidationError("collection must be a SidecarCollection")
+        object.__setattr__(self, "tag_basis", _optional(self.tag_basis))
+        object.__setattr__(self, "tag_alternatives", _json_mapping(self.tag_alternatives))
         object.__setattr__(
             self,
             "metadata",
@@ -196,6 +250,9 @@ def build_sidecar_document(data: SidecarData) -> dict[str, Any]:
         "metadata": dict(data.metadata),
         "identity": data.identity.document(),
         "artifacts": data.artifacts.document(),
+        "collection": data.collection.document() if data.collection is not None else None,
+        "tag_basis": data.tag_basis,
+        "tag_alternatives": dict(data.tag_alternatives),
         "warnings": list(data.warnings),
         "unknowns": list(data.unknowns),
     }
@@ -363,6 +420,7 @@ __all__ = [
     "SIDECAR_FILENAME",
     "SIDECAR_SCHEMA_VERSION",
     "SidecarArtifacts",
+    "SidecarCollection",
     "SidecarData",
     "SidecarIdentity",
     "SidecarSource",

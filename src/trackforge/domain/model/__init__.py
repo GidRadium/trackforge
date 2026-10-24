@@ -30,6 +30,14 @@ from trackforge.domain.model.claims import (
     Provenance,
     Subject,
 )
+from trackforge.domain.model.collection import (
+    Collection,
+    CollectionContextClaim,
+    CollectionItem,
+    CollectionItemStatus,
+    TagBasis,
+    validate_collection_title,
+)
 from trackforge.domain.model.decisions import (
     DecidedBy,
     Decision,
@@ -149,7 +157,11 @@ __all__ = [
     "ClaimId",
     "ClaimStatus",
     "ClaimSubject",
+    "Collection",
+    "CollectionContextClaim",
     "CollectionId",
+    "CollectionItem",
+    "CollectionItemStatus",
     "CollectionKind",
     "CollectionRef",
     "Confidence",
@@ -233,6 +245,7 @@ __all__ = [
     "StepId",
     "Strategy",
     "Subject",
+    "TagBasis",
     "TargetFormat",
     "TextQuery",
     "Thumbnail",
@@ -242,4 +255,5 @@ __all__ = [
     "WorkId",
     "new_uuid7",
     "parse_id",
+    "validate_collection_title",
 ]

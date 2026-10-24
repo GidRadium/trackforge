@@ -170,6 +170,14 @@ class CandidateNotFound(TrackForgeError):
     default_user_action = "Check the source reference and try again."
 
 
+class CollectionTooLarge(TrackForgeError):
+    """Raised when a collection exceeds the supported item limit."""
+
+    default_user_action = (
+        "Use --playlist-start/--playlist-end/--playlist-items to select fewer tracks."
+    )
+
+
 class AcquisitionFailed(TrackForgeError):
     """Raised when media cannot be acquired."""
 
@@ -476,6 +484,7 @@ __all__ = [
     "CandidateNotFound",
     "CatalogError",
     "CatalogLocked",
+    "CollectionTooLarge",
     "ConfigError",
     "DomainValidationError",
     "DuplicateCacheKey",

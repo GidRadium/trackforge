@@ -148,6 +148,15 @@ class TrackForgeConfig(BaseSettings):
         default=False,
         validation_alias=AliasChoices("CORE_OFFLINE", "OFFLINE"),
     )
+    tag_basis: Literal["album_first", "playlist_first", "ask"] = Field(
+        default="album_first",
+        validation_alias=AliasChoices("CORE_TAG_BASIS", "TAG_BASIS"),
+    )
+    collection_min_sleep: float = Field(
+        default=1.0,
+        ge=0.0,
+        validation_alias=AliasChoices("COLLECTION_MIN_SLEEP"),
+    )
     # External metadata providers are opt-in.  Configuring either credential
     # enables the network observers automatically; ``metadata_enabled`` is an
     # explicit switch for deployments that want the providers without a key.
@@ -802,6 +811,8 @@ _CORE_KEYS = {
     "mode",
     "log_level",
     "offline",
+    "tag_basis",
+    "collection_min_sleep",
     "metadata_enabled",
     "source_cover_enabled",
     "acoustid_api_key",

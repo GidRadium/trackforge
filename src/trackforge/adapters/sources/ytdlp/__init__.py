@@ -28,6 +28,7 @@ from trackforge.adapters.sources.ytdlp.metadata import (
     normalize_source_metadata,
     sanitize_snapshot,
 )
+from trackforge.adapters.sources.ytdlp.playlist import YtDlpPlaylistSource
 from trackforge.adapters.sources.ytdlp.source import (
     YtDlpSource,
     fallback_external_id,
@@ -43,6 +44,7 @@ __all__ = [
     "DumpProgress",
     "SourceMetadataObserver",
     "YtDlpClient",
+    "YtDlpPlaylistSource",
     "YtDlpSource",
     "build_source_metadata",
     "classify_error",

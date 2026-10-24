@@ -11,6 +11,8 @@ from typing import Any
 from trackforge.adapters.persistence.sqlite.models import (
     ArtifactRow,
     ClaimRow,
+    CollectionItemRow,
+    CollectionRow,
     DecisionRecordRow,
     DecisionRow,
     FeedbackEventRow,
@@ -45,6 +47,13 @@ from trackforge.domain.model.claims import (
     ClaimStatus,
     Confidence,
     Subject,
+)
+from trackforge.domain.model.collection import (
+    Collection,
+    CollectionContextClaim,
+    CollectionItem,
+    CollectionItemStatus,
+    TagBasis,
 )
 from trackforge.domain.model.decisions import (
     DecidedBy,
@@ -305,6 +314,80 @@ def _dicts(values: list[Any], field_name: str) -> list[dict[str, Any]]:
             raise InvalidCatalogData(f"candidate {field_name}[{index}] must be an object")
         result.append(dict(value))
     return result
+
+
+def collection_context_claim_document(claim: CollectionContextClaim) -> dict[str, Any]:
+    return {
+        "field": claim.field,
+        "value": claim.value,
+        "source": claim.source,
+        "confidence": float(claim.confidence),
+        "evidence": list(claim.evidence),
+    }
+
+
+def collection_context_claim_from_document(document: object) -> CollectionContextClaim:
+    if not isinstance(document, Mapping):
+        raise InvalidCatalogData("collection context claim must be a JSON object")
+    field = document.get("field")
+    source = document.get("source", "collection")
+    confidence = document.get("confidence", 0.5)
+    evidence = document.get("evidence", [])
+    if not isinstance(field, str) or not isinstance(source, str):
+        raise InvalidCatalogData("collection context claim field/source must be strings")
+    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+        raise InvalidCatalogData("collection context claim confidence must be a number")
+    if not isinstance(evidence, list):
+        raise InvalidCatalogData("collection context claim evidence must be an array")
+    return CollectionContextClaim(
+        field=field,
+        value=document.get("value"),
+        source=source,
+        confidence=float(confidence),
+        evidence=tuple(str(item) for item in evidence),
+    )
+
+
+def collection_item_from_row(row: CollectionItemRow) -> CollectionItem:
+    return CollectionItem(
+        position=row.position,
+        candidate=candidate_from_document(from_json(row.candidate_json, {})),
+        status=CollectionItemStatus(row.status),
+        item_id=ItemId(row.item_id) if row.item_id else None,
+        error=row.error,
+        updated_at=from_iso_z(row.updated_at),
+    )
+
+
+def collection_from_row(
+    row: CollectionRow,
+    items: list[CollectionItem],
+) -> Collection:
+    claims = [
+        collection_context_claim_from_document(item)
+        for item in json_list_from_row(row.context_claims_json, "context_claims_json")
+    ]
+    return Collection(
+        id=CollectionId(row.id),
+        kind=CollectionKind(row.kind),
+        source_ref=source_ref_from_document(from_json(row.source_ref_json, {})),
+        title=row.title,
+        owner=row.owner,
+        description=row.description,
+        context_claims=tuple(claims),
+        items=tuple(items),
+        tag_basis=TagBasis(row.tag_basis),
+        created_at=from_iso_z(row.created_at),
+        warnings=tuple(
+            str(item) for item in json_list_from_row(row.warnings_json, "warnings_json")
+        ),
+    )
+
+
+def collection_context_document(collection: Collection) -> str:
+    return to_json(
+        [collection_context_claim_document(claim) for claim in collection.context_claims]
+    )
 
 
 def item_from_row(row: ItemRow) -> Item:
@@ -662,6 +745,11 @@ __all__ = [
     "candidate_document",
     "candidate_from_document",
     "claim_from_row",
+    "collection_context_claim_document",
+    "collection_context_claim_from_document",
+    "collection_context_document",
+    "collection_from_row",
+    "collection_item_from_row",
     "decision_from_row",
     "decision_record_from_row",
     "feedback_from_row",

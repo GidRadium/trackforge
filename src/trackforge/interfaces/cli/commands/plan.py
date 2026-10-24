@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from typing import Annotated
 
 import typer
 
 from trackforge.api import AsyncTrackForge
+from trackforge.application.dto.collections import CollectionPlanView
 from trackforge.application.dto.plan import PlanView
+from trackforge.interfaces.cli.commands.collection import (
+    is_collection_input,
+    make_collection_options,
+)
 from trackforge.interfaces.cli.common import build_config, build_run_options, execute
-from trackforge.interfaces.cli.presenters import emit_json, print_plan
+from trackforge.interfaces.cli.presenters import (
+    emit_json,
+    print_collection_plan,
+    print_plan,
+)
 
 
 def plan_command(
@@ -35,6 +45,27 @@ def plan_command(
         str | None,
         typer.Option("--target-format", help="Accepted for command parity; plan does not render."),
     ] = None,
+    playlist_start: Annotated[
+        int | None,
+        typer.Option("--playlist-start", help="First collection position to list."),
+    ] = None,
+    playlist_end: Annotated[
+        int | None,
+        typer.Option("--playlist-end", help="Last collection position to list."),
+    ] = None,
+    playlist_items: Annotated[
+        str | None,
+        typer.Option("--playlist-items", help="Collection positions, such as 1,3-5."),
+    ] = None,
+    skip: Annotated[
+        str | None,
+        typer.Option("--skip", help="Collection positions to skip."),
+    ] = None,
+    tag_basis: Annotated[
+        str | None,
+        typer.Option("--tag-basis", help="album_first, playlist_first, or ask."),
+    ] = None,
+    auto: Annotated[bool, typer.Option("--auto", help="Never prompt.")] = False,
     as_json: Annotated[bool, typer.Option("--json")] = False,
     offline: Annotated[bool, typer.Option("--offline")] = False,
     data_dir: Annotated[str | None, typer.Option("--data-dir")] = None,
@@ -60,10 +91,27 @@ def plan_command(
             offline=offline,
             target_format=target_format,
         )
+        collection_source = is_collection_input(source)
 
-        async def operation() -> PlanView:
+        async def operation() -> PlanView | CollectionPlanView:
             facade = AsyncTrackForge(config)
             try:
+                if collection_source:
+                    collection_options, warnings = make_collection_options(
+                        config,
+                        start=playlist_start,
+                        end=playlist_end,
+                        items=playlist_items,
+                        skip=skip,
+                        tag_basis=tag_basis,
+                        auto=auto,
+                        as_json=as_json,
+                    )
+                    plan = await facade.collection_plan(source, collection_options)
+                    return replace(
+                        plan,
+                        warnings=tuple(dict.fromkeys((*warnings, *plan.warnings))),
+                    )
                 return await facade.plan(source, options)
             finally:
                 await facade.close()
@@ -71,6 +119,8 @@ def plan_command(
         plan = asyncio.run(operation())
         if as_json:
             emit_json(plan)
+        elif isinstance(plan, CollectionPlanView):
+            print_collection_plan(plan)
         else:
             print_plan(plan)
         if plan.blocked_reason is not None:

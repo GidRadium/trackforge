@@ -1,0 +1,66 @@
+{
+  "_type": "playlist",
+  "id": "fixture-playlist-five",
+  "title": "Fixture Playlist Five",
+  "uploader": "Fixture Playlist Owner",
+  "description": "A five-item deterministic playlist used by collection tests.",
+  "upload_date": "20240203",
+  "extractor": "youtube",
+  "extractor_key": "Youtube",
+  "webpage_url": "https://www.youtube.com/playlist?list=fixture-five",
+  "thumbnails": [
+    {"url": "https://i.ytimg.com/vi/playlist/hqdefault.jpg", "width": 480, "height": 360}
+  ],
+  "entries": [
+    {
+      "_type": "url",
+      "id": "pl-one",
+      "url": "https://www.youtube.com/watch?v=pl-one",
+      "title": "Playlist One",
+      "uploader": "Fixture Playlist Owner",
+      "duration": 2.0,
+      "playlist_index": 1,
+      "webpage_url": "https://www.youtube.com/watch?v=pl-one"
+    },
+    {
+      "_type": "url",
+      "id": "pl-two",
+      "url": "https://www.youtube.com/watch?v=pl-two",
+      "title": "Playlist Two",
+      "uploader": "Fixture Playlist Owner",
+      "duration": 2.0,
+      "playlist_index": 2,
+      "webpage_url": "https://www.youtube.com/watch?v=pl-two"
+    },
+    {
+      "_type": "url",
+      "id": "pl-three",
+      "url": "https://www.youtube.com/watch?v=pl-three",
+      "title": "Playlist Three",
+      "uploader": "Fixture Playlist Owner",
+      "duration": 2.0,
+      "playlist_index": 3,
+      "webpage_url": "https://www.youtube.com/watch?v=pl-three"
+    },
+    {
+      "_type": "url",
+      "id": "pl-four",
+      "url": "https://www.youtube.com/watch?v=pl-four",
+      "title": "Playlist Four",
+      "uploader": "Fixture Playlist Owner",
+      "duration": 2.0,
+      "playlist_index": 4,
+      "webpage_url": "https://www.youtube.com/watch?v=pl-four"
+    },
+    {
+      "_type": "url",
+      "id": "pl-five",
+      "url": "https://www.youtube.com/watch?v=pl-five",
+      "title": "Playlist Five",
+      "uploader": "Fixture Playlist Owner",
+      "duration": 2.0,
+      "playlist_index": 5,
+      "webpage_url": "https://www.youtube.com/watch?v=pl-five"
+    }
+  ]
+}

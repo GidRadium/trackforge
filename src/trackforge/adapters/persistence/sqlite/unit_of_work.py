@@ -17,6 +17,7 @@ from trackforge.adapters.persistence.sqlite.engine import Catalog
 from trackforge.adapters.persistence.sqlite.repositories import (
     SqliteArtifactRepository,
     SqliteClaimRepository,
+    SqliteCollectionRepository,
     SqliteDecisionRepository,
     SqliteFeedbackRepository,
     SqliteFileInstanceRepository,
@@ -33,6 +34,7 @@ from trackforge.application.ports.models import ModelRegistry
 from trackforge.application.ports.repositories import (
     ArtifactRepository,
     ClaimRepository,
+    CollectionRepository,
     DecisionRepository,
     FeedbackRepository,
     FileInstanceRepository,
@@ -55,6 +57,7 @@ class SqliteUnitOfWork:
     intakes: IntakeRepository
     artifacts: ArtifactRepository
     claims: ClaimRepository
+    collections: CollectionRepository
     decisions: DecisionRepository
     locks: LockRepository
     feedback: FeedbackRepository
@@ -87,6 +90,7 @@ class SqliteUnitOfWork:
         self.intakes = SqliteIntakeRepository(runner)
         self.artifacts = SqliteArtifactRepository(runner)
         self.claims = SqliteClaimRepository(runner)
+        self.collections = SqliteCollectionRepository(runner)
         self.decisions = SqliteDecisionRepository(runner)
         self.locks = SqliteLockRepository(runner)
         self.feedback = SqliteFeedbackRepository(runner)

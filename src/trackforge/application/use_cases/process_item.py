@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, TypeVar, cast
 
+from trackforge.application.dto.collections import CollectionItemContext
 from trackforge.application.dto.db import (
     RunItemStatus,
     RunStatus,
@@ -32,6 +33,11 @@ from trackforge.application.dto.results import (
 from trackforge.application.ports.acquisition import Acquirer
 from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.ports.sources import absolute_local_path
+from trackforge.application.services.sidecar import SidecarCollection
+from trackforge.application.services.tag_basis import (
+    TagBasisApplication,
+    TagBasisService,
+)
 from trackforge.application.use_cases.acquire_item import AcquireItem
 from trackforge.application.use_cases.interpret_item import InterpretItem
 from trackforge.application.use_cases.observe_item import ObserveItem
@@ -94,6 +100,7 @@ class ProcessItem:
         publish_item: PublishItem,
         library_root: Path,
         events: EventBus | None = None,
+        tag_basis_service: TagBasisService | None = None,
     ) -> None:
         self._uow_factory = unit_of_work_factory
         self._plan_item = plan_item
@@ -106,6 +113,7 @@ class ProcessItem:
         self._publish_item = publish_item
         self._library_root = Path(library_root)
         self._events = events or EventBus()
+        self._tag_basis = tag_basis_service or TagBasisService(resolve_item)
         self._cancel_events: dict[str, asyncio.Event] = {}
 
     @property
@@ -187,6 +195,8 @@ class ProcessItem:
         self,
         item_id: ItemId,
         options: RunOptions | None = None,
+        *,
+        collection: CollectionItemContext | None = None,
     ) -> RunResult:
         """Run the remaining pipeline for an already acquired item."""
 
@@ -195,6 +205,9 @@ class ProcessItem:
             item = await uow.items.get(item_id)
             if item is None:
                 raise RecordNotFound("item not found", context={"item_id": item_id})
+            if collection is not None and item.collection_id is None:
+                item.collection_id = collection.collection_id
+                await uow.items.save(item)
             run = await uow.runs.create_run(opts.profile, opts.mode, status=RunStatus.PLANNED)
             await uow.runs.add_item(run.id, item_id, status=RunItemStatus.RUNNING)
         cancel = asyncio.Event()
@@ -208,6 +221,7 @@ class ProcessItem:
                 opts,
                 acquire_cached=item.media_id is not None,
                 cancel=cancel,
+                collection=collection,
             )
             await self._set_run_status(run.id, RunStatus.COMPLETED, finished=True)
             await self._set_run_item(run.id, item_id, RunItemStatus.SUCCEEDED)
@@ -229,6 +243,93 @@ class ProcessItem:
             raise
         finally:
             self._cancel_events.pop(str(run.id), None)
+
+    async def run_candidate(
+        self,
+        candidate: Candidate,
+        options: RunOptions | None = None,
+        *,
+        collection: CollectionItemContext | None = None,
+        on_acquired: Callable[[ItemId], Awaitable[None]] | None = None,
+    ) -> RunResult | PlanView:
+        """Acquire and process one already-enumerated collection candidate."""
+
+        opts = options or RunOptions()
+        if opts.dry_run:
+            return PlanView(source=candidate.source_ref, candidates=(candidate,))
+        async with self._uow_factory() as uow:
+            run = await uow.runs.create_run(opts.profile, opts.mode, status=RunStatus.PLANNED)
+        cancel = asyncio.Event()
+        self._cancel_events[str(run.id)] = cancel
+        self._publish_event(EventType.RUN_STARTED, run.id, status=RunStatus.PLANNED.value)
+        try:
+            await self._set_run_status(run.id, RunStatus.RUNNING, started=True)
+            item_id = await self._acquire_candidate_for_run(
+                run.id,
+                candidate,
+                opts,
+                collection=collection,
+                on_acquired=on_acquired,
+            )
+            await self._set_run_item(run.id, item_id, RunItemStatus.RUNNING)
+            result = await self._continue_item(
+                run.id,
+                item_id,
+                opts,
+                acquire_cached=False,
+                cancel=cancel,
+                collection=collection,
+            )
+            await self._set_run_status(run.id, RunStatus.COMPLETED, finished=True)
+            await self._set_run_item(run.id, item_id, RunItemStatus.SUCCEEDED)
+            self._publish_event(
+                EventType.RUN_FINISHED,
+                run.id,
+                item_id=item_id,
+                status=RunStatus.COMPLETED.value,
+            )
+            return await self._build_result(run.id, result)
+        except asyncio.CancelledError:
+            await self._cancel_run(run.id, "cancelled by user")
+            raise
+        except TrackForgeError as exc:
+            await self._mark_failed(run.id, exc)
+            raise
+        except Exception as exc:
+            await self._mark_failed(run.id, exc)
+            raise
+        finally:
+            self._cancel_events.pop(str(run.id), None)
+
+    async def _acquire_candidate_for_run(
+        self,
+        run_id: RunId,
+        candidate: Candidate,
+        options: RunOptions,
+        *,
+        collection: CollectionItemContext | None,
+        on_acquired: Callable[[ItemId], Awaitable[None]] | None,
+    ) -> ItemId:
+        selected = _candidate_with_format(candidate, options.format_id)
+        acquired = await self._acquire_item.acquire(
+            selected,
+            AcquireOptions(
+                format_id=options.format_id,
+                offline=options.offline,
+                force="acquire" in options.force_steps,
+            ),
+            self._acquirers,
+        )
+        await self._add_run_item(run_id, acquired.item_id)
+        if collection is not None:
+            async with self._uow_factory() as uow:
+                item = await uow.items.get(acquired.item_id)
+                if item is not None and item.collection_id is None:
+                    item.collection_id = collection.collection_id
+                    await uow.items.save(item)
+        if on_acquired is not None:
+            await on_acquired(acquired.item_id)
+        return acquired.item_id
 
     async def resume(
         self,
@@ -435,6 +536,7 @@ class ProcessItem:
         *,
         acquire_cached: bool,
         cancel: asyncio.Event,
+        collection: CollectionItemContext | None = None,
     ) -> dict[str, Any]:
         steps = await self._ensure_steps(run_id, item_id)
         cached_steps: list[str] = []
@@ -514,10 +616,25 @@ class ProcessItem:
             *dict.fromkeys(observation_warnings),
             *resolved.warnings,
         ]
+        tag_basis: TagBasisApplication | None = None
+        if collection is not None:
+            self._check_cancelled(cancel)
+            tag_basis = await self._tag_basis.apply(
+                self._uow_factory,
+                item_id,
+                collection,
+                mode=options.mode,
+            )
+            resolved = tag_basis.resolved
+            warnings.extend(tag_basis.warnings)
 
         render: Render | None = None
         bundle: OutputBundle | None = None
-        reuse = await self._reusable_render(item_id, resolved.fields, options)
+        reuse = (
+            None
+            if collection is not None
+            else await self._reusable_render(item_id, resolved.fields, options)
+        )
         if reuse is not None:
             render, bundle = reuse
             await self._finish_step(steps["render"], StepStatus.CACHED)
@@ -527,7 +644,17 @@ class ProcessItem:
             render_options = RenderOptions(target_format=options.target_format)
             rendered = await self._run_stage(
                 steps["render"],
-                self._render_item.render(item_id, render_options),
+                self._render_item.render(
+                    item_id,
+                    render_options,
+                    collection=(
+                        _sidecar_collection(collection, tag_basis)
+                        if collection is not None and tag_basis is not None
+                        else None
+                    ),
+                    tag_basis=(tag_basis.basis.value if tag_basis is not None else None),
+                    tag_alternatives=(tag_basis.alternatives if tag_basis is not None else None),
+                ),
             )
             render, bundle = rendered.render, rendered.bundle
             warnings.extend(rendered.warnings)
@@ -536,11 +663,17 @@ class ProcessItem:
             raise RenderFailed("render produced no bundle", context={"item_id": item_id})
 
         self._check_cancelled(cancel)
+        publish_options = options.publish
+        if collection is not None:
+            publish_options = replace(
+                publish_options,
+                subfolder=collection.title,
+            )
         publish_result = await self._run_stage(
             steps["publish"],
             self._publish_item.publish(
                 item_id,
-                options.publish,
+                publish_options,
                 bundle_id=str(bundle.id),
                 library_root=self._library_root,
                 naming=options.naming,
@@ -561,6 +694,8 @@ class ProcessItem:
             "publish": publish_result,
             "resolve": resolved,
             "render": render,
+            "tag_basis": tag_basis,
+            "collection": collection,
         }
 
     async def _reusable_render(
@@ -828,6 +963,24 @@ class ProcessItem:
             steps=tuple(_step_view(step) for step in steps),
             cache_hit=bool(state.get("cached_steps")),
         )
+
+
+def _sidecar_collection(
+    context: CollectionItemContext,
+    tag_basis: TagBasisApplication,
+) -> SidecarCollection:
+    return SidecarCollection(
+        id=str(context.collection_id),
+        title=context.title,
+        kind=context.kind.value,
+        owner=context.owner,
+        position=context.position,
+        tag_basis=tag_basis.basis.value,
+        alternatives=tag_basis.alternatives,
+        context={
+            claim.field: claim.value for claim in context.context_claims if claim.value is not None
+        },
+    )
 
 
 def resolve_local_import_path(path: str | Path) -> LocalPath:

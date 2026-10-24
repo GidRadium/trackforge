@@ -42,8 +42,10 @@ from trackforge.adapters.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from trackforge.adapters.publishing.filesystem import FilesystemPublisher
 from trackforge.adapters.rendering.ffmpeg import FfmpegRenderer
 from trackforge.adapters.sources.local import LocalFileSource
+from trackforge.adapters.sources.local_folder import LocalFolderSource
 from trackforge.adapters.sources.ytdlp.client import YtDlpClient
 from trackforge.adapters.sources.ytdlp.metadata import SourceMetadataObserver
+from trackforge.adapters.sources.ytdlp.playlist import YtDlpPlaylistSource
 from trackforge.adapters.sources.ytdlp.source import YtDlpSource
 from trackforge.adapters.tagging.mutagen.reader import InitialTagsObserver, MutagenTagReader
 from trackforge.adapters.tagging.mutagen.writer import MutagenTagWriter
@@ -56,7 +58,7 @@ from trackforge.application.ports.publishing import Publisher
 from trackforge.application.ports.ranking import ClaimRanker
 from trackforge.application.ports.rendering import Renderer, TagReader, TagWriter
 from trackforge.application.ports.repositories import UnitOfWork
-from trackforge.application.ports.sources import SourceResolver
+from trackforge.application.ports.sources import CollectionResolver, SourceResolver
 from trackforge.application.services.llm_guardrails import LLMGuardrails
 from trackforge.application.services.prompts import PromptLibrary
 from trackforge.application.services.proxy_routing import ProxyRouter
@@ -72,11 +74,14 @@ from trackforge.application.use_cases.interpret_item import (
     InterpretItem,
 )
 from trackforge.application.use_cases.observe_item import ObserveItem
+from trackforge.application.use_cases.plan_collection import PlanCollection
 from trackforge.application.use_cases.plan_item import PlanItem
+from trackforge.application.use_cases.process_collection import ProcessCollection
 from trackforge.application.use_cases.process_item import ProcessItem
 from trackforge.application.use_cases.publish_item import PublishItem
 from trackforge.application.use_cases.render_item import RenderItem
 from trackforge.application.use_cases.resolve_item import ResolveItem
+from trackforge.application.use_cases.resume_collection import ResumeCollection
 from trackforge.application.use_cases.review_item import ReviewItem
 from trackforge.config import TrackForgeConfig
 
@@ -108,6 +113,11 @@ class AppContext:
         """Return the source resolvers registered for this build."""
 
         return build_source_resolvers(self.config)
+
+    def collection_resolvers(self) -> tuple[CollectionResolver, ...]:
+        """Return playlist/folder collection resolvers for this build."""
+
+        return build_collection_resolvers(self.config)
 
     def observer_capabilities(self) -> tuple[Capability, ...]:
         """Return the observation capabilities registered for this build."""
@@ -144,6 +154,11 @@ class CatalogContext:
         """Resolvers available to plan and acquire local files and URLs."""
 
         return build_source_resolvers(self.config)
+
+    def collection_resolvers(self) -> tuple[CollectionResolver, ...]:
+        """Collection resolvers available for playlists and local folders."""
+
+        return build_collection_resolvers(self.config)
 
     def acquirers(self) -> tuple[Acquirer, ...]:
         """Acquirers wired to this catalog and its CAS."""
@@ -228,6 +243,26 @@ class CatalogContext:
             cas=self.cas,
             artifact_store=self.artifact_store,
         )
+
+    def plan_collection(self) -> PlanCollection:
+        """Build collection planning over this build's resolvers."""
+
+        return build_plan_collection(self.config)
+
+    def process_collection(self) -> ProcessCollection:
+        """Build the sequential collection processor for this catalog."""
+
+        return build_process_collection(
+            self.config,
+            self.unit_of_work,
+            cas=self.cas,
+            artifact_store=self.artifact_store,
+        )
+
+    def resume_collection(self) -> ResumeCollection:
+        """Build the collection resume use case."""
+
+        return ResumeCollection(self.process_collection())
 
     def import_path(self) -> ImportPath:
         """Build the local import use case."""
@@ -358,6 +393,51 @@ def build_source_resolvers(
             client=client,
             cookie_dir=cookie_dir,
             cookie_files=config.ytdlp_cookie_files if config is not None else None,
+        ),
+    )
+
+
+def build_collection_resolvers(
+    config: TrackForgeConfig | None = None,
+) -> tuple[CollectionResolver, ...]:
+    """Return playlist/folder collection resolvers for this build."""
+
+    cookie_dir = config.cookies_dir if config is not None else None
+    client = _build_ytdlp_client(config)
+    return (
+        LocalFolderSource(),
+        YtDlpPlaylistSource(
+            client=client,
+            cookie_dir=cookie_dir,
+            cookie_files=config.ytdlp_cookie_files if config is not None else None,
+        ),
+    )
+
+
+def build_plan_collection(config: TrackForgeConfig) -> PlanCollection:
+    """Build collection planning without opening the catalog."""
+
+    return PlanCollection(build_collection_resolvers(config))
+
+
+def build_process_collection(
+    config: TrackForgeConfig,
+    unit_of_work_factory: Callable[[], UnitOfWork],
+    *,
+    cas: FileSystemCas | None = None,
+    artifact_store: FileSystemArtifactStore | None = None,
+    publisher: Publisher | None = None,
+) -> ProcessCollection:
+    """Build the sequential collection runner with a fresh item pipeline."""
+
+    return ProcessCollection(
+        unit_of_work_factory,
+        build_process_item(
+            config,
+            unit_of_work_factory,
+            cas=cas,
+            artifact_store=artifact_store,
+            publisher=publisher,
         ),
     )
 
@@ -928,6 +1008,7 @@ __all__ = [
     "build_cas",
     "build_catalog",
     "build_catalog_context",
+    "build_collection_resolvers",
     "build_context",
     "build_demucs_observer",
     "build_doctor",
@@ -940,7 +1021,9 @@ __all__ = [
     "build_interpreter_capabilities",
     "build_observer_capabilities",
     "build_observe_item",
+    "build_plan_collection",
     "build_plan_item",
+    "build_process_collection",
     "build_process_item",
     "build_publish_item",
     "build_publisher",
