@@ -130,6 +130,7 @@ def test_config_show_json_is_single_machine_readable_object(
         "stems_segment",
         "stems_size_bytes",
         "stems_threads",
+        "ytdlp_cookie_files",
         "ytdlp_proxy",
         "ytdlp_site_proxies",
     }

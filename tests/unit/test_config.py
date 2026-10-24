@@ -562,3 +562,76 @@ def test_invalid_proxy_route_host_is_rejected(tmp_path: Path, clean_env: None) -
         TrackForgeConfig.from_file(path)
 
     assert exc_info.value.key == "ytdlp_site_proxies"
+
+
+def test_network_cookie_files_are_parsed(tmp_path: Path, clean_env: None) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[network.ytdlp.cookies]\n"
+        '"youtube.com" = "~/.config/trackforge/cookies/youtube.com.txt"\n'
+        '"youtu.be" = "~/.config/trackforge/cookies/youtube.com.txt"\n'
+        '"music.yandex.ru" = "~/.config/trackforge/cookies/yandex.txt"\n',
+        encoding="utf-8",
+    )
+
+    config = TrackForgeConfig.from_file(path)
+
+    assert config.ytdlp_cookie_files == {
+        "youtube.com": "~/.config/trackforge/cookies/youtube.com.txt",
+        "youtu.be": "~/.config/trackforge/cookies/youtube.com.txt",
+        "music.yandex.ru": "~/.config/trackforge/cookies/yandex.txt",
+    }
+
+
+def test_network_cookie_files_env_override(
+    tmp_path: Path,
+    clean_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[network.ytdlp.cookies]\n"youtube.com" = "/config/youtube.txt"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(
+        "TRACKFORGE_YTDLP_COOKIE_FILES",
+        '{"youtu.be": "/env/youtube.txt"}',
+    )
+
+    config = TrackForgeConfig.from_file(path)
+
+    assert config.ytdlp_cookie_files == {
+        "youtube.com": "/config/youtube.txt",
+        "youtu.be": "/env/youtube.txt",
+    }
+
+
+def test_empty_network_cookie_route_is_preserved(
+    tmp_path: Path,
+    clean_env: None,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[network.ytdlp.cookies]\n"youtube.com" = ""\n',
+        encoding="utf-8",
+    )
+
+    config = TrackForgeConfig.from_file(path)
+
+    assert config.ytdlp_cookie_files == {"youtube.com": ""}
+
+
+def test_invalid_cookie_route_host_is_rejected(
+    tmp_path: Path,
+    clean_env: None,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[network.ytdlp.cookies]\n"https://youtube.com" = "/tmp/cookies.txt"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as exc_info:
+        TrackForgeConfig.from_file(path)
+
+    assert exc_info.value.key == "ytdlp_cookie_files"

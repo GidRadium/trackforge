@@ -155,12 +155,14 @@ def test_doctor_reports_missing_demucs_model_without_downloading(
 
 
 def test_doctor_reports_proxy_routes_without_values(
+    tmp_path: Path,
     cli_dirs: tuple[Path, Path],
     clean_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data, library = cli_dirs
     proxy_value = "socks5h://user:super-secret@proxy.example:1080"
+    monkeypatch.setenv("TRACKFORGE_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("TRACKFORGE_YTDLP_PROXY", proxy_value)
     monkeypatch.setenv(
         "TRACKFORGE_YTDLP_SITE_PROXIES",
@@ -177,3 +179,31 @@ def test_doctor_reports_proxy_routes_without_values(
     assert check["status"] == "ok"
     assert check["details"]["ytdlp_default"] is True
     assert check["details"]["ytdlp_site_routes"] == ["youtube.com"]
+
+
+def test_doctor_reports_configured_cookie_routes_without_contents(
+    cli_dirs: tuple[Path, Path],
+    clean_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    data, library = cli_dirs
+    monkeypatch.setenv("TRACKFORGE_CONFIG_DIR", str(tmp_path / "config"))
+    cookie = tmp_path / "youtube.txt"
+    cookie.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+    cookie.chmod(0o600)
+    monkeypatch.setenv(
+        "TRACKFORGE_YTDLP_COOKIE_FILES",
+        '{"youtube.com": "' + str(cookie) + '"}',
+    )
+
+    result = invoke("doctor", *cli_paths(data, library), "--json")
+
+    assert result.exit_code == 0, result.stderr
+    assert "Netscape" not in result.stdout
+    payload = parse_json(result)
+    checks = {check["name"]: check for check in payload["checks"]}
+    route = checks["cookie_routes"]
+    assert route["status"] == "ok"
+    assert route["details"]["hosts"] == ["youtube.com"]
+    assert route["details"]["missing"] == []

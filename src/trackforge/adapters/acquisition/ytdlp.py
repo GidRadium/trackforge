@@ -19,7 +19,7 @@ from typing import Any
 
 from trackforge.adapters.http.url_safety import UrlSafetyGuard, sanitize_url
 from trackforge.adapters.sources.ytdlp.client import DownloadedFile, DownloadOptions, YtDlpClient
-from trackforge.adapters.sources.ytdlp.cookies import select_cookie_file
+from trackforge.adapters.sources.ytdlp.cookies import CookieResolver
 from trackforge.adapters.sources.ytdlp.metadata import build_source_metadata, sanitize_snapshot
 from trackforge.adapters.sources.ytdlp.source import select_best_audio
 from trackforge.application.dto.artifacts import (
@@ -92,6 +92,7 @@ class YtDlpAcquirer:
         cache_dir: Path | None = None,
         client: YtDlpClient | None = None,
         cookie_dir: Path | None = None,
+        cookie_files: Mapping[str, str] | None = None,
         guard: UrlSafetyGuard | None = None,
     ) -> None:
         self._cas = cas
@@ -100,6 +101,10 @@ class YtDlpAcquirer:
         self._cache_dir = Path(cache_dir) if cache_dir is not None else None
         self._client = client if client is not None else YtDlpClient()
         self._cookie_dir = Path(cookie_dir) if cookie_dir is not None else None
+        self._cookies = CookieResolver.from_mapping(
+            self._cookie_dir,
+            cookie_files,
+        )
         self._guard = guard if guard is not None else UrlSafetyGuard()
 
     @property
@@ -154,11 +159,7 @@ class YtDlpAcquirer:
             if existing is not None:
                 return existing
 
-        cookie = select_cookie_file(
-            url,
-            self._cookie_dir,
-            site_hint=site_hint,
-        )
+        cookie = self._cookies.select(url, site_hint=site_hint)
         downloader_version = self._client.version()
         workdir = self._new_workdir()
         try:
@@ -169,6 +170,7 @@ class YtDlpAcquirer:
                 DownloadOptions(
                     format_id=selected.format_id,
                     cookies_path=cookie.path if cookie is not None else None,
+                    cookie_validated=cookie is not None,
                     site_hint=site_hint,
                 ),
             )

@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess  # noqa: S404 - explicit argument list, no shell
 import sys
 import tempfile
@@ -121,6 +122,7 @@ class Doctor:
         checks.append(_asr_check(self._config, self._module_available))
         checks.append(_stems_check(self._config, self._module_available))
         checks.append(_cookies_check(Path(self._config.config_dir) / "cookies"))
+        checks.append(_configured_cookie_routes_check(self._config))
         checks.append(_settings_check(self._config))
         return DoctorReport(checks=tuple(checks), generated_at=self._clock(), version=_version())
 
@@ -701,6 +703,71 @@ def _cookies_check(directory: Path) -> DoctorCheck:
         status=DoctorStatus.OK,
         message="cookie files are present, private, and not obviously expired",
         details={"path": str(directory), "files": len(files)},
+    )
+
+
+def _configured_cookie_routes_check(config: object) -> DoctorCheck:
+    routes = getattr(config, "ytdlp_cookie_files", {}) or {}
+    if not isinstance(routes, dict) or not routes:
+        return DoctorCheck(
+            name="cookie_routes",
+            status=DoctorStatus.OK,
+            message=(
+                "no explicit cookie routes; domain-based lookup in the cookies "
+                "directory remains active"
+            ),
+            details={"routes": 0},
+        )
+    config_dir = Path(getattr(config, "config_dir", "."))
+    hosts: list[str] = []
+    missing: list[str] = []
+    unsafe: list[str] = []
+    expired: list[str] = []
+    disabled = 0
+    for raw_host, raw_path in sorted(routes.items()):
+        host = str(raw_host)
+        hosts.append(host)
+        text = str(raw_path).strip()
+        if not text:
+            disabled += 1
+            continue
+        path = Path(text).expanduser()
+        if not path.is_absolute():
+            path = config_dir / path
+        try:
+            metadata = path.stat()
+        except OSError:
+            missing.append(host)
+            continue
+        if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+            unsafe.append(host)
+            continue
+        if (metadata.st_mode & 0o777) != 0o600:
+            unsafe.append(host)
+            continue
+        if _cookie_file_expired(path):
+            expired.append(host)
+    problems: list[str] = []
+    if missing:
+        problems.append(f"{len(missing)} configured cookie file(s) are missing")
+    if unsafe:
+        problems.append(f"{len(unsafe)} configured cookie file(s) are not private 0600 files")
+    if expired:
+        problems.append(f"{len(expired)} configured cookie file(s) appear expired")
+    return DoctorCheck(
+        name="cookie_routes",
+        status=DoctorStatus.WARNING if problems else DoctorStatus.OK,
+        message=(
+            "; ".join(problems) if problems else "configured cookie routes are private and present"
+        ),
+        details={
+            "routes": len(hosts),
+            "hosts": hosts,
+            "disabled": disabled,
+            "missing": missing,
+            "unsafe": unsafe,
+            "expired": expired,
+        },
     )
 
 

@@ -82,6 +82,10 @@ proxy = ""                      # direct by default; no global proxy env
 [network.ytdlp.sites]
 "youtube.com" = "socks5h://user:pass@proxy.example:1080"
 "music.yandex.ru" = ""          # explicit direct: proxy is forbidden here
+[network.ytdlp.cookies]
+"youtube.com" = "~/.config/trackforge/cookies/youtube.com.txt"
+"youtu.be" = "~/.config/trackforge/cookies/youtube.com.txt"
+"music.yandex.ru" = "~/.config/trackforge/cookies/yandex.txt"
 [network.metadata]
 proxy = ""
 [network.llm]

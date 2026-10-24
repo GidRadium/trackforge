@@ -9,6 +9,7 @@ inside the check and reports only a boolean/count.
 from __future__ import annotations
 
 import stat
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,6 +28,134 @@ class CookieSelection:
     def __post_init__(self) -> None:
         if not self.path.is_absolute():
             raise ValueError("cookie path must be absolute")
+
+
+@dataclass(frozen=True, slots=True)
+class CookieRoute:
+    """A configured cookie file for one host suffix.
+
+    ``path=None`` means cookies are explicitly disabled for the route; this
+    is different from "no route" and therefore suppresses domain fallback.
+    """
+
+    host_suffix: str
+    path: Path | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.host_suffix, str):
+            raise ValueError("cookie route host must be a string")
+        text = self.host_suffix.strip().casefold().rstrip(".")
+        if text.startswith("*."):
+            text = text[2:]
+        if (
+            not text
+            or "/" in text
+            or ":" in text
+            or "*" in text
+            or any(char.isspace() for char in text)
+        ):
+            raise ValueError("cookie route host must be a bare hostname or suffix")
+        if self.path is not None:
+            if not isinstance(self.path, Path):
+                raise ValueError("cookie route path must be a Path or None")
+        object.__setattr__(self, "host_suffix", text)
+
+    def matches(self, host: str) -> bool:
+        candidate = host.strip().casefold().rstrip(".")
+        return candidate == self.host_suffix or candidate.endswith(f".{self.host_suffix}")
+
+
+@dataclass(frozen=True, slots=True)
+class CookieResolver:
+    """Configured cookie routes with a domain-based fallback.
+
+    Configured routes are checked first and use host-suffix matching.  If no
+    route matches, the legacy ``<cookie_dir>/<host>.txt`` lookup is used, so a
+    site supported by yt-dlp but not yet known to TrackForge still works.
+    """
+
+    cookie_dir: Path | None = None
+    routes: tuple[CookieRoute, ...] = ()
+    base_dir: Path | None = None
+
+    def __post_init__(self) -> None:
+        routes = tuple(self.routes)
+        for route in routes:
+            if not isinstance(route, CookieRoute):
+                raise ValueError("routes must be CookieRoute values")
+        routes = tuple(
+            sorted(
+                routes,
+                key=lambda item: (len(item.host_suffix.split(".")), len(item.host_suffix)),
+                reverse=True,
+            )
+        )
+        base_dir = self.base_dir
+        if base_dir is None and self.cookie_dir is not None:
+            base_dir = self.cookie_dir.parent
+        object.__setattr__(self, "routes", routes)
+        object.__setattr__(self, "base_dir", base_dir)
+
+    @classmethod
+    def from_mapping(
+        cls,
+        cookie_dir: Path | None,
+        routes: Mapping[str, str] | None,
+        *,
+        base_dir: Path | None = None,
+    ) -> CookieResolver:
+        parsed: list[CookieRoute] = []
+        for raw_host, raw_path in (routes or {}).items():
+            text = str(raw_path).strip()
+            parsed.append(
+                CookieRoute(
+                    raw_host,
+                    None if not text else Path(text).expanduser(),
+                )
+            )
+        return cls(cookie_dir=cookie_dir, routes=tuple(parsed), base_dir=base_dir)
+
+    def route_for(self, url: str) -> CookieRoute | None:
+        try:
+            host = parse_http_url(url).host
+        except UnsafeUrl:
+            return None
+        return next((route for route in self.routes if route.matches(host)), None)
+
+    def select(
+        self,
+        url: str,
+        *,
+        site_hint: str | None = None,
+    ) -> CookieSelection | None:
+        route = self.route_for(url)
+        if route is not None:
+            if route.path is None:
+                return None
+            path = self._resolve(route.path)
+            try:
+                _require_safe_cookie_file(path)
+            except CookiesPermissionsError:
+                raise
+            except OSError as exc:
+                raise CookiesPermissionsError(
+                    "configured cookie file cannot be read",
+                    user_action=(
+                        "Check [network.ytdlp.cookies] or remove the route so "
+                        "domain-based discovery can be used."
+                    ),
+                    context={"path": str(path), "error": str(exc)},
+                ) from exc
+            host = parse_http_url(url).host
+            return CookieSelection(path=path.resolve(), host=host)
+        return select_cookie_file(url, self.cookie_dir, site_hint=site_hint)
+
+    def _resolve(self, path: Path) -> Path:
+        candidate = path.expanduser()
+        if candidate.is_absolute():
+            return candidate
+        base = self.base_dir or Path.cwd()
+        return base / candidate
 
 
 def _candidate_stems(host: str, site_hint: str | None) -> tuple[str, ...]:
@@ -161,6 +290,8 @@ def cookie_file_expired(path: Path, *, now: datetime | None = None) -> bool:
 
 
 __all__ = [
+    "CookieResolver",
+    "CookieRoute",
     "CookieSelection",
     "cookie_file_expired",
     "cookie_file_matches",

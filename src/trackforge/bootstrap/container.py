@@ -351,7 +351,14 @@ def build_source_resolvers(
 
     cookie_dir = config.cookies_dir if config is not None else None
     client = _build_ytdlp_client(config)
-    return (LocalFileSource(), YtDlpSource(client=client, cookie_dir=cookie_dir))
+    return (
+        LocalFileSource(),
+        YtDlpSource(
+            client=client,
+            cookie_dir=cookie_dir,
+            cookie_files=config.ytdlp_cookie_files if config is not None else None,
+        ),
+    )
 
 
 def build_acquirers(
@@ -373,6 +380,7 @@ def build_acquirers(
                 cache_dir=config.cache_dir if config is not None else None,
                 client=_build_ytdlp_client(config),
                 cookie_dir=config.cookies_dir if config is not None else None,
+                cookie_files=config.ytdlp_cookie_files if config is not None else None,
             )
         )
     return tuple(acquirers)

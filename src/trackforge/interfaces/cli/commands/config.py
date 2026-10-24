@@ -62,6 +62,13 @@ def config_show(
                 else:
                     typer.echo("ytdlp_site_proxies: (none)")
                 continue
+            if key == "ytdlp_cookie_files":
+                if isinstance(value, dict) and value:
+                    for host, path in value.items():
+                        typer.echo(f"ytdlp_cookie_files.{host}: {path or '(disabled)'}")
+                else:
+                    typer.echo("ytdlp_cookie_files: (none)")
+                continue
             typer.echo(f"{key}: {value}")
 
     execute(as_json, body)

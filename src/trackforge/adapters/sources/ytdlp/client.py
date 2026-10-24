@@ -60,6 +60,7 @@ class DumpOptions:
     timeout_seconds: float | None = None
     cookies_path: Path | None = None
     cookies: Path | None = None
+    cookie_validated: bool = False
     site_hint: str | None = None
     extra_args: tuple[str, ...] = ()
     max_metadata_bytes: int | None = None
@@ -80,6 +81,7 @@ class DownloadOptions:
     timeout_seconds: float | None = None
     cookies_path: Path | None = None
     cookies: Path | None = None
+    cookie_validated: bool = False
     site_hint: str | None = None
     extra_args: tuple[str, ...] = ()
     max_file_bytes: int | None = None
@@ -209,7 +211,14 @@ class YtDlpClient:
             "--no-playlist",
             "--no-progress",
         ]
-        command.extend(self._cookie_arguments(url, options.cookies_path, options.site_hint))
+        command.extend(
+            self._cookie_arguments(
+                url,
+                options.cookies_path,
+                options.site_hint,
+                cookie_validated=options.cookie_validated,
+            )
+        )
         command.extend(self._proxy_arguments(url))
         command.extend(self._common_arguments())
         command.extend(str(item) for item in options.extra_args)
@@ -301,7 +310,14 @@ class YtDlpClient:
             "-o",
             str(template),
         ]
-        command.extend(self._cookie_arguments(url, options.cookies_path, options.site_hint))
+        command.extend(
+            self._cookie_arguments(
+                url,
+                options.cookies_path,
+                options.site_hint,
+                cookie_validated=options.cookie_validated,
+            )
+        )
         command.extend(self._proxy_arguments(url))
         command.extend(self._common_arguments())
         command.extend(str(item) for item in options.extra_args)
@@ -417,8 +433,12 @@ class YtDlpClient:
         url: str,
         cookie_path: Path | None,
         site_hint: str | None,
+        *,
+        cookie_validated: bool = False,
     ) -> list[str]:
-        if cookie_path is None or not cookie_file_matches(cookie_path, url, site_hint=site_hint):
+        if cookie_path is None:
+            return []
+        if not cookie_validated and not cookie_file_matches(cookie_path, url, site_hint=site_hint):
             return []
         try:
             metadata = cookie_path.stat()

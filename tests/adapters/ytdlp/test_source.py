@@ -226,3 +226,24 @@ async def test_yandex_single_track_url_is_not_treated_as_playlist(
 
     assert resolved.candidates
     assert read_log(fake_log)
+
+
+@pytest.mark.asyncio
+async def test_configured_cookie_file_is_used_for_matching_host(
+    tmp_path: Path,
+    fake_client: YtDlpClient,
+    fake_log: Path,
+) -> None:
+    cookie = tmp_path / "account-cookies.txt"
+    cookie.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+    cookie.chmod(0o600)
+    source = YtDlpSource(
+        client=fake_client,
+        cookie_dir=tmp_path / "cookies",
+        cookie_files={"youtube.com": str(cookie)},
+    )
+
+    await source.resolve(Url(YOUTUBE_URL))
+
+    args = read_log(fake_log)[-1]
+    assert args[args.index("--cookies") + 1] == str(cookie.resolve())

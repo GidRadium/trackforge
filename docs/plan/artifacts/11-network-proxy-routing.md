@@ -36,6 +36,14 @@ proxy = "socks5h://user:pass@proxy.example:1080"
 "music.yandex.ru" = ""
 "music.yandex.com" = ""
 
+[network.ytdlp.cookies]
+# Host suffix -> cookie file. Several domains may point to the same account
+# file. Empty string explicitly disables cookies for the route.
+"youtube.com" = "~/.config/trackforge/cookies/youtube.com.txt"
+"youtu.be" = "~/.config/trackforge/cookies/youtube.com.txt"
+"music.yandex.ru" = "~/.config/trackforge/cookies/yandex.txt"
+"music.yandex.com" = "~/.config/trackforge/cookies/yandex.txt"
+
 [network.metadata]
 # One proxy for MusicBrainz/AcoustID/CAA/LRCLIB/Deezer/iTunes HTTP calls.
 proxy = ""
@@ -58,6 +66,11 @@ proxy = ""
 4. Если и он пуст — direct.
 5. `metadata`, `llm`, `models` — независимые компоненты; настройка одного не
    влияет на остальные.
+6. Cookies: сначала ищется host suffix в `[network.ytdlp.cookies]`, включая
+   несколько доменов на один файл. Если маршрута нет — используется старый
+   поиск `<config_dir>/cookies/<host>.txt`. Пустой путь в маршруте отключает
+   cookies и fallback для этого домена. Относительные пути считаются от
+   `config_dir`.
 
 Поддерживаемые схемы: `http`, `https`, `socks4`, `socks4a`, `socks5`,
 `socks5h`. Для HTTP-прокси с логином/паролем кодируй специальные символы

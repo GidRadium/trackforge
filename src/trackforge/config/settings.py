@@ -192,6 +192,10 @@ class TrackForgeConfig(BaseSettings):
         default_factory=dict,
         validation_alias=AliasChoices("YTDLP_SITE_PROXIES"),
     )
+    ytdlp_cookie_files: dict[str, str] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("YTDLP_COOKIE_FILES"),
+    )
     metadata_proxy: str = Field(
         default="",
         validation_alias=AliasChoices("METADATA_PROXY"),
@@ -502,6 +506,24 @@ class TrackForgeConfig(BaseSettings):
     def _normalize_proxy(cls, value: object) -> str:
         return _validated_proxy(value)
 
+    @field_validator("ytdlp_cookie_files", mode="before")
+    @classmethod
+    def _normalize_cookie_files(cls, value: object) -> dict[str, str]:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return {}
+        if not isinstance(value, Mapping):
+            raise ValueError("ytdlp cookie files must be a table of host = path")
+        result: dict[str, str] = {}
+        for raw_host, raw_path in value.items():
+            host = _validated_route_host(raw_host)
+            if not isinstance(raw_path, str):
+                raise ValueError("cookie path must be a string")
+            path = raw_path.strip()
+            if "\x00" in path or "\n" in path or "\r" in path:
+                raise ValueError("cookie path must not contain control characters")
+            result[host] = path
+        return result
+
     @field_validator("ytdlp_site_proxies", mode="before")
     @classmethod
     def _normalize_site_proxies(cls, value: object) -> dict[str, str]:
@@ -700,7 +722,7 @@ def _load_toml_values(path: Path) -> dict[str, Any]:
     nested_llm = network.pop("llm", None)
     nested_models = network.pop("models", None)
     _reject_unknown(network, set(), "network")
-    values.update(_network_values("ytdlp", nested_ytdlp, {"proxy", "sites"}))
+    values.update(_network_values("ytdlp", nested_ytdlp, {"proxy", "sites", "cookies"}))
     for name, nested in (
         ("metadata", nested_metadata),
         ("llm", nested_llm),
@@ -734,9 +756,16 @@ def _network_values(
                 "configuration key 'network.ytdlp.sites' must be a table",
                 key="network.ytdlp.sites",
             )
+        cookies = nested.get("cookies", {})
+        if not isinstance(cookies, dict):
+            raise ConfigError(
+                "configuration key 'network.ytdlp.cookies' must be a table",
+                key="network.ytdlp.cookies",
+            )
         return {
             "ytdlp_proxy": nested.get("proxy", ""),
             "ytdlp_site_proxies": dict(sites),
+            "ytdlp_cookie_files": dict(cookies),
         }
     return {f"{name}_proxy": nested.get("proxy", "")}
 

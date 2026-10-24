@@ -19,7 +19,7 @@ from trackforge.adapters.http.url_safety import (
     sanitize_url,
 )
 from trackforge.adapters.sources.ytdlp.client import DumpOptions, YtDlpClient
-from trackforge.adapters.sources.ytdlp.cookies import select_cookie_file
+from trackforge.adapters.sources.ytdlp.cookies import CookieResolver
 from trackforge.adapters.sources.ytdlp.metadata import (
     build_source_metadata,
     normalize_source_metadata,
@@ -55,10 +55,15 @@ class YtDlpSource:
         client: YtDlpClient | None = None,
         *,
         cookie_dir: Path | None = None,
+        cookie_files: Mapping[str, str] | None = None,
         guard: UrlSafetyGuard | None = None,
     ) -> None:
         self._client = client if client is not None else YtDlpClient()
         self._cookie_dir = Path(cookie_dir) if cookie_dir is not None else None
+        self._cookies = CookieResolver.from_mapping(
+            self._cookie_dir,
+            cookie_files,
+        )
         self._guard = guard if guard is not None else UrlSafetyGuard()
 
     @property
@@ -104,15 +109,12 @@ class YtDlpSource:
                 user_action="Use a single-track URL; playlist ingest arrives in Plan 18.",
                 context={"url": sanitize_url(ref.url)},
             )
-        cookie = select_cookie_file(
-            ref.url,
-            self._cookie_dir,
-            site_hint=ref.site_hint,
-        )
+        cookie = self._cookies.select(ref.url, site_hint=ref.site_hint)
         document = self._client.dump_json(
             ref.url,
             DumpOptions(
                 cookies_path=cookie.path if cookie is not None else None,
+                cookie_validated=cookie is not None,
                 site_hint=ref.site_hint,
             ),
         )
