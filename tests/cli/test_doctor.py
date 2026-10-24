@@ -207,3 +207,28 @@ def test_doctor_reports_configured_cookie_routes_without_contents(
     assert route["status"] == "ok"
     assert route["details"]["hosts"] == ["youtube.com"]
     assert route["details"]["missing"] == []
+
+
+def test_ejs_check_inspects_ytdlp_python_environment(tmp_path: Path) -> None:
+    import sys
+
+    from trackforge.application.use_cases.doctor import (
+        DoctorStatus,
+        _executable_has_python_module,
+        _ytdlp_ejs_check,
+    )
+
+    wrapper = tmp_path / "yt-dlp-wrapper"
+    wrapper.write_text(f"#!{sys.executable}\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+
+    assert _executable_has_python_module(wrapper, "json") is True
+    assert _executable_has_python_module(wrapper, "definitely_missing_module") is False
+
+    check = _ytdlp_ejs_check(
+        lambda _name: False,
+        lambda _name: str(wrapper),
+        "yt-dlp",
+    )
+    assert check.name == "yt-dlp-ejs"
+    assert check.status in {DoctorStatus.OK, DoctorStatus.WARNING}

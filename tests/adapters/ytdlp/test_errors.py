@@ -58,3 +58,13 @@ def test_cookie_values_are_redacted() -> None:
     error = map_error("ERROR: cookie: session=super-secret-cookie-value")
     assert "super-secret-cookie-value" not in str(error.to_dict())
     assert classify_error("ERROR: cookie expired") is CookiesExpired
+
+
+def test_requested_format_unavailable_points_at_js_solver() -> None:
+    from trackforge.adapters.sources.ytdlp.errors import map_error
+
+    error = map_error("ERROR: [youtube] x: Requested format is not available")
+
+    assert isinstance(error, ExtractorBroken)
+    assert "JavaScript" in error.message
+    assert "yt-dlp[default]" in (error.user_action or "")

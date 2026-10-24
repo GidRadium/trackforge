@@ -78,7 +78,16 @@ def build_config(
 ) -> TrackForgeConfig:
     """Load TOML/env configuration and apply explicit CLI overrides."""
 
-    config = TrackForgeConfig.from_file()
+    if data_dir is not None and not os.environ.get("TRACKFORGE_CONFIG_DIR"):
+        root = Path(data_dir).expanduser()
+        isolated_config = root / "config" / "config.toml"
+        config = (
+            TrackForgeConfig.from_file(isolated_config)
+            if isolated_config.exists()
+            else TrackForgeConfig()
+        )
+    else:
+        config = TrackForgeConfig.from_file()
     updates: dict[str, Any] = {}
     if data_dir is not None:
         root = Path(data_dir).expanduser()

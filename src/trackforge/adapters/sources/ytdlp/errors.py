@@ -160,6 +160,18 @@ def map_error(
     }
     if url is not None:
         context["url"] = sanitize_url(url)
+    if error_type is ExtractorBroken and "requested format is not available" in (
+        safe_stderr.casefold()
+    ):
+        return ExtractorBroken(
+            "The selected audio format is unavailable; yt-dlp may be missing a "
+            "JavaScript challenge solver or the format changed",
+            user_action=(
+                "Install the downloader extras (yt-dlp[default], yt-dlp-ejs) and "
+                "Deno, then run `yt-dlp --list-formats` for this URL."
+            ),
+            context=context,
+        )
     message = _message_for(error_type, safe_stderr)
     return error_type(message, context=context)
 

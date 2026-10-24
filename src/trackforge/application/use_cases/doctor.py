@@ -115,7 +115,13 @@ class Doctor:
                 executable=str(getattr(self._config, "deno_binary", "deno")),
             )
         )
-        checks.append(_ytdlp_ejs_check(self._module_available))
+        checks.append(
+            _ytdlp_ejs_check(
+                self._module_available,
+                self._which,
+                str(getattr(self._config, "ytdlp_binary", "yt-dlp")),
+            )
+        )
         checks.append(_network_proxy_check(self._config))
         checks.append(_llm_check(self._config))
         checks.append(_ranker_check(self._config, self._module_available))
@@ -624,7 +630,11 @@ def _tool_version_check(
     )
 
 
-def _ytdlp_ejs_check(module_available: Callable[[str], bool]) -> DoctorCheck:
+def _ytdlp_ejs_check(
+    module_available: Callable[[str], bool],
+    which: Callable[[str], str | None] | None = None,
+    executable: str = "yt-dlp",
+) -> DoctorCheck:
     try:
         available = module_available("yt_dlp_ejs")
     except Exception:
@@ -634,14 +644,67 @@ def _ytdlp_ejs_check(module_available: Callable[[str], bool]) -> DoctorCheck:
             name="yt-dlp-ejs",
             status=DoctorStatus.OK,
             message="yt-dlp-ejs is available",
-            details={},
+            details={"environment": "trackforge"},
+        )
+    location: str | None = None
+    if which is not None:
+        try:
+            location = which(executable)
+        except OSError:
+            location = None
+    if location is None and Path(executable).is_file():
+        location = executable
+    if location is not None and _executable_has_python_module(location, "yt_dlp_ejs"):
+        return DoctorCheck(
+            name="yt-dlp-ejs",
+            status=DoctorStatus.OK,
+            message="yt-dlp-ejs is available in the yt-dlp environment",
+            details={"environment": "yt-dlp", "executable": location},
         )
     return DoctorCheck(
         name="yt-dlp-ejs",
         status=DoctorStatus.WARNING,
-        message="yt-dlp-ejs is not importable from this Python environment",
-        details={"install": "Install yt-dlp[default] for the downloader environment."},
+        message="yt-dlp-ejs is not importable from TrackForge or the yt-dlp environment",
+        details={
+            "install": "Install yt-dlp[default] in the downloader environment.",
+            "executable": location or executable,
+        },
     )
+
+
+def _executable_has_python_module(executable: str | Path, module: str) -> bool:
+    try:
+        with Path(executable).open("rb") as stream:
+            first = stream.readline(512)
+    except OSError:
+        return False
+    if not first.startswith(b"#!"):
+        return False
+    try:
+        parts = first[2:].decode("utf-8", errors="replace").strip().split()
+    except Exception:
+        return False
+    if not parts:
+        return False
+    interpreter = parts[0]
+    if Path(interpreter).name == "env":
+        if len(parts) < 2:
+            return False
+        interpreter = shutil.which(parts[1]) or ""
+    if not interpreter or not Path(interpreter).is_file():
+        return False
+    try:
+        completed = subprocess.run(  # noqa: S603 - explicit argv, no shell
+            [interpreter, "-c", f"import {module}"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
 
 
 def _cookies_check(directory: Path) -> DoctorCheck:
