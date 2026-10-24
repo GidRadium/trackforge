@@ -152,3 +152,28 @@ def test_doctor_reports_missing_demucs_model_without_downloading(
     assert isinstance(checks["stems"]["details"]["torch"], bool)
     assert isinstance(checks["stems"]["details"]["demucs"], bool)
     assert not (data / "models" / "stems").exists()
+
+
+def test_doctor_reports_proxy_routes_without_values(
+    cli_dirs: tuple[Path, Path],
+    clean_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data, library = cli_dirs
+    proxy_value = "socks5h://user:super-secret@proxy.example:1080"
+    monkeypatch.setenv("TRACKFORGE_YTDLP_PROXY", proxy_value)
+    monkeypatch.setenv(
+        "TRACKFORGE_YTDLP_SITE_PROXIES",
+        '{"youtube.com": "socks5h://user:super-secret@proxy.example:1080"}',
+    )
+
+    result = invoke("doctor", *cli_paths(data, library), "--json")
+
+    assert result.exit_code == 0, result.stderr
+    assert "super-secret" not in result.stdout
+    payload = parse_json(result)
+    checks = {check["name"]: check for check in payload["checks"]}
+    check = checks["network_proxies"]
+    assert check["status"] == "ok"
+    assert check["details"]["ytdlp_default"] is True
+    assert check["details"]["ytdlp_site_routes"] == ["youtube.com"]

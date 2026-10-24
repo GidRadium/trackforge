@@ -85,6 +85,7 @@ class OpenAICompatibleConfig:
     strict_schema: bool = True
     thinking: str = "default"
     dotenv_path: str | None = None
+    proxy: str | None = None
 
     @property
     def configured(self) -> bool:
@@ -219,7 +220,11 @@ class OpenAICompatibleProvider:
         client = self._client
         owns_client = client is None
         if client is None:
-            client = httpx.AsyncClient(timeout=self._config.timeout_seconds)
+            client = httpx.AsyncClient(
+                timeout=self._config.timeout_seconds,
+                proxy=self._config.proxy,
+                trust_env=False,
+            )
         degraded = False
         attempts = max(0, self._config.max_retries) + 1
         invalid_output_attempts = 1

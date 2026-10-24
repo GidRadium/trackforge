@@ -169,6 +169,23 @@ Collection:
 
 Ошибки маппятся в доменные типы; сообщения — человекочитаемые, без стектрейсов в CLI.
 
+### 4.9. Proxy routing
+
+- Глобального прокси для приложения нет. Стандартные `HTTP_PROXY`,
+  `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` **не наследуются** сетевыми
+  компонентами.
+- Прокси задаётся отдельно для компонента:
+  `[network.ytdlp]`, `[network.metadata]`, `[network.llm]`,
+  `[network.models]`.
+- Для `yt-dlp` дополнительно есть per-site правила
+  `[network.ytdlp.sites]`: host suffix → proxy. Пустая строка — явный direct.
+  Пример: YouTube через SOCKS5, Яндекс.Музыка без прокси.
+- `yt-dlp` получает `--proxy <url>` или `--proxy ""`; metadata HTTP и LLM
+  создают клиентов с `trust_env=False`; загрузка моделей использует только
+  `[network.models]`.
+- Proxy credentials не печатаются в `config show`/`doctor`/логах. Cookies
+  остаются отдельными per-site файлами `0600`.
+
 ## 5. Официальные/публичные API
 
 ### 5.1. MusicBrainz

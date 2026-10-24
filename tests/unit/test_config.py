@@ -471,3 +471,94 @@ def test_stems_jobs_above_one_is_rejected(tmp_path: Path, clean_env: None) -> No
         TrackForgeConfig.from_file(path)
 
     assert exc_info.value.key == "stems_jobs"
+
+
+def test_network_proxy_tables_are_parsed(tmp_path: Path, clean_env: None) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[network.ytdlp]\n"
+        'proxy = "socks5h://user:pass@proxy.example:1080"\n'
+        "[network.ytdlp.sites]\n"
+        '"youtube.com" = "socks5h://user:pass@proxy.example:1080"\n'
+        '"music.yandex.ru" = ""\n'
+        "[network.metadata]\n"
+        'proxy = "http://metadata-proxy.example:3128"\n'
+        "[network.llm]\n"
+        'proxy = ""\n'
+        "[network.models]\n"
+        'proxy = "http://models-proxy.example:3128"\n',
+        encoding="utf-8",
+    )
+
+    config = TrackForgeConfig.from_file(path)
+
+    assert config.ytdlp_proxy == "socks5h://user:pass@proxy.example:1080"
+    assert config.ytdlp_site_proxies == {
+        "youtube.com": "socks5h://user:pass@proxy.example:1080",
+        "music.yandex.ru": "",
+    }
+    assert config.metadata_proxy == "http://metadata-proxy.example:3128"
+    assert config.llm_proxy == ""
+    assert config.models_proxy == "http://models-proxy.example:3128"
+
+
+def test_network_proxy_env_override(
+    tmp_path: Path,
+    clean_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[network.ytdlp]\nproxy = "http://config-proxy.example:3128"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TRACKFORGE_YTDLP_PROXY", "socks5://env-proxy.example:1080")
+    monkeypatch.setenv(
+        "TRACKFORGE_YTDLP_SITE_PROXIES",
+        '{"youtube.com": "socks5://env-proxy.example:1080"}',
+    )
+
+    config = TrackForgeConfig.from_file(path)
+
+    assert config.ytdlp_proxy == "socks5://env-proxy.example:1080"
+    assert config.ytdlp_site_proxies == {"youtube.com": "socks5://env-proxy.example:1080"}
+
+
+@pytest.mark.parametrize(
+    "proxy",
+    [
+        "file:///tmp/proxy.sock",
+        "http://proxy.example:3128/path",
+        "http://proxy.example:3128?x=1",
+        "proxy.example:3128",
+        "http://",
+    ],
+)
+def test_invalid_proxy_is_rejected(
+    tmp_path: Path,
+    clean_env: None,
+    proxy: str,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        f'[network.metadata]\nproxy = "{proxy}"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as exc_info:
+        TrackForgeConfig.from_file(path)
+
+    assert exc_info.value.key == "metadata_proxy"
+
+
+def test_invalid_proxy_route_host_is_rejected(tmp_path: Path, clean_env: None) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[network.ytdlp.sites]\n"https://youtube.com" = "socks5://proxy.example:1080"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as exc_info:
+        TrackForgeConfig.from_file(path)
+
+    assert exc_info.value.key == "ytdlp_site_proxies"

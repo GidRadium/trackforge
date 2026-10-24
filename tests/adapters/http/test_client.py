@@ -181,3 +181,11 @@ async def test_cookies_are_not_persisted_between_requests() -> None:
     await client.get("https://api.example.com/two")
     assert seen == [None, None]
     await client.aclose()
+
+
+async def test_http_client_proxy_is_explicit_and_opt_in() -> None:
+    from trackforge.adapters.http.client import HttpClient
+
+    assert HttpClient().proxy_configured is False
+    assert HttpClient(proxy="http://proxy.example:3128").proxy_configured is True
+    assert HttpClient(proxy="   ").proxy_configured is False

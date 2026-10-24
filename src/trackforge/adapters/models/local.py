@@ -14,9 +14,11 @@ import importlib.util
 import os
 import re
 import shutil
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from urllib.request import Request, urlopen
+
+import httpx
 
 from trackforge.application.ports.models import (
     ModelInfo,
@@ -44,6 +46,7 @@ class LocalModelManager:
         runtime_available: Callable[[str], bool] | None = None,
         downloader: Downloader | None = None,
         file_downloader: FileDownloader | None = None,
+        proxy: str | None = None,
     ) -> None:
         self._specs = {spec.id: spec for spec in specs}
         self._models_dir = Path(models_dir) if models_dir is not None else None
@@ -51,7 +54,8 @@ class LocalModelManager:
         self.max_heavy_models = max(1, int(max_heavy_models))
         self._runtime_available = runtime_available or _module_available
         self._downloader = downloader
-        self._file_downloader = file_downloader or _download_file
+        self._file_downloader = file_downloader
+        self._proxy = proxy.strip() if isinstance(proxy, str) and proxy.strip() else None
         self._active_heavy: str | None = None
         self._registered: dict[str, ModelInfo] = {}
 
@@ -231,7 +235,14 @@ class LocalModelManager:
                         user_action="Set [models.asr] name to a Hugging Face repository id.",
                         context={"model_id": model_id},
                     )
-                downloader = self._downloader or _snapshot_download
+                downloader = self._downloader or (
+                    lambda repository, revision, target: _snapshot_download(
+                        repository,
+                        revision,
+                        target,
+                        proxy=self._proxy,
+                    )
+                )
                 downloader(repository, spec.version or "main", destination)
             else:
                 url = str(spec.metadata.get("url") or "").strip()
@@ -244,7 +255,14 @@ class LocalModelManager:
                         ),
                         context={"model_id": model_id},
                     )
-                self._file_downloader(url, destination)
+                file_downloader = self._file_downloader or (
+                    lambda source, target: _download_file(
+                        source,
+                        target,
+                        proxy=self._proxy,
+                    )
+                )
+                file_downloader(url, destination)
         except ModelUnavailable:
             raise
         except Exception as exc:
@@ -380,30 +398,43 @@ def _demucs_destination(path: Path, spec: ModelInfo) -> Path:
     return path / _demucs_filename(spec)
 
 
-def _download_file(url: str, destination: Path) -> None:
+def _download_file(url: str, destination: Path, *, proxy: str | None = None) -> None:
     temporary = destination.with_name(destination.name + ".part")
-    request = Request(  # noqa: S310 - URL comes from explicit model configuration
-        url, headers={"User-Agent": "TrackForge/0.1 model-download"}
-    )
     try:
-        with (
-            urlopen(request, timeout=120) as response,  # noqa: S310 - configured model URL
-            temporary.open("wb") as file,
-        ):
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                file.write(chunk)
-            file.flush()
-            os.fsync(file.fileno())
+        with httpx.Client(
+            proxy=proxy,
+            trust_env=False,
+            follow_redirects=True,
+            timeout=httpx.Timeout(120.0, read=300.0),
+            headers={"User-Agent": "TrackForge/0.1 model-download"},
+        ) as client:
+            with client.stream("GET", url) as response:
+                response.raise_for_status()
+                with temporary.open("wb") as file:
+                    for chunk in response.iter_bytes(1024 * 1024):
+                        file.write(chunk)
+                    file.flush()
+                    os.fsync(file.fileno())
         temporary.replace(destination)
+    except ImportError as exc:
+        temporary.unlink(missing_ok=True)
+        raise ModelUnavailable(
+            "the configured proxy scheme needs optional HTTP client support",
+            user_action="Install httpx with SOCKS support or use an HTTP proxy.",
+            context={"error": str(exc)},
+        ) from exc
     except Exception:
         temporary.unlink(missing_ok=True)
         raise
 
 
-def _snapshot_download(repository: str, revision: str, destination: Path) -> None:
+def _snapshot_download(
+    repository: str,
+    revision: str,
+    destination: Path,
+    *,
+    proxy: str | None = None,
+) -> None:
     try:
         from huggingface_hub import snapshot_download  # type: ignore[import-not-found,import-untyped,unused-ignore]
     except ImportError as exc:
@@ -411,11 +442,49 @@ def _snapshot_download(repository: str, revision: str, destination: Path) -> Non
             "huggingface-hub is not installed",
             user_action="Install the [asr] extra or download the model manually.",
         ) from exc
-    snapshot_download(
-        repo_id=repository,
-        revision=revision,
-        local_dir=str(destination),
-    )
+    with _proxy_environment(proxy):
+        snapshot_download(
+            repo_id=repository,
+            revision=revision,
+            local_dir=str(destination),
+        )
+
+
+_PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+)
+
+
+@contextmanager
+def _proxy_environment(proxy: str | None) -> Iterator[None]:
+    """Localize proxy env for libraries that do not accept a proxy argument.
+
+    Model download is an explicit, serialized command; the previous
+    environment is always restored.  When no proxy is configured the
+    standard variables are removed so an ambient global proxy cannot leak in.
+    """
+
+    previous = {key: os.environ.get(key) for key in _PROXY_ENV_KEYS}
+    try:
+        for key in _PROXY_ENV_KEYS:
+            os.environ.pop(key, None)
+        if proxy:
+            for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+                os.environ[key] = proxy
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _module_available(name: str) -> bool:

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
 
-from trackforge.adapters.models.local import LocalModelManager
+from trackforge.adapters.models.local import LocalModelManager, _proxy_environment
 from trackforge.application.ports.models import ModelInfo, ModelKind, ModelStatus
 from trackforge.domain.errors import ModelUnavailable, OfflineModeError
 
@@ -386,3 +387,29 @@ def test_demucs_directory_checksum_uses_single_checkpoint(tmp_path: Path) -> Non
 
     assert info.status is ModelStatus.AVAILABLE
     assert info.size_bytes == len(b"demucs-weights")
+
+
+def test_model_download_proxy_environment_is_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HTTPS_PROXY", "http://ambient.example:3128")
+    monkeypatch.setenv("NO_PROXY", "localhost")
+
+    with _proxy_environment("socks5h://configured.example:1080"):
+        assert os.environ["HTTPS_PROXY"] == "socks5h://configured.example:1080"
+        assert os.environ["HTTP_PROXY"] == "socks5h://configured.example:1080"
+        assert "NO_PROXY" not in os.environ
+
+    assert os.environ["HTTPS_PROXY"] == "http://ambient.example:3128"
+    assert os.environ["NO_PROXY"] == "localhost"
+
+
+def test_model_download_without_proxy_strips_ambient_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HTTP_PROXY", "http://ambient.example:3128")
+
+    with _proxy_environment(None):
+        assert "HTTP_PROXY" not in os.environ
+
+    assert os.environ["HTTP_PROXY"] == "http://ambient.example:3128"

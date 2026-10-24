@@ -58,6 +58,7 @@ from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.ports.sources import SourceResolver
 from trackforge.application.services.llm_guardrails import LLMGuardrails
 from trackforge.application.services.prompts import PromptLibrary
+from trackforge.application.services.proxy_routing import ProxyRouter
 from trackforge.application.use_cases.acquire_item import AcquireItem
 from trackforge.application.use_cases.doctor import Doctor
 from trackforge.application.use_cases.explain_item import ExplainItem
@@ -380,11 +381,16 @@ def build_acquirers(
 def _build_ytdlp_client(config: TrackForgeConfig | None = None) -> YtDlpClient:
     if config is None:
         return YtDlpClient()
+    router = ProxyRouter.from_mapping(
+        config.ytdlp_proxy or None,
+        config.ytdlp_site_proxies,
+    )
     return YtDlpClient(
         config.ytdlp_binary,
         timeout_metadata=config.ytdlp_timeout_metadata,
         timeout_download=config.ytdlp_timeout_download,
         cache_dir=config.cache_dir / "ytdlp",
+        proxy_selector=router.proxy_for,
     )
 
 
@@ -418,6 +424,7 @@ def build_observer_capabilities(
         contact=config.musicbrainz_user_agent or None,
         offline=config.offline,
         limiter=HostRateLimiter(),
+        proxy=config.metadata_proxy or None,
     )
     return (
         *local,
@@ -553,6 +560,7 @@ def build_llm_provider(config: TrackForgeConfig) -> OpenAICompatibleProvider | N
             strict_schema=config.llm_strict_schema,
             thinking=config.llm_thinking,
             dotenv_path=str(Path(config.config_dir) / ".env"),
+            proxy=config.llm_proxy or None,
         ),
     )
 
@@ -575,6 +583,7 @@ def build_model_manager(
         models_dir=config.models_dir,
         offline=(config.offline if for_download else config.models_offline),
         max_heavy_models=config.models_max_heavy_models,
+        proxy=config.models_proxy or None,
     )
     manager.add_registered(registered)
     return manager

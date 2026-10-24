@@ -213,3 +213,16 @@ def test_source_metadata_is_normalized_and_cookie_keys_removed() -> None:
     assert metadata.thumbnails[0].width == 480
     assert metadata.chapters[0].title == "Fixture chapter"
     assert metadata.webpage_url == "https://www.youtube.com/watch"
+
+
+@pytest.mark.asyncio
+async def test_yandex_single_track_url_is_not_treated_as_playlist(
+    fake_client: YtDlpClient,
+    fake_log: Path,
+) -> None:
+    source = YtDlpSource(client=fake_client)
+
+    resolved = await source.resolve(Url("https://music.yandex.ru/album/1/track/2"))
+
+    assert resolved.candidates
+    assert read_log(fake_log)

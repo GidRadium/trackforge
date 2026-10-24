@@ -77,6 +77,18 @@ max_cost_usd_per_item = 0.50
 temperature = 0.1
 audio_opt_in = false
 
+[network.ytdlp]
+proxy = ""                      # direct by default; no global proxy env
+[network.ytdlp.sites]
+"youtube.com" = "socks5h://user:pass@proxy.example:1080"
+"music.yandex.ru" = ""          # explicit direct: proxy is forbidden here
+[network.metadata]
+proxy = ""
+[network.llm]
+proxy = ""
+[network.models]
+proxy = ""
+
 [sources.youtube]
 cookies = "~/.config/trackforge/cookies/youtube.txt"
 js_runtime = "deno"             # проверить в spike

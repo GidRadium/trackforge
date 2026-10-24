@@ -115,6 +115,7 @@ class Doctor:
             )
         )
         checks.append(_ytdlp_ejs_check(self._module_available))
+        checks.append(_network_proxy_check(self._config))
         checks.append(_llm_check(self._config))
         checks.append(_ranker_check(self._config, self._module_available))
         checks.append(_asr_check(self._config, self._module_available))
@@ -789,6 +790,52 @@ def _writable_directory_check(label: str, path: Path) -> DoctorCheck:
         status=DoctorStatus.OK,
         message=f"{label} is writable",
         details={"path": str(target)},
+    )
+
+
+def _network_proxy_check(config: object) -> DoctorCheck:
+    ytdlp_default = bool(str(getattr(config, "ytdlp_proxy", "") or "").strip())
+    site_proxies = getattr(config, "ytdlp_site_proxies", {}) or {}
+    route_hosts = (
+        sorted(str(host) for host in site_proxies) if isinstance(site_proxies, dict) else []
+    )
+    components = {
+        "ytdlp_default": ytdlp_default,
+        "ytdlp_site_routes": route_hosts,
+        "metadata": bool(str(getattr(config, "metadata_proxy", "") or "").strip()),
+        "llm": bool(str(getattr(config, "llm_proxy", "") or "").strip()),
+        "models": bool(str(getattr(config, "models_proxy", "") or "").strip()),
+    }
+    configured = (
+        ytdlp_default
+        or bool(route_hosts)
+        or components["metadata"]
+        or components["llm"]
+        or components["models"]
+    )
+    if not configured:
+        return DoctorCheck(
+            name="network_proxies",
+            status=DoctorStatus.OK,
+            message=(
+                "no network proxies configured; components connect directly and "
+                "proxy environment variables are ignored"
+            ),
+            details=components,
+        )
+    labels: list[str] = []
+    if ytdlp_default:
+        labels.append("yt-dlp default")
+    if route_hosts:
+        labels.append(f"yt-dlp sites ({len(route_hosts)})")
+    for name in ("metadata", "llm", "models"):
+        if components[name]:
+            labels.append(name)
+    return DoctorCheck(
+        name="network_proxies",
+        status=DoctorStatus.OK,
+        message="network proxies configured for: " + ", ".join(labels),
+        details=components,
     )
 
 

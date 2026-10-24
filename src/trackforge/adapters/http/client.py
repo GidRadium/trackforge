@@ -126,6 +126,7 @@ class HttpClient:
         limiter: HostRateLimiter | None = None,
         guard: UrlSafetyGuard | None = None,
         offline: bool = False,
+        proxy: str | None = None,
         client: httpx.AsyncClient | None = None,
         sleep: Sleeper | None = None,
         rng: Callable[[], float] | None = None,
@@ -140,6 +141,7 @@ class HttpClient:
         if max_bytes < 1:
             raise ValueError("max_bytes must be positive")
         self._offline = bool(offline)
+        self._proxy = proxy.strip() if isinstance(proxy, str) and proxy.strip() else None
         self._contact = contact if contact is not None else os.environ.get(_USER_AGENT_ENV, "")
         self._user_agent = user_agent or build_user_agent(self._contact)
         self._timeout = timeout
@@ -158,6 +160,7 @@ class HttpClient:
             follow_redirects=False,
             cookies=None,
             trust_env=False,
+            proxy=self._proxy,
             headers={"User-Agent": self._user_agent, "Accept": "application/json"},
         )
         self._client.follow_redirects = False
@@ -173,6 +176,10 @@ class HttpClient:
     @property
     def offline(self) -> bool:
         return self._offline
+
+    @property
+    def proxy_configured(self) -> bool:
+        return self._proxy is not None
 
     @property
     def limiter(self) -> HostRateLimiter:

@@ -50,6 +50,7 @@ class DownloadProgress:
 
 DumpProgress = DownloadProgress
 ProgressCallback = Callable[[DownloadProgress], None]
+ProxySelector = Callable[[str], str | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +139,7 @@ class YtDlpClient:
         max_metadata_bytes: int = _DEFAULT_MAX_METADATA_BYTES,
         cache_dir: Path | None = None,
         env: Mapping[str, str] | None = None,
+        proxy_selector: ProxySelector | None = None,
     ) -> None:
         if binary is not None:
             executable = binary
@@ -165,6 +167,7 @@ class YtDlpClient:
         self._max_metadata_bytes = max_metadata_bytes
         self._cache_dir = Path(cache_dir) if cache_dir is not None else None
         self._env = dict(env) if env is not None else None
+        self._proxy_selector = proxy_selector
         self._version: str | None = None
 
     @property
@@ -207,6 +210,7 @@ class YtDlpClient:
             "--no-progress",
         ]
         command.extend(self._cookie_arguments(url, options.cookies_path, options.site_hint))
+        command.extend(self._proxy_arguments(url))
         command.extend(self._common_arguments())
         command.extend(str(item) for item in options.extra_args)
         command.extend(["--", url])
@@ -298,6 +302,7 @@ class YtDlpClient:
             str(template),
         ]
         command.extend(self._cookie_arguments(url, options.cookies_path, options.site_hint))
+        command.extend(self._proxy_arguments(url))
         command.extend(self._common_arguments())
         command.extend(str(item) for item in options.extra_args)
         command.extend(["--", url])
@@ -342,7 +347,12 @@ class YtDlpClient:
         timeout: float,
         url: str | None,
     ) -> subprocess.CompletedProcess[str]:
-        env = dict(os.environ)
+        # Ambient proxy variables must never leak into a network component.
+        # The effective proxy is passed explicitly with ``--proxy`` instead;
+        # an empty value forces a direct connection for unconfigured sites.
+        env = {
+            key: value for key, value in os.environ.items() if not _is_proxy_environment_key(key)
+        }
         if self._env is not None:
             env = {**env, **self._env}
         try:
@@ -387,6 +397,13 @@ class YtDlpClient:
             max_stderr_chars=self._max_stderr_bytes,
         )
 
+    def _proxy_arguments(self, url: str) -> list[str]:
+        if self._proxy_selector is None:
+            return ["--proxy", ""]
+        proxy = self._proxy_selector(url)
+        text = proxy.strip() if isinstance(proxy, str) else ""
+        return ["--proxy", text]
+
     def _common_arguments(self) -> list[str]:
         result: list[str] = []
         if self._cache_dir is not None:
@@ -417,6 +434,11 @@ class YtDlpClient:
                 context={"path": str(cookie_path), "mode": f"{metadata.st_mode & 0o777:04o}"},
             )
         return ["--cookies", str(cookie_path)]
+
+
+def _is_proxy_environment_key(name: str) -> bool:
+    lowered = name.casefold()
+    return lowered == "no_proxy" or lowered.endswith("_proxy")
 
 
 def _coerce_dump_options(value: DumpOptions | Mapping[str, Any] | None) -> DumpOptions:
@@ -591,5 +613,6 @@ __all__ = [
     "DownloadedFile",
     "DumpOptions",
     "DumpProgress",
+    "ProxySelector",
     "YtDlpClient",
 ]

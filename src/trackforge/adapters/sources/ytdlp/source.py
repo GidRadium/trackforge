@@ -289,6 +289,10 @@ def _looks_like_playlist_url(url: str) -> bool:
     except ValueError:
         return False
     path = parts.path.casefold()
+    # Yandex Music single-track URLs live under /album/<id>/track/<id>; the
+    # bare /album/<id> page is a playlist/album and remains unsupported.
+    if path.startswith("/album/") and "/track/" in path:
+        return False
     if any(marker in path for marker in _PLAYLIST_PATHS):
         return True
     query = parse_qs(parts.query)

@@ -17,6 +17,7 @@ import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from platformdirs import (
     user_cache_dir,
@@ -182,6 +183,21 @@ class TrackForgeConfig(BaseSettings):
         gt=0,
         validation_alias=AliasChoices("YTDLP_TIMEOUT_DOWNLOAD"),
     )
+    # Network proxies are opt-in per component.  Standard proxy environment
+    # variables are intentionally ignored by the application; an empty value
+    # means a direct connection.  ``ytdlp_site_proxies`` maps host suffixes to
+    # proxies and is the only place a per-site exception belongs.
+    ytdlp_proxy: str = Field(default="", validation_alias=AliasChoices("YTDLP_PROXY"))
+    ytdlp_site_proxies: dict[str, str] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("YTDLP_SITE_PROXIES"),
+    )
+    metadata_proxy: str = Field(
+        default="",
+        validation_alias=AliasChoices("METADATA_PROXY"),
+    )
+    llm_proxy: str = Field(default="", validation_alias=AliasChoices("LLM_PROXY"))
+    models_proxy: str = Field(default="", validation_alias=AliasChoices("MODELS_PROXY"))
     # LLM settings live in ``[llm]``.  The API key is never stored here: only
     # the environment variable name is configuration.
     llm_provider: Literal["openai-compatible"] = Field(
@@ -475,6 +491,30 @@ class TrackForgeConfig(BaseSettings):
             return value.upper()
         return value
 
+    @field_validator(
+        "ytdlp_proxy",
+        "metadata_proxy",
+        "llm_proxy",
+        "models_proxy",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_proxy(cls, value: object) -> str:
+        return _validated_proxy(value)
+
+    @field_validator("ytdlp_site_proxies", mode="before")
+    @classmethod
+    def _normalize_site_proxies(cls, value: object) -> dict[str, str]:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return {}
+        if not isinstance(value, Mapping):
+            raise ValueError("ytdlp site proxies must be a table of host = proxy")
+        result: dict[str, str] = {}
+        for raw_host, raw_proxy in value.items():
+            host = _validated_route_host(raw_host)
+            result[host] = _validated_proxy(raw_proxy)
+        return result
+
     @classmethod
     def from_file(cls, path: str | Path | None = None) -> TrackForgeConfig:
         """Load configuration from TOML, environment, and defaults.
@@ -502,6 +542,50 @@ class TrackForgeConfig(BaseSettings):
         if not values:
             return cls()
         return _build_with_toml(values)
+
+
+_PROXY_SCHEMES = frozenset({"http", "https", "socks4", "socks4a", "socks5", "socks5h"})
+
+
+def _validated_proxy(value: object) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError("proxy must be a string")
+    text = value.strip()
+    if not text:
+        return ""
+    if any(char.isspace() for char in text):
+        raise ValueError("proxy must not contain whitespace")
+    try:
+        parsed = urlsplit(text)
+        _ = parsed.port
+    except ValueError as exc:
+        raise ValueError("proxy is not a valid URL") from exc
+    if parsed.scheme.casefold() not in _PROXY_SCHEMES:
+        raise ValueError("proxy scheme must be http, https, socks4, socks4a, socks5, or socks5h")
+    if not parsed.hostname:
+        raise ValueError("proxy must include a hostname")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise ValueError("proxy must not include a path, query, or fragment")
+    return text
+
+
+def _validated_route_host(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("proxy route host must be a string")
+    text = value.strip().casefold().rstrip(".")
+    if text.startswith("*."):
+        text = text[2:]
+    if (
+        not text
+        or "/" in text
+        or ":" in text
+        or "*" in text
+        or any(char.isspace() for char in text)
+    ):
+        raise ValueError("proxy route host must be a bare hostname or suffix")
+    return text
 
 
 def _to_config_error(exc: SettingsError | ValidationError) -> ConfigError:
@@ -551,13 +635,13 @@ def _load_toml_values(path: Path) -> dict[str, Any]:
             key="config",
         ) from None
 
-    supported = {"core", "llm", "ranker", "models", "privacy"}
+    supported = {"core", "llm", "ranker", "models", "privacy", "network"}
     unknown_sections = sorted(set(document) - supported)
     if unknown_sections:
         section = unknown_sections[0]
         raise ConfigError(
             f"unsupported configuration section {section!r}; "
-            "expected [core], [llm], [ranker], [models], or [privacy]",
+            "expected [core], [llm], [ranker], [models], [privacy], or [network]",
             key=section,
         )
 
@@ -610,10 +694,51 @@ def _load_toml_values(path: Path) -> dict[str, Any]:
         _reject_unknown(nested, set(_STEMS_TABLE_KEYS), f"models.{table_name}")
         values.update({f"stems_{_STEMS_TABLE_KEYS[key]}": value for key, value in nested.items()})
 
+    network = _table(document, "network")
+    nested_ytdlp = network.pop("ytdlp", None)
+    nested_metadata = network.pop("metadata", None)
+    nested_llm = network.pop("llm", None)
+    nested_models = network.pop("models", None)
+    _reject_unknown(network, set(), "network")
+    values.update(_network_values("ytdlp", nested_ytdlp, {"proxy", "sites"}))
+    for name, nested in (
+        ("metadata", nested_metadata),
+        ("llm", nested_llm),
+        ("models", nested_models),
+    ):
+        values.update(_network_values(name, nested, {"proxy"}))
+
     privacy = _table(document, "privacy")
     _reject_unknown(privacy, {"send_text_to_cloud", "send_audio_to_cloud"}, "privacy")
     values.update(privacy)
     return values
+
+
+def _network_values(
+    name: str,
+    nested: object,
+    allowed: set[str],
+) -> dict[str, Any]:
+    if nested is None:
+        return {}
+    if not isinstance(nested, dict):
+        raise ConfigError(
+            f"configuration key 'network.{name}' must be a table",
+            key=f"network.{name}",
+        )
+    _reject_unknown(nested, allowed, f"network.{name}")
+    if name == "ytdlp":
+        sites = nested.get("sites", {})
+        if not isinstance(sites, dict):
+            raise ConfigError(
+                "configuration key 'network.ytdlp.sites' must be a table",
+                key="network.ytdlp.sites",
+            )
+        return {
+            "ytdlp_proxy": nested.get("proxy", ""),
+            "ytdlp_site_proxies": dict(sites),
+        }
+    return {f"{name}_proxy": nested.get("proxy", "")}
 
 
 def _table(document: dict[str, Any], name: str) -> dict[str, Any]:

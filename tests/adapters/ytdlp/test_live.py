@@ -3,6 +3,7 @@
 CI excludes the ``network`` marker (see pyproject.toml).  Run manually with:
 
     TRACKFORGE_LIVE_YTDLP_URL="https://..." \
+    TRACKFORGE_LIVE_YTDLP_PROXY="socks5h://user:pass@host:1080" \
         uv run pytest tests/adapters/ytdlp/test_live.py -m network -q
 """
 
@@ -27,7 +28,10 @@ async def test_live_single_track_metadata() -> None:
         pytest.skip("set TRACKFORGE_LIVE_YTDLP_URL to run the live yt-dlp check")
     if shutil.which("yt-dlp") is None:
         pytest.skip("yt-dlp is not installed")
-    source = YtDlpSource(client=YtDlpClient())
+    proxy = os.environ.get("TRACKFORGE_LIVE_YTDLP_PROXY", "").strip() or None
+    source = YtDlpSource(
+        client=YtDlpClient(proxy_selector=lambda _url: proxy),
+    )
     resolved = await source.resolve(Url(url))
     assert resolved.candidates
     assert resolved.candidates[0].formats

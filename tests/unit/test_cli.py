@@ -87,14 +87,17 @@ def test_config_show_json_is_single_machine_readable_object(
         "llm_price_in",
         "llm_price_out",
         "llm_provider",
+        "llm_proxy",
         "llm_strict_schema",
         "llm_temperature",
         "llm_thinking",
         "llm_timeout_seconds",
         "log_level",
+        "metadata_proxy",
         "mode",
         "models_max_heavy_models",
         "models_offline",
+        "models_proxy",
         "offline",
         "profile",
         "ranker_backend",
@@ -127,6 +130,8 @@ def test_config_show_json_is_single_machine_readable_object(
         "stems_segment",
         "stems_size_bytes",
         "stems_threads",
+        "ytdlp_proxy",
+        "ytdlp_site_proxies",
     }
     assert payload["profile"] == "fast"
     assert payload["mode"] == "llm_assisted"
@@ -227,3 +232,25 @@ def test_config_validate_unknown_key_exits_two(
 
     assert result.exit_code == 2
     assert "unknown" in result.stderr
+
+
+def test_config_show_redacts_proxy_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    clean_env: None,
+) -> None:
+    proxy_value = "socks5h://user:super-secret@proxy.example:1080"
+    monkeypatch.setenv("TRACKFORGE_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("TRACKFORGE_YTDLP_PROXY", proxy_value)
+    monkeypatch.setenv(
+        "TRACKFORGE_YTDLP_SITE_PROXIES",
+        '{"youtube.com": "socks5h://user:super-secret@proxy.example:1080"}',
+    )
+
+    result = invoke("config", "show", "--json")
+
+    assert result.exit_code == 0
+    assert "super-secret" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ytdlp_proxy"] == "<configured>"
+    assert payload["ytdlp_site_proxies"] == {"youtube.com": "<configured>"}

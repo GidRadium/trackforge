@@ -137,3 +137,61 @@ def test_progress_callback_receives_events(
     )
     assert events
     assert events[-1].percent == 1.0
+
+
+def test_site_proxy_and_direct_route_are_passed_to_ytdlp(
+    tmp_path: Path,
+    fake_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trackforge.application.services.proxy_routing import ProxyRouter
+
+    log = tmp_path / "proxy-argv.jsonl"
+    monkeypatch.setenv("TRACKFORGE_FAKE_YTDLP_LOG", str(log))
+    router = ProxyRouter.from_mapping(
+        None,
+        {
+            "youtube.com": "socks5h://user:pass@proxy.example:1080",
+            "music.yandex.ru": "",
+        },
+    )
+    client = YtDlpClient(str(fake_path), proxy_selector=router.proxy_for)
+
+    client.dump_json(YOUTUBE_URL)
+    youtube_args = read_log(log)[-1]
+    assert youtube_args[youtube_args.index("--proxy") + 1] == (
+        "socks5h://user:pass@proxy.example:1080"
+    )
+
+    client.dump_json("https://music.yandex.ru/album/1/track/2")
+    yandex_args = read_log(log)[-1]
+    assert yandex_args[yandex_args.index("--proxy") + 1] == ""
+
+
+def test_ambient_proxy_environment_is_stripped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = tmp_path / "yt-dlp-env"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os\n"
+        "print(json.dumps({k: v for k, v in os.environ.items() if 'proxy' in k.casefold()}))\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("HTTPS_PROXY", "http://ambient.example:3128")
+    monkeypatch.setenv("ALL_PROXY", "socks5://ambient.example:1080")
+    monkeypatch.setenv("https_proxy", "http://ambient.example:3128")
+    client = YtDlpClient(str(script))
+
+    assert client.dump_json("https://www.youtube.com/watch?v=env") == {}
+
+
+def test_dash_proxy_direct_is_default_without_router(
+    fake_client: YtDlpClient,
+    fake_log: Path,
+) -> None:
+    fake_client.dump_json(YOUTUBE_URL)
+    args = read_log(fake_log)[-1]
+    assert args[args.index("--proxy") + 1] == ""

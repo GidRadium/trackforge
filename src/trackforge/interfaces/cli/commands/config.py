@@ -43,10 +43,25 @@ def config_show(
             "musicbrainz_user_agent",
         ):
             payload.pop(key, None)
+        for key in ("ytdlp_proxy", "metadata_proxy", "llm_proxy", "models_proxy"):
+            if payload.get(key):
+                payload[key] = "<configured>"
+        site_proxies = payload.get("ytdlp_site_proxies")
+        if isinstance(site_proxies, dict):
+            payload["ytdlp_site_proxies"] = {
+                str(host): ("<configured>" if proxy else "") for host, proxy in site_proxies.items()
+            }
         if as_json:
             emit_json(payload)
             return
         for key, value in payload.items():
+            if key == "ytdlp_site_proxies":
+                if isinstance(value, dict) and value:
+                    for host, proxy in value.items():
+                        typer.echo(f"ytdlp_site_proxies.{host}: {proxy or '(direct)'}")
+                else:
+                    typer.echo("ytdlp_site_proxies: (none)")
+                continue
             typer.echo(f"{key}: {value}")
 
     execute(as_json, body)
