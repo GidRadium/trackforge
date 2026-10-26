@@ -2,7 +2,7 @@
 
 - **Статус:** ready
 - **Тип:** MVP (release)
-- **Зависит от:** Plan 01–15; Plan 16–18 — conditional; Plan 19 — optional
+- **Зависит от:** Plan 01–15; Plan 16–18.1 — conditional; Plan 19 — optional
 - **Разблокирует:** релиз
 - **Оценка:** L
 - **Риск:** средний
@@ -47,7 +47,7 @@ uv run pytest -q
 uv run lint-imports
 ```
 
-Зелёные. Plans 16–18 могут быть `deferred`; зафиксируй это в release report. Plan 19 optional и не блокирует. `uv build` должен работать; для smoke нужны `ffmpeg`/`ffprobe`, локальный файл и (опционально) URL.
+Зелёные. Plans 16–18.1 могут быть `deferred`; зафиксируй это в release report. Plan 19 optional и не блокирует. `uv build` должен работать; для smoke нужны `ffmpeg`/`ffprobe`, локальный файл и (опционально) URL.
 ## Scope
 
 - Security audit: SSRF/path traversal/symlink/secrets/cookies/SQL/no-DRM; plugin surface отсутствует в v1.0 (Deferred).
@@ -208,7 +208,7 @@ uv run trackforge gc --dry-run --json
 
 ## Stop conditions / decision gates
 
-- D10 не выбран — выполни `01–15` + зелёные 16–18, версия `1.0.0`; если URL no-go — `0.9.0`.
+- D10 не выбран — выполни `01–15` + зелёные 16–18.1, версия `1.0.0`; если URL no-go — `0.9.0`.
 - Любой mandatory gate красный — стоп, не выпускай.
 - License boundary нарушен — стоп; не «принимай GPL как есть» без решения пользователя.
 - Нужна новая фича для релиза — стоп; это новый план, не release scope.

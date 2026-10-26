@@ -3,7 +3,7 @@
 - **Статус:** conditional
 - **Тип:** Post-MVP
 - **Зависит от:** Plan 09, Plan 11, Plan 12
-- **Разблокирует:** —
+- **Разблокирует:** Plan 18.1
 - **Оценка:** L
 - **Риск:** высокий
 
@@ -192,6 +192,9 @@ uv run trackforge plan "<playlist-url>" --json   # fake yt-dlp из тестов
 - `tag_basis`; subfolder publish.
 - CLI collection commands.
 - Fake playlist fixtures.
+- Follow-up: Plan 18.1 исправляет качество метаданных, выявленное на реальном
+  плейлисте (title/artist, provider inputs, description lyrics, genre, cover,
+  warnings).
 
 ## Stop conditions / decision gates
 
