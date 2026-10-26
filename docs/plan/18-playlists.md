@@ -193,8 +193,8 @@ uv run trackforge plan "<playlist-url>" --json   # fake yt-dlp из тестов
 - CLI collection commands.
 - Fake playlist fixtures.
 - Follow-up: Plan 18.1 исправляет качество метаданных, выявленное на реальном
-  плейлисте (title/artist, provider inputs, description lyrics, genre, cover,
-  warnings).
+  плейлисте (title/artist, derivative credits, provider inputs, description lyrics,
+  genre, cover, warnings).
 
 ## Stop conditions / decision gates
 

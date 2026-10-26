@@ -72,7 +72,7 @@
 | 16 | [ASR + lyrics](16-asr-lyrics.md) | Post-MVP | conditional | 12, 13, 14 | — (vocal path для 17) | L | faster-whisper, `asr.transcript.v1`, LRC/ELRC, merge |
 | 17 | [Demucs + derivatives](17-demucs-derivatives.md) | Post-MVP | conditional | 13, 14 | — | L | Stems features, vocal/derivative detector, opt-in `full` |
 | 18 | [Playlists/collections](18-playlists.md) | Post-MVP | conditional | 09, 11, 12 | 18.1 | L | Playlist → выбор → очередь → resume → подпапка; `tag_basis` |
-| 18.1 | [Metadata quality для реальных плейлистов](18.1-metadata-quality.md) | Post-MVP | ready | 12, 14, 18 | 18.2 (future), 20 | L | Clean title/artist, provider inputs, description lyrics, genre, playlist cover, warnings |
+| 18.1 | [Metadata quality для реальных плейлистов](18.1-metadata-quality.md) | Post-MVP | ready | 12, 14, 18 | 18.2 (future), 20 | L | Clean title/artist, provider inputs, description lyrics, genre, derivative credits, playlist cover, warnings |
 | 19 | [HTTP API (GUI deferred)](19-http-gui.md) | Optional | ready | 09, 15 | — | M | FastAPI/SSE поверх `AsyncTrackForge`, local token, без бизнес-логики |
 | 20 | [Hardening + release v1.0](20-release.md) | MVP | ready | 01–15; 16–18.1 conditional; 19 optional | релиз | L | Security/license audit, backup/GC, упаковка, smoke, CHANGELOG, v1.0 |
 
@@ -181,7 +181,8 @@ flowchart TD
 | D7 | Политика версии `yt-dlp` | (a) диапазон + `uv.lock` + `doctor`; (b) точный pin; (c) всегда latest | (a): диапазон с нижней границей, lock в репозитории, `doctor` предупреждает | 11 |
 | D8 | Cross-encoder модель | (a) MiniLM multilingual QInt8; (b) BGE base; (c) только lexical | (a), если Plan 13 go; иначе (c) с warning | 14 |
 | D9 | `tag_basis` по умолчанию | (a) `album_first`; (b) `playlist_first`; (c) `ask` | (a) с fallback на playlist/unknown при низкой уверенности | 18 |
-| D10 | Scope v1.0 | (a) 01–12 + 14–15; (b) + 16–18 при go; (c) + GUI | (b): 16–18 при go, no-go — Deferred и не блокирует 1.0; 19 optional; URL no-go → 0.9 local | 20 |
+| D10 | Scope v1.0 | (a) 01–12 + 14–15; (b) + 16–18.1 при go; (c) + GUI | (b): 16–18.1 при go, no-go — Deferred и не блокирует 1.0; 19 optional; URL no-go → 0.9 local | 20 |
+| D11 | Кто основной artist у nightcore/remix? | (a) original artist, remixer отдельно; (b) remixer feat. original; (c) только remixer | (b) по выбору пользователя: remixer main, original featured; filename `Remixer feat. Original - Title (Qualifier)` | 18.1 |
 
 ## 10. Пробелы, противоречия и отклонения
 
