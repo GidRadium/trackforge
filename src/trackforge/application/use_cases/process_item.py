@@ -156,8 +156,14 @@ class ProcessItem:
         self,
         source: SourceRef,
         options: RunOptions | None = None,
+        *,
+        on_start: Callable[[RunId], None] | None = None,
     ) -> RunResult | PlanView:
-        """Execute the full pipeline, or return a plan in dry-run mode."""
+        """Execute the full pipeline, or return a plan in dry-run mode.
+
+        ``on_start`` receives the run id as soon as the run record exists.
+        Transport layers use it to expose a run id before the pipeline ends.
+        """
 
         opts = options or RunOptions()
         plan = await self.plan(source, opts)
@@ -170,6 +176,8 @@ class ProcessItem:
             run = await uow.runs.create_run(opts.profile, opts.mode, status=RunStatus.PLANNED)
         cancel = asyncio.Event()
         self._cancel_events[str(run.id)] = cancel
+        if on_start is not None:
+            on_start(run.id)
         label = _plan_label(plan, source)
         tracker = self._single_tracker(run.id, label)
         reports: list[HandlerReport] = []
@@ -262,6 +270,7 @@ class ProcessItem:
         *,
         collection: CollectionItemContext | None = None,
         tracker: ProgressTracker | None = None,
+        on_start: Callable[[RunId], None] | None = None,
     ) -> RunResult:
         """Run the remaining pipeline for an already acquired item."""
 
@@ -277,6 +286,8 @@ class ProcessItem:
             await uow.runs.add_item(run.id, item_id, status=RunItemStatus.RUNNING)
         cancel = asyncio.Event()
         self._cancel_events[str(run.id)] = cancel
+        if on_start is not None:
+            on_start(run.id)
         if tracker is None:
             tracker = self._single_tracker(run.id, _item_label(item_id, collection))
         reports: list[HandlerReport] = []
@@ -355,6 +366,7 @@ class ProcessItem:
         collection: CollectionItemContext | None = None,
         on_acquired: Callable[[ItemId], Awaitable[None]] | None = None,
         tracker: ProgressTracker | None = None,
+        on_start: Callable[[RunId], None] | None = None,
     ) -> RunResult | PlanView:
         """Acquire and process one already-enumerated collection candidate."""
 
@@ -365,6 +377,8 @@ class ProcessItem:
             run = await uow.runs.create_run(opts.profile, opts.mode, status=RunStatus.PLANNED)
         cancel = asyncio.Event()
         self._cancel_events[str(run.id)] = cancel
+        if on_start is not None:
+            on_start(run.id)
         if tracker is None:
             tracker = self._single_tracker(run.id, _candidate_label(candidate))
         reports: list[HandlerReport] = []
@@ -484,6 +498,8 @@ class ProcessItem:
         self,
         run_id: RunId,
         options: RunOptions | None = None,
+        *,
+        on_start: Callable[[RunId], None] | None = None,
     ) -> RunResult:
         """Continue a failed/paused run from its persisted item state."""
 
@@ -504,6 +520,8 @@ class ProcessItem:
         opts = options or RunOptions(profile=run.profile, mode=run.mode)
         cancel = asyncio.Event()
         self._cancel_events[str(run_id)] = cancel
+        if on_start is not None:
+            on_start(run_id)
         try:
             await self._set_run_status(run_id, RunStatus.RUNNING, started=True)
             self._publish_event(EventType.RUN_STARTED, run_id, item_id=item_id)

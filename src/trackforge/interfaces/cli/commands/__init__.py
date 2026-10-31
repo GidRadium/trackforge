@@ -17,6 +17,7 @@ from trackforge.interfaces.cli.commands.render import render_command
 from trackforge.interfaces.cli.commands.resolve import resolve_command
 from trackforge.interfaces.cli.commands.resume import resume_command
 from trackforge.interfaces.cli.commands.review import review_command
+from trackforge.interfaces.cli.commands.serve import serve_command
 from trackforge.interfaces.cli.commands.status import status_command
 
 
@@ -32,6 +33,7 @@ def register_commands(app: typer.Typer) -> None:
     app.command("doctor")(doctor_command)
     app.command("status")(status_command)
     app.command("resume")(resume_command)
+    app.command("serve")(serve_command)
     app.add_typer(models_app, name="models")
     app.add_typer(feedback_app, name="feedback")
     app.add_typer(collection_app, name="collection")

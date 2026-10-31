@@ -21,7 +21,11 @@ from trackforge.application.dto.collections import (
     CollectionRunResult,
     parse_positions,
 )
-from trackforge.application.dto.decisions import ExplanationView
+from trackforge.application.dto.decisions import (
+    AlternativeView,
+    ClaimView,
+    ExplanationView,
+)
 from trackforge.application.dto.feedback import (
     FeedbackExportResult,
     FeedbackStatsReport,
@@ -43,10 +47,13 @@ from trackforge.application.dto.results import (
 )
 from trackforge.application.dto.views import (
     DecisionView,
+    ItemView,
     LibraryEntryView,
     ResolveView,
     ReviewView,
 )
+from trackforge.application.ports.models import ModelInfo
+from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.services.progress import ProgressBoard
 from trackforge.application.use_cases.process_item import (
     ImportPath,
@@ -58,6 +65,7 @@ from trackforge.bootstrap.container import (
     build_catalog_context,
     build_collection_resolvers,
     build_doctor,
+    build_model_manager,
     build_plan_collection,
     build_plan_item,
     build_process_item,
@@ -68,9 +76,11 @@ from trackforge.domain.errors import (
     RecordNotFound,
     UnsupportedSource,
 )
+from trackforge.domain.model.claims import Claim
 from trackforge.domain.model.collection import Collection
+from trackforge.domain.model.decisions import DecisionRecord
 from trackforge.domain.model.ids import CollectionId, ItemId, RunId
-from trackforge.domain.model.item import ItemStatus
+from trackforge.domain.model.item import Item, ItemStatus
 from trackforge.domain.model.source import LocalPath, SourceRef, Url
 from trackforge.pipeline.events import Event
 
@@ -302,25 +312,40 @@ class AsyncTrackForge:
         self,
         plan_or_source: PlanView | SourceRef | str | Path,
         options: RunOptions | None = None,
+        *,
+        on_start: Callable[[RunId], None] | None = None,
     ) -> RunResult | PlanView | CollectionPlanView | CollectionRunResult:
-        """Run a source, plan, or an existing item id."""
+        """Run a source, plan, or an existing item id.
+
+        ``on_start`` is an observability hook used by the HTTP layer to learn
+        the run id before a long-running operation completes.  It is called
+        after the run record exists and before pipeline execution begins.
+        """
 
         opts = options or RunOptions()
         if isinstance(plan_or_source, PlanView):
             if opts.dry_run:
                 return plan_or_source
             await self._ensure_open()
-            return await self._process_item().run(plan_or_source.source, opts)
+            return await self._process_item().run(
+                plan_or_source.source,
+                opts,
+                on_start=on_start,
+            )
         if isinstance(plan_or_source, str) and _looks_like_item_id(plan_or_source):
             await self._ensure_open()
-            return await self._process_item().run_item(ItemId(plan_or_source), opts)
+            return await self._process_item().run_item(
+                ItemId(plan_or_source),
+                opts,
+                on_start=on_start,
+            )
         ref = _coerce_source(plan_or_source)
         if self._is_collection(ref):
             return await self.collection_add(ref, opts)
         if opts.dry_run:
             return await self.plan(ref, opts)
         await self._ensure_open()
-        return await self._process_item().run(ref, opts)
+        return await self._process_item().run(ref, opts, on_start=on_start)
 
     async def add(
         self,
@@ -423,47 +448,79 @@ class AsyncTrackForge:
         opts = options or RunOptions()
         target = ItemId(str(item_id))
         resolved = await context.resolve_item().resolve(target, opts.mode)
-        async with context.unit_of_work() as uow:
-            record = (
-                await uow.decisions.get_record(resolved.decision_record_id)
-                if resolved.decision_record_id is not None
-                else None
-            )
-            claims = await uow.claims.list_by_item(target)
-        by_id = {claim.id: claim for claim in claims}
-        from trackforge.application.dto.decisions import AlternativeView, ClaimView
-
-        decisions: list[DecisionView] = []
-        if record is not None:
-            for decision in record.decisions:
-                alternatives = tuple(
-                    AlternativeView(
-                        claim=ClaimView.from_claim(by_id[claim_id]),
-                        reason="not selected by the active policy",
-                    )
-                    for claim_id in decision.alternatives
-                    if claim_id in by_id
-                )
-                decisions.append(
-                    DecisionView(
-                        field=decision.field,
-                        value=decision.value,
-                        confidence=decision.confidence,
-                        rationale=decision.rationale,
-                        mode=decision.mode,
-                        decided_by=decision.decided_by,
-                        locked=decision.locked,
-                        alternatives=alternatives,
-                    )
-                )
+        decisions: tuple[DecisionView, ...] = ()
+        if resolved.decision_record_id is not None:
+            async with context.unit_of_work() as uow:
+                record = await uow.decisions.get_record(resolved.decision_record_id)
+                if record is not None:
+                    claims = await uow.claims.list_by_item(target)
+                    decisions = _decision_views(record, claims)
         return ResolveView(
             item_id=resolved.item_id,
             decision_record_id=resolved.decision_record_id,
-            decisions=tuple(decisions),
+            decisions=decisions,
             fields=dict(resolved.fields),
             unknowns=resolved.unknowns,
             warnings=resolved.warnings,
         )
+
+    async def item(self, item_id: ItemId | str) -> ItemView:
+        """Return a stable read-only item summary for API consumers."""
+
+        context = await self._ensure_open()
+        target = ItemId(str(item_id))
+        async with context.unit_of_work() as uow:
+            item = await uow.items.get(target)
+            if item is None:
+                raise RecordNotFound("item not found", context={"item_id": target})
+            media = await uow.media.get(item.media_id) if item.media_id is not None else None
+            entries = await uow.library.list_entries(item_id=target)
+            decisions = await _persisted_decision_views(uow, item)
+        published = [entry for entry in entries if entry.status.value == "published"]
+        title = _decision_text(decisions, "title")
+        artist = _decision_text(decisions, "artist")
+        return ItemView(
+            item_id=item.id,
+            status=item.status,
+            media_id=str(item.media_id) if item.media_id is not None else None,
+            content_hash=media.content_hash if media is not None else None,
+            output_path=published[-1].path if published else None,
+            title=title,
+            artist=artist,
+        )
+
+    async def decisions(self, item_id: ItemId | str) -> tuple[DecisionView, ...]:
+        """Return the persisted decisions for one item without re-resolving."""
+
+        context = await self._ensure_open()
+        target = ItemId(str(item_id))
+        async with context.unit_of_work() as uow:
+            item = await uow.items.get(target)
+            if item is None:
+                raise RecordNotFound("item not found", context={"item_id": target})
+            return await _persisted_decision_views(uow, item)
+
+    async def library(self) -> tuple[LibraryEntryView, ...]:
+        """Return published library entries as portable DTOs."""
+
+        context = await self._ensure_open()
+        async with context.unit_of_work() as uow:
+            entries = await uow.library.list_entries()
+        return tuple(LibraryEntryView.from_entry(entry) for entry in entries)
+
+    async def models(self) -> tuple[ModelInfo, ...]:
+        """Return configured/registered model availability without downloading."""
+
+        registered: tuple[ModelInfo, ...] = ()
+        try:
+            context = await self._ensure_open()
+            async with context.unit_of_work() as uow:
+                registered = tuple(await uow.models.list_models())
+        except Exception:
+            # Listing configuration-declared models must work before the first
+            # catalog write.  The registry is an index, not the source of truth.
+            registered = ()
+        return build_model_manager(self._config, registered=registered).list_models()
 
     async def render(
         self,
@@ -875,6 +932,18 @@ class TrackForge:
     def explain(self, item_id: ItemId | str, field: str) -> ExplanationView:
         return self._call(self._async.explain, item_id, field)
 
+    def item(self, item_id: ItemId | str) -> ItemView:
+        return self._call(self._async.item, item_id)
+
+    def decisions(self, item_id: ItemId | str) -> tuple[DecisionView, ...]:
+        return self._call(self._async.decisions, item_id)
+
+    def library(self) -> tuple[LibraryEntryView, ...]:
+        return self._call(self._async.library)
+
+    def models(self) -> tuple[ModelInfo, ...]:
+        return self._call(self._async.models)
+
     def feedback_export(self, **kwargs: Any) -> FeedbackExportResult:
         return self._call(self._async.feedback_export, **kwargs)
 
@@ -907,6 +976,64 @@ class TrackForge:
 
     def __repr__(self) -> str:
         return f"TrackForge(config={self.config!r})"
+
+
+def _decision_views(
+    record: DecisionRecord,
+    claims: Sequence[Claim],
+) -> tuple[DecisionView, ...]:
+    """Project a decision record without mutating resolution state."""
+
+    by_id = {claim.id: claim for claim in claims}
+    views: list[DecisionView] = []
+    for decision in record.decisions:
+        views.append(
+            DecisionView(
+                field=decision.field,
+                value=decision.value,
+                confidence=decision.confidence,
+                rationale=decision.rationale,
+                mode=decision.mode,
+                decided_by=decision.decided_by,
+                locked=decision.locked,
+                alternatives=tuple(
+                    AlternativeView(
+                        claim=ClaimView.from_claim(by_id[claim_id]),
+                        reason="not selected by the active policy",
+                    )
+                    for claim_id in decision.alternatives
+                    if claim_id in by_id
+                ),
+            )
+        )
+    return tuple(views)
+
+
+async def _persisted_decision_views(
+    uow: UnitOfWork,
+    item: Item,
+) -> tuple[DecisionView, ...]:
+    """Read the item's current decision record, falling back to the latest."""
+
+    record: DecisionRecord | None = None
+    if item.decision_record_id is not None:
+        candidate = await uow.decisions.get_record(item.decision_record_id)
+        if candidate is not None and candidate.item_id == item.id:
+            record = candidate
+    if record is None:
+        records = await uow.decisions.list_records(item.id)
+        record = records[-1] if records else None
+    if record is None:
+        return ()
+    claims = await uow.claims.list_by_item(item.id)
+    return _decision_views(record, claims)
+
+
+def _decision_text(decisions: Sequence[DecisionView], field: str) -> str | None:
+    for decision in decisions:
+        if decision.field == field and isinstance(decision.value, str):
+            return decision.value
+    return None
 
 
 def _reject_running_loop() -> None:
@@ -956,9 +1083,12 @@ __all__ = [
     "CollectionPlanOptions",
     "CollectionPlanView",
     "CollectionRunResult",
+    "DecisionView",
     "FeedbackExportResult",
     "FeedbackStatsReport",
+    "ItemView",
     "LibraryEntryView",
+    "ModelInfo",
     "RunOptions",
     "TrackForge",
 ]

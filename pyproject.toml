@@ -53,6 +53,13 @@ stems = [
     "torch>=2.2,<3",
     "torchaudio>=2.2,<3",
 ]
+# Optional local HTTP API and SSE progress.  The GUI itself is deferred; this
+# extra only installs the thin transport layer over ``AsyncTrackForge``.
+http = [
+    "fastapi>=0.115,<1",
+    "sse-starlette>=2.1,<4",
+    "uvicorn[standard]>=0.32,<1",
+]
 
 [project.scripts]
 trackforge = "trackforge.interfaces.cli.main:app"
@@ -80,9 +87,11 @@ select = ["E", "F", "W", "I", "B", "S", "UP"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["trackforge"]
+known-third-party = ["tests"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S603"]
+"tests/http/**" = ["S104", "S105", "S106", "S108"]
 
 [tool.ruff.format]
 quote-style = "double"
