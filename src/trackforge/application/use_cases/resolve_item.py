@@ -23,6 +23,7 @@ from trackforge.application.services.llm_guardrails import (
     canonical_llm_field,
 )
 from trackforge.application.services.prompts import EXTRACT_FIELDS, OUTPUT_SCHEMA, PromptLibrary
+from trackforge.application.services.source_genres import normalize_source_genres
 from trackforge.domain.errors import (
     BudgetExceeded,
     DomainValidationError,
@@ -44,6 +45,7 @@ from trackforge.domain.model.decisions import (
     OnMissing,
     PolicyStrategy,
 )
+from trackforge.domain.model.identity import Transformation
 from trackforge.domain.model.ids import ClaimId, DecisionRecordId, ItemId, new_uuid7
 from trackforge.domain.model.item import ItemStatus
 from trackforge.domain.policies.normalization import (
@@ -169,7 +171,8 @@ class ResolveItem:
             if any(lock.field == "" for lock in locks):
                 warnings.append("item-level lock is not applied to individual fields in v1")
 
-            if target_mode is DecisionMode.POLICY and self._llm_provider is not None:
+            is_mix = _is_mix(claims)
+            if target_mode is DecisionMode.POLICY and self._llm_provider is not None and not is_mix:
                 claims = await self._extract_claims(
                     uow,
                     item.id,
@@ -292,6 +295,7 @@ class ResolveItem:
             if (
                 target_mode in {DecisionMode.LLM_ASSISTED, DecisionMode.LLM_AUTOPILOT}
                 and self._llm_provider is not None
+                and not is_mix
             ):
                 field_decisions = await self._apply_llm_mode(
                     field_decisions,
@@ -458,7 +462,7 @@ class ResolveItem:
             existing.add(key)
             appended += 1
         if appended:
-            warnings.append(f"llm:extract: added {appended} claim(s) for policy evaluation")
+            # Claim counts are diagnostic noise, not user-facing warnings.
             return await uow.claims.list_by_item(item_id)
         return list(claims)
 
@@ -692,6 +696,13 @@ def _lock_for(field: str, locks: Sequence[LockRecord]) -> LockRecord | None:
     return None
 
 
+def _is_mix(claims: Sequence[Claim]) -> bool:
+    return any(
+        claim.field == "is_mix" and claim.value is True and claim.status in _ACTIVE_CLAIM_STATUSES
+        for claim in claims
+    )
+
+
 def _claims_for_field(claims: Sequence[Claim], field: str) -> tuple[Claim, ...]:
     canonical = canonical_field(field)
     names = set(claim_fields_for(canonical))
@@ -833,6 +844,26 @@ def _select_field(
         return select_keep_existing(field, valid_claims, policy.priority)
     if policy.strategy is PolicyStrategy.DERIVE:
         base = select_source_priority(field, valid_claims, policy.priority)
+        separate_claims = _separate_qualifier_claims(transformations)
+        if separate_claims:
+            return StrategyResult(
+                field=field,
+                value=base.value,
+                selected=base.selected,
+                alternatives=base.alternatives,
+                confidence=base.confidence,
+                rationale=(
+                    "derivative qualifier is stored separately (D11); "
+                    "title kept clean for the filename template"
+                ),
+                strategy=PolicyStrategy.DERIVE,
+                derived_from=tuple(
+                    dict.fromkeys((*base.derived_from, *(claim.id for claim in separate_claims)))
+                ),
+                synthesized=base.synthesized,
+                review_required=base.review_required,
+                locked=base.locked,
+            )
         return select_derive(field, base, transformations)
     return select_source_priority(field, valid_claims, policy.priority)
 
@@ -907,6 +938,32 @@ async def _resolve_user_claim(
     return saved
 
 
+_SEPARATE_QUALIFIER_TRANSFORMATIONS = frozenset(
+    {
+        Transformation.NIGHTCORE,
+        Transformation.SPED_UP,
+        Transformation.SLOWED,
+        Transformation.REMIX,
+    }
+)
+
+
+def _separate_qualifier_claims(transformations: Sequence[Claim]) -> tuple[Claim, ...]:
+    result: list[Claim] = []
+    for claim in transformations:
+        values = claim.value if isinstance(claim.value, list) else [claim.value]
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            try:
+                if Transformation(value) in _SEPARATE_QUALIFIER_TRANSFORMATIONS:
+                    result.append(claim)
+                    break
+            except ValueError:
+                continue
+    return tuple(result)
+
+
 def _make_decision(
     *,
     policy: FieldPolicy,
@@ -922,6 +979,14 @@ def _make_decision(
     )
     chosen = selection.chosen_claim_id
     value = selection.value
+    if policy.field == "genre":
+        genre_values = value if isinstance(value, (list, tuple)) else [value]
+        cleaned = normalize_source_genres(
+            [str(item) for item in genre_values if isinstance(item, str)]
+        )
+        value = list(cleaned) if cleaned else None
+        if value is None:
+            chosen = None
     if value is not None and chosen is None and not selection.derived_from:
         # Multi-value selections carry their claim IDs in derived_from; a
         # lock/strategy result without either is invalid evidence.

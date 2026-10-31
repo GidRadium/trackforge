@@ -27,7 +27,7 @@ from trackforge.domain.model.collection import (
 from trackforge.domain.model.ids import CollectionId, new_uuid7
 from trackforge.domain.model.source import LocalPath, SourceRef
 
-_MAX_FOLDER_ENTRIES = 501
+_MAX_FOLDER_ENTRIES = 1001
 _YEAR_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
 
 
@@ -142,7 +142,10 @@ class LocalFolderSource:
             )
         warnings = (f"folder_unsupported_files_ignored:{ignored}",) if ignored else ()
         if len(paths) >= _MAX_FOLDER_ENTRIES:
-            warnings = (*warnings, "folder_enumeration_truncated:501")
+            warnings = (
+                *warnings,
+                f"folder_enumeration_truncated:{_MAX_FOLDER_ENTRIES}",
+            )
         return Collection(
             id=CollectionId(new_uuid7()),
             kind=CollectionKind.FOLDER,

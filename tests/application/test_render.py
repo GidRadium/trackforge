@@ -296,7 +296,7 @@ async def test_render_builds_verified_bundle_with_sidecar(
     assert sidecar["identity"]["kind"] == "music"
     assert sidecar["identity"]["derivative"] == ["nightcore"]
     assert sidecar["identity"]["recording_mbid"] == "11111111-1111-1111-1111-111111111111"
-    assert sidecar["source"]["url"] == "https://youtube.com/watch"
+    assert sidecar["source"]["url"] == "https://youtube.com/watch?v=abc"
     assert sidecar["source"]["extractor"] == "youtube.com"
     assert sidecar["source"]["source_id"] == "youtube-123"
     assert "token" not in (result.directory / "trackforge.json").read_text(encoding="utf-8")

@@ -8,7 +8,8 @@ decision to publish an existing bundle instead of rendering it again.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
+import time
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,12 @@ from trackforge.application.dto.db import (
     StepStatus,
 )
 from trackforge.application.dto.plan import AcquireOptions, PlanOptions, PlanView
+from trackforge.application.dto.progress import (
+    HandlerReport,
+    HandlerStatus,
+    ProgressContext,
+    ProgressStatus,
+)
 from trackforge.application.dto.rendering import RenderOptions
 from trackforge.application.dto.results import (
     RunItemView,
@@ -33,6 +40,7 @@ from trackforge.application.dto.results import (
 from trackforge.application.ports.acquisition import Acquirer
 from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.ports.sources import absolute_local_path
+from trackforge.application.services.progress import ProgressBoard, ProgressTracker
 from trackforge.application.services.sidecar import SidecarCollection
 from trackforge.application.services.tag_basis import (
     TagBasisApplication,
@@ -101,6 +109,7 @@ class ProcessItem:
         library_root: Path,
         events: EventBus | None = None,
         tag_basis_service: TagBasisService | None = None,
+        progress: ProgressBoard | None = None,
     ) -> None:
         self._uow_factory = unit_of_work_factory
         self._plan_item = plan_item
@@ -114,6 +123,7 @@ class ProcessItem:
         self._library_root = Path(library_root)
         self._events = events or EventBus()
         self._tag_basis = tag_basis_service or TagBasisService(resolve_item)
+        self._progress = progress if progress is not None else ProgressBoard()
         self._cancel_events: dict[str, asyncio.Event] = {}
 
     @property
@@ -123,6 +133,10 @@ class ProcessItem:
     @property
     def plan_item(self) -> PlanItem:
         return self._plan_item
+
+    @property
+    def progress_board(self) -> ProgressBoard:
+        return self._progress
 
     async def plan(self, source: SourceRef, options: RunOptions | None = None) -> PlanView:
         """Build the side-effect-free plan for ``source``."""
@@ -156,12 +170,55 @@ class ProcessItem:
             run = await uow.runs.create_run(opts.profile, opts.mode, status=RunStatus.PLANNED)
         cancel = asyncio.Event()
         self._cancel_events[str(run.id)] = cancel
+        label = _plan_label(plan, source)
+        tracker = self._single_tracker(run.id, label)
+        reports: list[HandlerReport] = []
         self._publish_event(EventType.RUN_STARTED, run.id, status=RunStatus.PLANNED.value)
         try:
             await self._set_run_status(run.id, RunStatus.RUNNING, started=True)
-            item_id, acquire_reused = await self._acquire_for_run(run.id, source, plan, opts)
+            tracker.stage("plan", message="planned")
+            reports.append(
+                self._finish_stage(
+                    tracker,
+                    "plan",
+                    utc_now(),
+                    time.monotonic(),
+                    summary=f"{len(plan.candidates)} candidate(s)",
+                )
+            )
+            tracker.stage("acquire", message="starting download")
+            acquire_started_at = utc_now()
+            acquire_started = time.monotonic()
+            try:
+                item_id, acquire_reused = await self._acquire_for_run(
+                    run.id,
+                    source,
+                    plan,
+                    opts,
+                    progress=tracker.percent,
+                )
+            except BaseException:
+                tracker.failed("acquisition failed")
+                raise
             if item_id is None:  # pragma: no cover - defensive
                 raise UnsupportedSource("source could not be acquired")
+            tracker.bind(item_id=item_id)
+            acquire_summary, acquire_details = await self._acquire_summary(
+                item_id,
+                reused=acquire_reused,
+            )
+            reports.append(
+                self._finish_stage(
+                    tracker,
+                    "acquire",
+                    acquire_started_at,
+                    acquire_started,
+                    summary=acquire_summary,
+                    details=acquire_details,
+                    status=(HandlerStatus.CACHED if acquire_reused else HandlerStatus.SUCCEEDED),
+                    cache_hit=acquire_reused,
+                )
+            )
             await self._set_run_item(run.id, item_id, RunItemStatus.RUNNING)
             result = await self._continue_item(
                 run.id,
@@ -169,9 +226,13 @@ class ProcessItem:
                 opts,
                 acquire_cached=acquire_reused,
                 cancel=cancel,
+                tracker=tracker,
+                handler_reports=reports,
             )
             await self._set_run_status(run.id, RunStatus.COMPLETED, finished=True)
             await self._set_run_item(run.id, item_id, RunItemStatus.SUCCEEDED)
+            output = result.get("output_paths", ())
+            tracker.done(output[0] if output else None)
             self._publish_event(
                 EventType.RUN_FINISHED,
                 run.id,
@@ -180,12 +241,15 @@ class ProcessItem:
             )
             return await self._build_result(run.id, result)
         except asyncio.CancelledError:
+            tracker.failed("cancelled by user")
             await self._cancel_run(run.id, "cancelled by user")
             raise
         except TrackForgeError as exc:
+            tracker.failed(exc.message)
             await self._mark_failed(run.id, exc)
             raise
         except Exception as exc:
+            tracker.failed(str(exc) or type(exc).__name__)
             await self._mark_failed(run.id, exc)
             raise
         finally:
@@ -197,6 +261,7 @@ class ProcessItem:
         options: RunOptions | None = None,
         *,
         collection: CollectionItemContext | None = None,
+        tracker: ProgressTracker | None = None,
     ) -> RunResult:
         """Run the remaining pipeline for an already acquired item."""
 
@@ -212,6 +277,37 @@ class ProcessItem:
             await uow.runs.add_item(run.id, item_id, status=RunItemStatus.RUNNING)
         cancel = asyncio.Event()
         self._cancel_events[str(run.id)] = cancel
+        if tracker is None:
+            tracker = self._single_tracker(run.id, _item_label(item_id, collection))
+        reports: list[HandlerReport] = []
+        tracker.stage("plan", message="existing item")
+        reports.append(
+            self._finish_stage(
+                tracker,
+                "plan",
+                utc_now(),
+                time.monotonic(),
+                summary="existing item",
+            )
+        )
+        acquire_cached = item.media_id is not None
+        tracker.stage("acquire", message="existing acquisition")
+        acquire_summary, acquire_details = await self._acquire_summary(
+            item_id,
+            reused=True,
+        )
+        reports.append(
+            self._finish_stage(
+                tracker,
+                "acquire",
+                utc_now(),
+                time.monotonic(),
+                summary=acquire_summary,
+                details=acquire_details,
+                status=HandlerStatus.CACHED if acquire_cached else HandlerStatus.SUCCEEDED,
+                cache_hit=acquire_cached,
+            )
+        )
         self._publish_event(EventType.RUN_STARTED, run.id, item_id=item_id)
         try:
             await self._set_run_status(run.id, RunStatus.RUNNING, started=True)
@@ -219,12 +315,16 @@ class ProcessItem:
                 run.id,
                 item_id,
                 opts,
-                acquire_cached=item.media_id is not None,
+                acquire_cached=acquire_cached,
                 cancel=cancel,
                 collection=collection,
+                tracker=tracker,
+                handler_reports=reports,
             )
             await self._set_run_status(run.id, RunStatus.COMPLETED, finished=True)
             await self._set_run_item(run.id, item_id, RunItemStatus.SUCCEEDED)
+            output = result.get("output_paths", ())
+            tracker.done(output[0] if output else None)
             self._publish_event(
                 EventType.RUN_FINISHED,
                 run.id,
@@ -233,12 +333,15 @@ class ProcessItem:
             )
             return await self._build_result(run.id, result)
         except asyncio.CancelledError:
+            tracker.failed("cancelled by user")
             await self._cancel_run(run.id, "cancelled by user")
             raise
         except TrackForgeError as exc:
+            tracker.failed(exc.message)
             await self._mark_failed(run.id, exc)
             raise
         except Exception as exc:
+            tracker.failed(str(exc) or type(exc).__name__)
             await self._mark_failed(run.id, exc)
             raise
         finally:
@@ -251,6 +354,7 @@ class ProcessItem:
         *,
         collection: CollectionItemContext | None = None,
         on_acquired: Callable[[ItemId], Awaitable[None]] | None = None,
+        tracker: ProgressTracker | None = None,
     ) -> RunResult | PlanView:
         """Acquire and process one already-enumerated collection candidate."""
 
@@ -261,15 +365,51 @@ class ProcessItem:
             run = await uow.runs.create_run(opts.profile, opts.mode, status=RunStatus.PLANNED)
         cancel = asyncio.Event()
         self._cancel_events[str(run.id)] = cancel
+        if tracker is None:
+            tracker = self._single_tracker(run.id, _candidate_label(candidate))
+        reports: list[HandlerReport] = []
+        tracker.stage("plan", message="candidate planned")
+        reports.append(
+            self._finish_stage(
+                tracker,
+                "plan",
+                utc_now(),
+                time.monotonic(),
+                summary="candidate planned",
+            )
+        )
         self._publish_event(EventType.RUN_STARTED, run.id, status=RunStatus.PLANNED.value)
         try:
             await self._set_run_status(run.id, RunStatus.RUNNING, started=True)
-            item_id = await self._acquire_candidate_for_run(
-                run.id,
-                candidate,
-                opts,
-                collection=collection,
-                on_acquired=on_acquired,
+            tracker.stage("acquire", message="starting download")
+            acquire_started_at = utc_now()
+            acquire_started = time.monotonic()
+            try:
+                item_id = await self._acquire_candidate_for_run(
+                    run.id,
+                    candidate,
+                    opts,
+                    collection=collection,
+                    on_acquired=on_acquired,
+                    progress=tracker.percent,
+                )
+            except BaseException:
+                tracker.failed("acquisition failed")
+                raise
+            tracker.bind(item_id=item_id)
+            acquire_summary, acquire_details = await self._acquire_summary(
+                item_id,
+                reused=False,
+            )
+            reports.append(
+                self._finish_stage(
+                    tracker,
+                    "acquire",
+                    acquire_started_at,
+                    acquire_started,
+                    summary=acquire_summary,
+                    details=acquire_details,
+                )
             )
             await self._set_run_item(run.id, item_id, RunItemStatus.RUNNING)
             result = await self._continue_item(
@@ -279,9 +419,13 @@ class ProcessItem:
                 acquire_cached=False,
                 cancel=cancel,
                 collection=collection,
+                tracker=tracker,
+                handler_reports=reports,
             )
             await self._set_run_status(run.id, RunStatus.COMPLETED, finished=True)
             await self._set_run_item(run.id, item_id, RunItemStatus.SUCCEEDED)
+            output = result.get("output_paths", ())
+            tracker.done(output[0] if output else None)
             self._publish_event(
                 EventType.RUN_FINISHED,
                 run.id,
@@ -290,12 +434,15 @@ class ProcessItem:
             )
             return await self._build_result(run.id, result)
         except asyncio.CancelledError:
+            tracker.failed("cancelled by user")
             await self._cancel_run(run.id, "cancelled by user")
             raise
         except TrackForgeError as exc:
+            tracker.failed(exc.message)
             await self._mark_failed(run.id, exc)
             raise
         except Exception as exc:
+            tracker.failed(str(exc) or type(exc).__name__)
             await self._mark_failed(run.id, exc)
             raise
         finally:
@@ -309,6 +456,7 @@ class ProcessItem:
         *,
         collection: CollectionItemContext | None,
         on_acquired: Callable[[ItemId], Awaitable[None]] | None,
+        progress: Callable[[float, str | None], None] | None = None,
     ) -> ItemId:
         selected = _candidate_with_format(candidate, options.format_id)
         acquired = await self._acquire_item.acquire(
@@ -317,6 +465,7 @@ class ProcessItem:
                 format_id=options.format_id,
                 offline=options.offline,
                 force="acquire" in options.force_steps,
+                progress=progress,
             ),
             self._acquirers,
         )
@@ -423,6 +572,8 @@ class ProcessItem:
         source: SourceRef,
         plan: PlanView,
         options: RunOptions,
+        *,
+        progress: Callable[[float, str | None], None] | None = None,
     ) -> tuple[ItemId | None, bool]:
         reusable = None
         selected_format = options.format_id
@@ -443,6 +594,7 @@ class ProcessItem:
                 format_id=options.format_id,
                 offline=options.offline,
                 force="acquire" in options.force_steps,
+                progress=progress,
             ),
             self._acquirers,
         )
@@ -537,7 +689,12 @@ class ProcessItem:
         acquire_cached: bool,
         cancel: asyncio.Event,
         collection: CollectionItemContext | None = None,
+        tracker: ProgressTracker | None = None,
+        handler_reports: list[HandlerReport] | None = None,
     ) -> dict[str, Any]:
+        reports = handler_reports if handler_reports is not None else []
+        if tracker is None:
+            tracker = self._single_tracker(run_id, str(item_id))
         steps = await self._ensure_steps(run_id, item_id)
         cached_steps: list[str] = []
         observation_warnings: list[str] = []
@@ -563,6 +720,13 @@ class ProcessItem:
                     user_action="Import the source again.",
                     context={"item_id": item_id},
                 )
+            intakes = await uow.intakes.find_by_item(item_id)
+            is_url_source = any(isinstance(intake.source_ref, Url) for intake in intakes)
+
+        observe_started_at = utc_now()
+        observe_started = time.monotonic()
+        if tracker is not None:
+            tracker.stage("observe", message="observe")
         if (
             item.status is ItemStatus.ACQUIRED
             or "observe" in options.force_steps
@@ -577,9 +741,16 @@ class ProcessItem:
                     refresh=options.refresh,
                     enabled=options.enabled,
                     disabled=options.disabled,
+                    progress=tracker,
+                    progress_context=(tracker.context if tracker is not None else None),
                 ),
             )
-            observation_warnings.extend(warning.message for warning in observation.warnings)
+            reports.extend(observation.step_reports)
+            observation_warnings.extend(
+                warning.message
+                for warning in observation.warnings
+                if not (is_url_source and warning.code == "path_unavailable")
+            )
             await self._finish_step(steps["observe"], StepStatus.SUCCEEDED)
             self._publish_event(
                 EventType.STEP_FINISHED,
@@ -587,35 +758,89 @@ class ProcessItem:
                 item_id=item_id,
                 capability="observe",
             )
+            reports.append(
+                self._finish_stage(
+                    tracker,
+                    "observe",
+                    observe_started_at,
+                    observe_started,
+                    summary=(
+                        f"{len(observation.steps)} capability step(s), "
+                        f"{len(observation.artifacts)} artifact(s)"
+                    ),
+                    details={
+                        "steps": len(observation.steps),
+                        "artifacts": len(observation.artifacts),
+                    },
+                    artifacts=tuple(artifact.type for artifact in observation.artifacts),
+                )
+            )
         else:
             await self._finish_step(steps["observe"], StepStatus.CACHED)
             cached_steps.append("observe")
+            reports.append(
+                self._finish_stage(
+                    tracker,
+                    "observe",
+                    observe_started_at,
+                    observe_started,
+                    summary="existing observations reused",
+                    status=HandlerStatus.CACHED,
+                    cache_hit=True,
+                )
+            )
 
+        interpret_started_at = utc_now()
+        interpret_started = time.monotonic()
+        if tracker is not None:
+            tracker.stage("interpret", message="interpret")
         if (
             item.status in {ItemStatus.ACQUIRED, ItemStatus.OBSERVED}
             or "interpret" in options.force_steps
             or options.refresh
         ):
             self._check_cancelled(cancel)
-            await self._run_stage(
+            interpretation = await self._run_stage(
                 steps["interpret"],
                 self._interpret_item.interpret(item_id),
             )
             await self._finish_step(steps["interpret"], StepStatus.SUCCEEDED)
+            reports.append(
+                self._finish_stage(
+                    tracker,
+                    "interpret",
+                    interpret_started_at,
+                    interpret_started,
+                    summary=_interpretation_summary(interpretation),
+                    details={"claims": len(interpretation.claims)},
+                    warnings=interpretation.warnings,
+                )
+            )
         else:
             await self._finish_step(steps["interpret"], StepStatus.CACHED)
             cached_steps.append("interpret")
+            reports.append(
+                self._finish_stage(
+                    tracker,
+                    "interpret",
+                    interpret_started_at,
+                    interpret_started,
+                    summary="existing interpretation reused",
+                    status=HandlerStatus.CACHED,
+                    cache_hit=True,
+                )
+            )
 
+        resolve_started_at = utc_now()
+        resolve_started = time.monotonic()
+        if tracker is not None:
+            tracker.stage("resolve", message="resolve")
         self._check_cancelled(cancel)
         resolved = await self._run_stage(
             steps["resolve"],
             self._resolve_item.resolve(item_id, options.mode),
         )
         await self._finish_step(steps["resolve"], StepStatus.SUCCEEDED)
-        warnings: list[str] = [
-            *dict.fromkeys(observation_warnings),
-            *resolved.warnings,
-        ]
         tag_basis: TagBasisApplication | None = None
         if collection is not None:
             self._check_cancelled(cancel)
@@ -626,10 +851,41 @@ class ProcessItem:
                 mode=options.mode,
             )
             resolved = tag_basis.resolved
-            warnings.extend(tag_basis.warnings)
+        final_title = resolved.fields.get("title")
+        if tracker is not None and isinstance(final_title, str) and final_title.strip():
+            tracker.bind(label=final_title)
+        reports.append(
+            self._finish_stage(
+                tracker,
+                "resolve",
+                resolve_started_at,
+                resolve_started,
+                summary=(
+                    f"{len(resolved.fields)} field(s), {len(resolved.unknowns)} unknown "
+                    f"field(s), {len(resolved.warnings)} warning(s)"
+                ),
+                details={
+                    "fields": len(resolved.fields),
+                    "unknowns": len(resolved.unknowns),
+                },
+                warnings=resolved.warnings,
+            )
+        )
+        # Warnings are rebuilt from the final decision record: a stale
+        # "album/artist unknown" warning from the pre-tag-basis resolution
+        # must not survive into the CLI or sidecar.
+        warnings: list[str] = [
+            *observation_warnings,
+            *resolved.warnings,
+            *((*tag_basis.warnings,) if tag_basis is not None else ()),
+        ]
 
         render: Render | None = None
         bundle: OutputBundle | None = None
+        render_started_at = utc_now()
+        render_started = time.monotonic()
+        if tracker is not None:
+            tracker.stage("render", message="render")
         reuse = (
             None
             if collection is not None
@@ -639,6 +895,17 @@ class ProcessItem:
             render, bundle = reuse
             await self._finish_step(steps["render"], StepStatus.CACHED)
             cached_steps.append("render")
+            reports.append(
+                self._finish_stage(
+                    tracker,
+                    "render",
+                    render_started_at,
+                    render_started,
+                    summary=_render_summary(render, bundle),
+                    status=HandlerStatus.CACHED,
+                    cache_hit=True,
+                )
+            )
         else:
             self._check_cancelled(cancel)
             render_options = RenderOptions(target_format=options.target_format)
@@ -654,14 +921,31 @@ class ProcessItem:
                     ),
                     tag_basis=(tag_basis.basis.value if tag_basis is not None else None),
                     tag_alternatives=(tag_basis.alternatives if tag_basis is not None else None),
+                    final_warnings=tuple(dict.fromkeys(warnings)),
                 ),
             )
             render, bundle = rendered.render, rendered.bundle
             warnings.extend(rendered.warnings)
             await self._finish_step(steps["render"], StepStatus.SUCCEEDED)
+            reports.append(
+                self._finish_stage(
+                    tracker,
+                    "render",
+                    render_started_at,
+                    render_started,
+                    summary=_render_summary(render, bundle),
+                    details={"target_format": rendered.render.target_format.value},
+                    artifacts=(str(rendered.bundle.id),),
+                    warnings=rendered.warnings,
+                )
+            )
         if bundle is None:  # pragma: no cover - defensive
             raise RenderFailed("render produced no bundle", context={"item_id": item_id})
 
+        publish_started_at = utc_now()
+        publish_started = time.monotonic()
+        if tracker is not None:
+            tracker.stage("publish", message="publish")
         self._check_cancelled(cancel)
         publish_options = options.publish
         if collection is not None:
@@ -686,6 +970,20 @@ class ProcessItem:
         )
         if publish_result.cache_hit:
             cached_steps.append("publish")
+        reports.append(
+            self._finish_stage(
+                tracker,
+                "publish",
+                publish_started_at,
+                publish_started,
+                summary=publish_result.path,
+                details={"path": publish_result.path},
+                status=(
+                    HandlerStatus.CACHED if publish_result.cache_hit else HandlerStatus.SUCCEEDED
+                ),
+                cache_hit=publish_result.cache_hit,
+            )
+        )
         return {
             "item_id": item_id,
             "cached_steps": cached_steps,
@@ -696,7 +994,93 @@ class ProcessItem:
             "render": render,
             "tag_basis": tag_basis,
             "collection": collection,
+            "handler_reports": tuple(reports),
         }
+
+    def _single_tracker(self, run_id: RunId, label: str) -> ProgressTracker:
+        scope = f"run:{run_id}"
+        context = ProgressContext(
+            scope_id=scope,
+            collection_id=scope,
+            item_id=None,
+            position=1,
+            total=1,
+            label=label or "item 1",
+            stage="plan",
+        )
+        self._progress.start_collection(scope, (context.queued(),))
+        return ProgressTracker(self._progress, context)
+
+    def _finish_stage(
+        self,
+        tracker: ProgressTracker | None,
+        stage: str,
+        started_at: datetime,
+        started: float,
+        *,
+        summary: str,
+        details: Mapping[str, Any] | None = None,
+        status: HandlerStatus = HandlerStatus.SUCCEEDED,
+        artifacts: Sequence[str] = (),
+        warnings: Sequence[str] = (),
+        cache_hit: bool = False,
+    ) -> HandlerReport:
+        if tracker is None:  # pragma: no cover - callers always bind a tracker
+            tracker = self._single_tracker(RunId(str(started_at.timestamp())), summary)
+        progress_status = (
+            ProgressStatus.CACHED
+            if cache_hit or status is HandlerStatus.CACHED
+            else ProgressStatus.SKIPPED
+            if status is HandlerStatus.SKIPPED
+            else ProgressStatus.FAILED
+            if status is HandlerStatus.FAILED
+            else ProgressStatus.DONE
+        )
+        tracker.stage(stage, status=progress_status)
+        return tracker.report(
+            capability_id=stage,
+            status=status,
+            started_at=started_at,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            kind="stage",
+            stage=stage,
+            summary=summary,
+            details=details,
+            artifacts=artifacts,
+            warnings=warnings,
+            cache_hit=cache_hit,
+        )
+
+    async def _acquire_summary(
+        self,
+        item_id: ItemId,
+        *,
+        reused: bool,
+    ) -> tuple[str, dict[str, Any]]:
+        async with self._uow_factory() as uow:
+            item = await uow.items.get(item_id)
+            media = (
+                await uow.media.get(item.media_id)
+                if item is not None and item.media_id is not None
+                else None
+            )
+        if media is None:
+            return ("reused acquisition" if reused else "acquired", {})
+        size_mb = media.size_bytes / 1_000_000
+        duration = media.duration_seconds
+        parts = [media.container.value, f"{size_mb:.1f} MB"]
+        if duration is not None:
+            parts.append(f"{duration:.1f} s")
+        summary = ", ".join(parts)
+        details: dict[str, Any] = {
+            "container": media.container.value,
+            "size_bytes": media.size_bytes,
+        }
+        if duration is not None:
+            details["duration_seconds"] = round(float(duration), 3)
+        if reused:
+            details["reused"] = True
+        return summary, details
 
     async def _reusable_render(
         self,
@@ -960,9 +1344,71 @@ class ProcessItem:
             items=tuple(item_views),
             warnings=tuple(dict.fromkeys(warnings)),
             output_paths=tuple(dict.fromkeys(output_paths)),
-            steps=tuple(_step_view(step) for step in steps),
+            steps=_step_views(steps, tuple(state.get("handler_reports", ()))),
             cache_hit=bool(state.get("cached_steps")),
+            handler_reports=tuple(state.get("handler_reports", ())),
         )
+
+
+def _plan_label(plan: PlanView, source: SourceRef) -> str:
+    if plan.candidates and plan.candidates[0].title.strip():
+        return plan.candidates[0].title
+    if isinstance(source, LocalPath):
+        return Path(source.path).name or source.path
+    if isinstance(source, Url):
+        return _candidate_label(plan.candidates[0]) if plan.candidates else source.url
+    return type(source).__name__
+
+
+def _candidate_label(candidate: Candidate, position: int = 1) -> str:
+    title = candidate.title.strip() if isinstance(candidate.title, str) else ""
+    if title:
+        return title
+    source_ref = candidate.source_ref
+    if isinstance(source_ref, LocalPath):
+        name = Path(source_ref.path).name
+        if name:
+            return name
+    external_id = getattr(candidate, "external_id", "")
+    if isinstance(external_id, str) and external_id.strip():
+        return external_id
+    return f"item {position}"
+
+
+def _item_label(item_id: ItemId, collection: CollectionItemContext | None) -> str:
+    if collection is not None:
+        return f"{collection.title} #{collection.position}"
+    return str(item_id)
+
+
+def _interpretation_summary(interpretation: Any) -> str:
+    claims = len(getattr(interpretation, "claims", ()) or ())
+    derivative = getattr(interpretation, "derivative", None)
+    names: list[str] = []
+    if isinstance(derivative, Mapping):
+        hypotheses = derivative.get("hypotheses")
+        if isinstance(hypotheses, list) and hypotheses:
+            first = hypotheses[0]
+            if isinstance(first, Mapping):
+                transformations = first.get("transformations")
+                if isinstance(transformations, list):
+                    names.extend(str(item).strip() for item in transformations if str(item).strip())
+                elif isinstance(transformations, str) and transformations.strip():
+                    names.append(transformations.strip())
+        if not names:
+            raw = derivative.get("derivative") or derivative.get("label") or derivative.get("type")
+            if isinstance(raw, str) and raw.strip():
+                names.append(raw.strip())
+    elif isinstance(derivative, str) and derivative.strip():
+        names.append(derivative.strip())
+    if names:
+        return f"{claims} claim(s), derivative={names[0]}"
+    return f"{claims} claim(s)"
+
+
+def _render_summary(render: Render, bundle: OutputBundle) -> str:
+    target = getattr(render.target_format, "value", render.target_format)
+    return f"{target}, bundle {bundle.bundle_hash[:4]}…"
 
 
 def _sidecar_collection(
@@ -1122,11 +1568,34 @@ def _plan_failure(plan: PlanView) -> TrackForgeError:
     return CandidateNotFound(reason, context={"warnings": list(plan.warnings)})
 
 
-def _step_view(step: StepRecord) -> RunStepView:
+def _step_views(
+    steps: Sequence[StepRecord], reports: Sequence[HandlerReport]
+) -> tuple[RunStepView, ...]:
+    summaries = {report.capability_id: report for report in reports}
+    return tuple(
+        _step_view(
+            step,
+            report=summaries.get(step.capability_id),
+        )
+        for step in steps
+    )
+
+
+def _step_view(
+    step: StepRecord,
+    *,
+    report: HandlerReport | None = None,
+) -> RunStepView:
     warnings = tuple(
         warning if isinstance(warning, str) else str(warning.get("message", warning))
         for warning in step.warnings
     )
+    duration_ms: int | None = None
+    if step.started_at is not None and step.finished_at is not None:
+        duration_ms = max(
+            0,
+            int((step.finished_at - step.started_at).total_seconds() * 1000),
+        )
     return RunStepView(
         capability_id=step.capability_id,
         status=step.status,
@@ -1134,6 +1603,9 @@ def _step_view(step: StepRecord) -> RunStepView:
         cache_key=step.cache_key,
         error=step.error,
         warnings=warnings,
+        duration_ms=report.duration_ms if report is not None else duration_ms,
+        summary=report.summary if report is not None else None,
+        details=dict(report.details) if report is not None else {},
     )
 
 

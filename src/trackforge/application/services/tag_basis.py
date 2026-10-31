@@ -172,13 +172,17 @@ def plan_tag_basis(
                 )
             )
         if cover_hash is not None:
-            playlist_overrides.append(
-                TagBasisOverride(
-                    "artwork",
-                    cover_hash,
-                    "playlist cover supplies artwork under playlist_first",
+            # Per-item artwork (release cover or source thumbnail) is more
+            # specific than the playlist cover.  Use the playlist cover only
+            # as a fallback for items that have no cover of their own.
+            if _blank(current.get("artwork")):
+                playlist_overrides.append(
+                    TagBasisOverride(
+                        "artwork",
+                        cover_hash,
+                        "playlist cover supplies artwork when the item has none",
+                    )
                 )
-            )
         elif cover:
             warnings.append("tag_basis:playlist_first: playlist cover is not a stored CAS artifact")
         else:
@@ -444,13 +448,19 @@ def _context_date(context: CollectionItemContext) -> str | None:
 
 
 def _context_cover(context: CollectionItemContext) -> str | None:
-    for field in ("cover", "artwork", "cover_url"):
-        for claim in reversed(context.context_claims):
-            if claim.field.casefold() == field and isinstance(claim.value, str):
-                value = claim.value.strip()
-                if value:
-                    return value
-    return None
+    fallback: str | None = None
+    for claim in reversed(context.context_claims):
+        if claim.field.casefold() not in {"cover", "artwork", "cover_url"}:
+            continue
+        if not isinstance(claim.value, str):
+            continue
+        value = claim.value.strip()
+        if not value:
+            continue
+        if _is_sha256(value):
+            return value
+        fallback = fallback or value
+    return fallback
 
 
 def _is_sha256(value: str | None) -> bool:

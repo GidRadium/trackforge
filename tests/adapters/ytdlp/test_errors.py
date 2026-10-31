@@ -45,6 +45,13 @@ def test_error_mapping(stderr: str, expected: type[Exception]) -> None:
     assert "secret" not in serialized
 
 
+def test_transient_403_login_error_is_retryable() -> None:
+    error = map_error("ERROR: unable to download video data: HTTP Error 403: Forbidden")
+
+    assert isinstance(error, LoginRequired)
+    assert is_retryable(error) is True
+
+
 def test_login_and_drm_are_not_retryable() -> None:
     login = map_error("Sign in to confirm you're not a bot")
     drm = map_error("DRM protected")

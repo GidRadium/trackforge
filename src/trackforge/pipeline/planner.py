@@ -20,6 +20,7 @@ from trackforge.domain.model.capabilities import (
     CapabilityManifest,
     Cost,
     ProviderChain,
+    SideEffect,
 )
 from trackforge.pipeline.budget import Budget
 from trackforge.pipeline.dag import (
@@ -268,6 +269,7 @@ class Plan:
                     "capability_id": node.capability_id,
                     "capability_version": node.capability_version,
                     "requires": list(node.requires_keys),
+                    "optional_requires": list(node.optional_requires_keys),
                     "provides": list(node.provides_keys),
                     "fallback_group": node.fallback_group,
                     "optional": node.optional,
@@ -505,6 +507,44 @@ class Planner:
                     if provider not in selected_ids:
                         selected_ids.append(provider)
 
+        # Optional inputs are included only when they can actually be
+        # produced (or already are plan inputs).  A local source-metadata
+        # provider is cheap and deterministic, so it may be pulled in for a
+        # consumer that declares it optional; network providers are only
+        # wired when their artifact was requested explicitly.
+        requested_keys = set(all_types)
+
+        def optional_provider_feasible(provider: str) -> bool:
+            candidate = caps[provider]
+            if candidate.side_effects is SideEffect.NETWORK and optional_key not in requested_keys:
+                return False
+            for optional_requirement in candidate.requires:
+                dependency = artifact_key(optional_requirement)
+                if dependency in input_keys or dependency in requested_keys:
+                    continue
+                if any(item in selected_ids for item in chain_for(dependency)):
+                    continue
+                return False
+            return True
+
+        index = 0
+        while index < len(selected_ids):
+            capability_id = selected_ids[index]
+            index += 1
+            manifest = caps[capability_id]
+            for optional_requirement in manifest.optional_requires:
+                optional_key = artifact_key(optional_requirement)
+                if optional_key in input_keys:
+                    continue
+                if optional_key not in all_types:
+                    all_types.append(optional_key)
+                for provider in chain_for(optional_key):
+                    if provider in selected_ids:
+                        continue
+                    if not optional_provider_feasible(provider):
+                        continue
+                    selected_ids.append(provider)
+
         # Drop optional capabilities whose dependencies cannot be satisfied.
         changed = True
         while changed:
@@ -649,6 +689,7 @@ class Planner:
                     capability_id=manifest.id,
                     capability_version=manifest.version,
                     requires=manifest.requires,
+                    optional_requires=manifest.optional_requires,
                     provides=manifest.provides,
                     fallback_group=group,
                     optional=capability_id not in required_ids,
@@ -676,7 +717,7 @@ class Planner:
         final_id_set = set(final_ids)
         for capability_id in final_ids:
             manifest = caps[capability_id]
-            for requirement in manifest.requires:
+            for requirement in (*manifest.requires, *manifest.optional_requires):
                 req_key = artifact_key(requirement)
                 if req_key in input_keys:
                     continue

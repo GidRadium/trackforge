@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, NoReturn, TypeVar
 
@@ -11,6 +12,7 @@ import typer
 
 from trackforge import __version__
 from trackforge.application.dto.results import RunOptions
+from trackforge.application.ports.publishing import PublishOptions
 from trackforge.config import ConfigError, TrackForgeConfig
 from trackforge.domain.errors import (
     AcquisitionFailed,
@@ -120,6 +122,7 @@ def build_run_options(
     format_id: str | None = None,
     offline: bool = False,
     refresh: bool = False,
+    sidecar: bool | None = None,
 ) -> RunOptions:
     """Translate CLI flags into a validated ``RunOptions`` value."""
 
@@ -129,6 +132,9 @@ def build_run_options(
             "--auto and --review are mutually exclusive",
             user_action="Choose one review mode.",
         )
+    publish = PublishOptions()
+    if sidecar is not None:
+        publish = replace(publish, sidecar=sidecar)
     return RunOptions(
         profile=profile or config.profile,
         mode=mode or config.mode,
@@ -142,6 +148,7 @@ def build_run_options(
         dry_run=dry_run,
         target_format=target_format,  # type: ignore[arg-type]
         format_id=format_id,
+        publish=publish,
     )
 
 

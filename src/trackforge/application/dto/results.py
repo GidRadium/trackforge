@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from trackforge.application.dto.db import RunItemStatus, RunStatus, StepStatus
+from trackforge.application.dto.progress import HandlerReport
 from trackforge.application.ports.publishing import (
     DEFAULT_NAMING_TEMPLATE,
     PublishOptions,
@@ -188,6 +189,9 @@ class RunStepView:
     cache_key: str | None = None
     error: dict[str, Any] | None = None
     warnings: tuple[str, ...] = ()
+    duration_ms: int | None = None
+    summary: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -196,6 +200,7 @@ class RunStepView:
             coerce_enum(self.status, StepStatus, "status"),
         )
         object.__setattr__(self, "warnings", tuple(self.warnings))
+        object.__setattr__(self, "details", dict(self.details))
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +215,7 @@ class RunResult:
     output_paths: tuple[str, ...] = ()
     steps: tuple[RunStepView, ...] = ()
     cache_hit: bool = False
+    handler_reports: tuple[HandlerReport, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -222,6 +228,7 @@ class RunResult:
         object.__setattr__(self, "errors", tuple(self.errors))
         object.__setattr__(self, "output_paths", tuple(self.output_paths))
         object.__setattr__(self, "steps", tuple(self.steps))
+        object.__setattr__(self, "handler_reports", tuple(self.handler_reports))
 
     @property
     def succeeded(self) -> bool:

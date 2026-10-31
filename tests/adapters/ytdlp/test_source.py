@@ -55,7 +55,7 @@ async def test_resolve_youtube_maps_audio_formats_only(
     assert all(fmt.container != "mp4" for fmt in candidate.formats)
     assert candidate.extra["selected_format_id"] == "140"
     assert candidate.extra["extractor"] == "youtube"
-    assert candidate.extra["webpage_url"] == "https://www.youtube.com/watch"
+    assert candidate.extra["webpage_url"] == "https://www.youtube.com/watch?v=demo"
     assert len(candidate.thumbnails) == 2
 
 
@@ -212,7 +212,7 @@ def test_source_metadata_is_normalized_and_cookie_keys_removed() -> None:
     assert metadata.duration_seconds == 2.0
     assert metadata.thumbnails[0].width == 480
     assert metadata.chapters[0].title == "Fixture chapter"
-    assert metadata.webpage_url == "https://www.youtube.com/watch"
+    assert metadata.webpage_url == "https://www.youtube.com/watch?v=demo"
 
 
 @pytest.mark.asyncio

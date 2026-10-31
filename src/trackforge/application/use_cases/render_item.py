@@ -125,6 +125,7 @@ class RenderItem:
         collection: SidecarCollection | None = None,
         tag_basis: str | None = None,
         tag_alternatives: Mapping[str, Any] | None = None,
+        final_warnings: Sequence[str] = (),
     ) -> RenderResult:
         """Render, tag, verify, and persist one output bundle."""
 
@@ -174,7 +175,9 @@ class RenderItem:
 
         resolved = _resolved_metadata(record)
         derivative = _derivatives(claims)
-        warnings: list[str] = list(resolved.warnings)
+        warnings: list[str] = list(
+            dict.fromkeys((*resolved.warnings, *(str(item) for item in final_warnings)))
+        )
         if cover_path is None and self._cas is not None:
             artwork = resolved.fields.get("artwork")
             if isinstance(artwork, str) and is_sha256_hex(artwork):

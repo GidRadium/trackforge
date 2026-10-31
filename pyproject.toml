@@ -39,6 +39,9 @@ ranker = [
 asr = [
     "faster-whisper>=1.1,<2",
     "huggingface-hub>=0.24,<1",
+    # Hugging Face Hub downloads through requests; SOCKS proxies need PySocks
+    # even when httpx already has socksio installed.
+    "pysocks>=1.7,<2",
     # faster-whisper 1.2.x passes ``metadata_errors`` to av.open; PyAV 19
     # removed that keyword, so keep the decoder on the compatible series.
     "av>=11,<16",

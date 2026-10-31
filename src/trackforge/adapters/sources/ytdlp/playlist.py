@@ -128,9 +128,8 @@ class YtDlpPlaylistSource(YtDlpSource):
         if not isinstance(raw_entries, (list, tuple)):
             raw_entries = []
         start_fallback = _optional_positive_int(options.get("playlist_start")) or 1
-        position_hints = [
-            int(item) for item in _playlist_items(options.get("playlist_items")) if item.isdigit()
-        ]
+        requested_positions = _requested_positions(options)
+        position_hints = list(requested_positions)
         seen_positions: set[int] = set()
         for index, raw_entry in enumerate(raw_entries):
             if not isinstance(raw_entry, Mapping):
@@ -261,6 +260,35 @@ def _entry_position(entry: Mapping[str, Any], *, fallback: int) -> int:
     if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
         return value
     return max(1, fallback)
+
+
+def _requested_positions(options: Mapping[str, Any]) -> tuple[int, ...]:
+    """Expand ``--playlist-items``/range into absolute source positions."""
+
+    result: list[int] = []
+    for spec in _playlist_items(options.get("playlist_items")):
+        if "-" in spec:
+            head, _, tail = spec.partition("-")
+            if head.strip().isdigit() and tail.strip().isdigit():
+                start, end = int(head.strip()), int(tail.strip())
+                if 1 <= start <= end:
+                    result.extend(range(start, end + 1))
+                    continue
+        if spec.isdigit() and int(spec) >= 1:
+            result.append(int(spec))
+    if result:
+        return tuple(dict.fromkeys(result))
+    range_start = _optional_positive_int(options.get("playlist_start"))
+    range_end = _optional_positive_int(options.get("playlist_end"))
+    if range_start is not None:
+        return tuple(
+            range(
+                range_start,
+                (range_end if range_end is not None and range_end >= range_start else range_start)
+                + 1,
+            )
+        )
+    return ()
 
 
 def _playlist_context_claims(

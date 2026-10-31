@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -282,3 +284,21 @@ async def test_invalid_language_becomes_null_evidence(tmp_path: Path) -> None:
     transcript = AsrTranscript.model_validate(result.artifacts[0].payload)
     assert transcript.language is None
     assert "asr_language_unknown" in {warning.code for warning in result.warnings}
+
+
+@pytest.mark.asyncio
+async def test_whisper_reports_measured_segment_progress(tmp_path: Path) -> None:
+    fake = _FakeModel([_segment("hello", 0.5, 2.0), _segment("world", 2.0, 4.0)])
+    observer = _observer(_manager(tmp_path), fake)
+    events: list[tuple[float, str | None]] = []
+    ctx = replace(_context(tmp_path), report_progress=lambda f, m: events.append((f, m)))
+
+    await observer.run(ctx)
+    await asyncio.sleep(0)
+
+    assert events
+    assert all(0.0 <= fraction <= 1.0 for fraction, _message in events)
+    measured = [event for event in events if event[1] and "/ 42s" in event[1]]
+    assert measured
+    assert measured[0][0] == pytest.approx(2.0 / 42.0)
+    assert events[-1] == (1.0, "transcription complete")

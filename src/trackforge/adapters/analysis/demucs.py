@@ -260,9 +260,10 @@ class DemucsObserver:
                 self._warning("model_missing", exc.message, user_action=exc.user_action)
             )
 
-        ctx.progress(0.05, "loading Demucs model")
+        ctx.note("loading Demucs model")
         started = time.perf_counter()
         try:
+            ctx.note("separating stems (no measured progress)")
             separation = await asyncio.to_thread(self._separate, path, model_path)
         except MemoryError:
             self._release_model()
@@ -291,10 +292,26 @@ class DemucsObserver:
                 )
             )
         elapsed = time.perf_counter() - started
-        ctx.progress(1.0, "separation complete")
 
         warnings: list[StepWarning] = []
         total_energy = sum(float(separation.energies[name]) for name in _REQUIRED_SOURCES)
+        shares = {
+            name: (float(separation.energies[name]) / total_energy * 100.0)
+            if total_energy > 0.0
+            else 0.0
+            for name in _REQUIRED_SOURCES
+        }
+        summary = ", ".join(
+            f"{name} {shares.get(name, 0.0):.1f}%" for name in ("vocals", "drums", "bass", "other")
+        )
+        details = {
+            "duration_seconds": separation.duration_seconds,
+            "segment": separation.segment or self._segment,
+            "energies": {
+                name: round(float(separation.energies[name]), 6) for name in _REQUIRED_SOURCES
+            },
+            "shares": {name: round(value, 1) for name, value in shares.items()},
+        }
         if total_energy <= 0.0:
             warnings.append(
                 self._warning(
@@ -333,8 +350,15 @@ class DemucsObserver:
                 warnings=tuple(warnings),
                 actual_cost=actual,
                 status=StepResultStatus.DEGRADED,
+                summary=summary,
+                details=details,
             )
-        return StepResult(artifacts=(draft,), actual_cost=actual)
+        return StepResult(
+            artifacts=(draft,),
+            actual_cost=actual,
+            summary=summary,
+            details=details,
+        )
 
     def _status_warning(self, info: ModelInfo) -> StepWarning:
         if info.status is ModelStatus.MISSING:

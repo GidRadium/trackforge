@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from trackforge.domain.model.capabilities import Cost
@@ -57,6 +58,11 @@ class AcquireOptions:
     format_id: str | None = None
     offline: bool = False
     force: bool = False
+    progress: Callable[[float, str | None], None] | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +80,8 @@ class ItemView:
     source_path: str
     reused_media: bool = False
     warnings: tuple[str, ...] = ()
+    container: str | None = None
+    duration_seconds: float | None = None
 
 
 __all__ = [

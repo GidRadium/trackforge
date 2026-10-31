@@ -110,7 +110,7 @@ async def test_explain_derived_title_lists_derivation_claims(
 
     view = await catalog_context.explain_item().explain(item_id, "title")
 
-    assert view.decision == "Song (Nightcore)"
+    assert view.decision == "Song"
     assert view.policy_id == "title.derivative"
     assert view.chosen_claim is not None
     assert view.chosen_claim.id == base.id

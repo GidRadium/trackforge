@@ -59,9 +59,21 @@ def test_playlist_first_maps_collection_context_without_touching_artist() -> Non
     assert fields["albumartist"] == "Fixture Owner"
     assert fields["track"] == 3
     assert fields["date"] == "2024-02-03"
-    assert fields["artwork"] == NEW_COVER
+    # The item already has a more specific cover; the playlist cover is only
+    # a fallback and must not produce an override for per-item artwork.
+    assert "artwork" not in fields
     assert "artist" not in fields
     assert plan.degraded is False
+
+
+def test_playlist_first_uses_playlist_cover_when_item_has_none() -> None:
+    plan = plan_tag_basis(
+        TagBasis.PLAYLIST_FIRST,
+        context(),
+        {"album": "Release Album", "albumartist": "Release Artist", "track": 1},
+    )
+
+    assert plan.fields["artwork"] == NEW_COVER
 
 
 def test_playlist_first_uses_various_artists_without_owner() -> None:

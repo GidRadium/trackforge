@@ -157,6 +157,52 @@ class TrackForgeConfig(BaseSettings):
         ge=0.0,
         validation_alias=AliasChoices("COLLECTION_MIN_SLEEP"),
     )
+    # Optional defaults for ``collection add``/``add``.  Explicit CLI flags
+    # always win; these values only fill omitted options.
+    download_playlist_start: int | None = Field(
+        default=None,
+        ge=1,
+        validation_alias=AliasChoices("DOWNLOAD_PLAYLIST_START"),
+    )
+    download_playlist_end: int | None = Field(
+        default=None,
+        ge=1,
+        validation_alias=AliasChoices("DOWNLOAD_PLAYLIST_END"),
+    )
+    download_playlist_items: str = Field(
+        default="",
+        validation_alias=AliasChoices("DOWNLOAD_PLAYLIST_ITEMS"),
+    )
+    download_skip: str = Field(
+        default="",
+        validation_alias=AliasChoices("DOWNLOAD_SKIP"),
+    )
+    download_format_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("DOWNLOAD_FORMAT_ID"),
+    )
+    download_auto: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("DOWNLOAD_AUTO"),
+    )
+    download_progress: Literal["auto", "rich", "plain", "off"] = Field(
+        default="auto",
+        validation_alias=AliasChoices("DOWNLOAD_PROGRESS"),
+    )
+    download_progress_interval: float = Field(
+        default=1.0,
+        ge=0.25,
+        le=10.0,
+        validation_alias=AliasChoices("DOWNLOAD_PROGRESS_INTERVAL"),
+    )
+    download_reports: Literal["auto", "full", "summary", "off"] = Field(
+        default="auto",
+        validation_alias=AliasChoices("DOWNLOAD_REPORTS"),
+    )
+    download_sidecar: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("DOWNLOAD_SIDECAR"),
+    )
     # External metadata providers are opt-in.  Configuring either credential
     # enables the network observers automatically; ``metadata_enabled`` is an
     # explicit switch for deployments that want the providers without a key.
@@ -195,6 +241,18 @@ class TrackForgeConfig(BaseSettings):
         default=1800.0,
         gt=0,
         validation_alias=AliasChoices("YTDLP_TIMEOUT_DOWNLOAD"),
+    )
+    ytdlp_download_retries: int = Field(
+        default=2,
+        ge=0,
+        le=10,
+        validation_alias=AliasChoices("YTDLP_DOWNLOAD_RETRIES"),
+    )
+    ytdlp_download_retry_delay: float = Field(
+        default=5.0,
+        ge=0.0,
+        le=300.0,
+        validation_alias=AliasChoices("YTDLP_DOWNLOAD_RETRY_DELAY"),
     )
     # Network proxies are opt-in per component.  Standard proxy environment
     # variables are intentionally ignored by the application; an empty value
@@ -670,7 +728,7 @@ def _load_toml_values(path: Path) -> dict[str, Any]:
             key="config",
         ) from None
 
-    supported = {"core", "llm", "ranker", "models", "privacy", "network"}
+    supported = {"core", "llm", "ranker", "models", "privacy", "network", "download"}
     unknown_sections = sorted(set(document) - supported)
     if unknown_sections:
         section = unknown_sections[0]
@@ -735,7 +793,13 @@ def _load_toml_values(path: Path) -> dict[str, Any]:
     nested_llm = network.pop("llm", None)
     nested_models = network.pop("models", None)
     _reject_unknown(network, set(), "network")
-    values.update(_network_values("ytdlp", nested_ytdlp, {"proxy", "sites", "cookies"}))
+    values.update(
+        _network_values(
+            "ytdlp",
+            nested_ytdlp,
+            {"proxy", "sites", "cookies", "download_retries", "download_retry_delay"},
+        )
+    )
     for name, nested in (
         ("metadata", nested_metadata),
         ("llm", nested_llm),
@@ -746,6 +810,25 @@ def _load_toml_values(path: Path) -> dict[str, Any]:
     privacy = _table(document, "privacy")
     _reject_unknown(privacy, {"send_text_to_cloud", "send_audio_to_cloud"}, "privacy")
     values.update(privacy)
+
+    download = _table(document, "download")
+    _reject_unknown(
+        download,
+        {
+            "playlist_start",
+            "playlist_end",
+            "playlist_items",
+            "skip",
+            "format_id",
+            "auto",
+            "progress",
+            "progress_interval",
+            "reports",
+            "sidecar",
+        },
+        "download",
+    )
+    values.update({f"download_{key}": value for key, value in download.items()})
     return values
 
 
@@ -779,6 +862,8 @@ def _network_values(
             "ytdlp_proxy": nested.get("proxy", ""),
             "ytdlp_site_proxies": dict(sites),
             "ytdlp_cookie_files": dict(cookies),
+            "ytdlp_download_retries": nested.get("download_retries", 2),
+            "ytdlp_download_retry_delay": nested.get("download_retry_delay", 5.0),
         }
     return {f"{name}_proxy": nested.get("proxy", "")}
 
@@ -813,6 +898,16 @@ _CORE_KEYS = {
     "offline",
     "tag_basis",
     "collection_min_sleep",
+    "download_playlist_start",
+    "download_playlist_end",
+    "download_playlist_items",
+    "download_skip",
+    "download_format_id",
+    "download_auto",
+    "download_progress",
+    "download_progress_interval",
+    "download_reports",
+    "download_sidecar",
     "metadata_enabled",
     "source_cover_enabled",
     "acoustid_api_key",
@@ -821,6 +916,8 @@ _CORE_KEYS = {
     "deno_binary",
     "ytdlp_timeout_metadata",
     "ytdlp_timeout_download",
+    "ytdlp_download_retries",
+    "ytdlp_download_retry_delay",
 }
 _LLM_KEYS = {
     "provider",

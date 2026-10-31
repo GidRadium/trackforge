@@ -38,9 +38,9 @@
 
 - **Локальный MVP (milestone):** Plans 01–09. Локальный файл → CAS → observations → claims/decisions → output с тегами, обложкой, sidecar → managed library. CLI `import`, `review`, `explain`, `doctor`.
 - **MVP-релиз (Q2: «один трек из любого источника»):** Plans 01–12. Добавляются один URL через `yt-dlp` и опциональные metadata providers (MusicBrainz/AcoustID/CAA/LRCLIB).
-- **Post-MVP:** Plans 14–18.1 — LLM/ranker, расширенный feedback, ASR/lyrics, Demucs/derivatives, плейлисты и follow-up качества метаданных.
+- **Post-MVP:** Plans 14–18.2 — LLM/ranker, расширенный feedback, ASR/lyrics, Demucs/derivatives, плейлисты, follow-up качества метаданных и live-progress/portable tags.
 - **Optional:** Plan 19 — локальный HTTP API; GUI осознанно `Deferred` до v1.1.
-- **Релиз:** Plan 20 — hardening, license/security audit, backup/GC, упаковка, smoke, v1.0. Планы 16–18.1 входят в релиз только при зелёном go/no-go; 19 не блокирует релиз.
+- **Релиз:** Plan 20 — hardening, license/security audit, backup/GC, упаковка, smoke, v1.0. Планы 16–18.2 входят в релиз только при зелёном go/no-go; 19 не блокирует релиз.
 
 ## 5. Статусы и типы
 
@@ -72,7 +72,8 @@
 | 16 | [ASR + lyrics](16-asr-lyrics.md) | Post-MVP | conditional | 12, 13, 14 | — (vocal path для 17) | L | faster-whisper, `asr.transcript.v1`, LRC/ELRC, merge |
 | 17 | [Demucs + derivatives](17-demucs-derivatives.md) | Post-MVP | conditional | 13, 14 | — | L | Stems features, vocal/derivative detector, opt-in `full` |
 | 18 | [Playlists/collections](18-playlists.md) | Post-MVP | conditional | 09, 11, 12 | 18.1 | L | Playlist → выбор → очередь → resume → подпапка; `tag_basis` |
-| 18.1 | [Metadata quality для реальных плейлистов](18.1-metadata-quality.md) | Post-MVP | ready | 12, 14, 18 | 18.2 (future), 20 | L | Clean title/artist, provider inputs, description lyrics, genre, derivative credits, playlist cover, warnings |
+| 18.1 | [Metadata quality для реальных плейлистов](18.1-metadata-quality.md) | Post-MVP | ready | 12, 14, 18 | 18.2, 20 | L | Clean title/artist, provider inputs, description lyrics, genre, derivative credits, playlist cover, warnings |
+| 18.2 | [Live progress, handler reports, portable tags](18.2-progress-reports-tags.md) | Post-MVP | ready | 18.1 | 19, 20 | L | In-place collection progress, per-handler reports, standard tag names, sidecar-only provenance |
 | 19 | [HTTP API (GUI deferred)](19-http-gui.md) | Optional | ready | 09, 15 | — | M | FastAPI/SSE поверх `AsyncTrackForge`, local token, без бизнес-логики |
 | 20 | [Hardening + release v1.0](20-release.md) | MVP | ready | 01–15; 16–18.1 conditional; 19 optional | релиз | L | Security/license audit, backup/GC, упаковка, smoke, CHANGELOG, v1.0 |
 
@@ -115,6 +116,7 @@ flowchart TD
     P12 --> P181[18.1 Metadata quality]
     P14 --> P181
     P18 --> P181
+    P181 --> P182[18.2 Progress + tags]
     P09 --> P19[19 HTTP API]
     P15 --> P19
     P01 --> P20[20 Release]
@@ -134,6 +136,7 @@ flowchart TD
     P17 -. conditional .-> P20
     P18 -. conditional .-> P20
     P181 -. conditional .-> P20
+    P182 -. conditional .-> P20
     P19 -. optional .-> P20
 ```
 
@@ -145,15 +148,15 @@ flowchart TD
 | [`00-vision.md`](../design/00-vision.md) | 01, 02, 05, 07, 09, 11, 20 | Инварианты evidence-driven, managed library, границы v1, релиз |
 | [`01-domain-model.md`](../design/01-domain-model.md) | 02, 06, 07, 08, 09, 15, 18 | Item/Media/Intake, claims/decisions, feedback, collection, sidecar |
 | [`02-architecture.md`](../design/02-architecture.md) | 01, 02, 03, 04, 05, 09, 11, 12, 14, 19, 20 | Слои, порты/адаптеры, composition root, GPL boundary |
-| [`03-pipeline.md`](../design/03-pipeline.md) | 03, 05, 06, 07, 08, 09, 14, 16, 17, 18, 18.1 | DAG, cache, resume, degradation, events, повторный запуск |
+| [`03-pipeline.md`](../design/03-pipeline.md) | 03, 05, 06, 07, 08, 09, 14, 16, 17, 18, 18.1, 18.2 | DAG, cache, resume, degradation, events, progress, повторный запуск |
 | [`04-storage.md`](../design/04-storage.md) | 03, 04, 08, 09, 15, 20 | CAS, artifacts, SQLite-схема, locks, sidecar, backup/GC |
 | [`05-sources.md`](../design/05-sources.md) | 06, 10, 11, 12, 18, 18.1 | LocalFileSource, yt-dlp, cookies, rate limits, playlists |
 | [`06-analysis.md`](../design/06-analysis.md) | 06, 07, 12, 13, 14, 16, 17 | Probe/tags/features, MB/AcoustID, Whisper, Demucs, ranker; Essentia deferred |
 | [`07-resolution.md`](../design/07-resolution.md) | 07, 09, 12, 14, 15, 18, 18.1 | Нормализация, стратегии, locks, LLM-режимы, playlist context |
-| [`08-metadata.md`](../design/08-metadata.md) | 08, 09, 12, 16, 17, 18.1 | Канонические поля, ID3/MP4/Vorbis, cover, LRC sidecar, naming |
-| [`09-interfaces.md`](../design/09-interfaces.md) | 01, 09, 11, 14, 15, 18.1, 19 | Python API, CLI, DTO, ошибки, будущий HTTP; GUI deferred |
-| [`10-operations.md`](../design/10-operations.md) | 01, 04, 09, 11, 12, 20 | Config/secrets, XDG, permissions, doctor, logging, backup |
-| [`11-quality.md`](../design/11-quality.md) | 01, 03, 08, 10, 13, 18.1, 20 | Test pyramid, fixtures, CI, security, license audit, release checklist |
+| [`08-metadata.md`](../design/08-metadata.md) | 08, 09, 12, 16, 17, 18.1, 18.2 | Канонические поля, ID3/MP4/Vorbis, cover, LRC sidecar, naming, tag interop |
+| [`09-interfaces.md`](../design/09-interfaces.md) | 01, 09, 11, 14, 15, 18.1, 18.2, 19 | Python API, CLI, DTO, progress, ошибки, будущий HTTP; GUI deferred |
+| [`10-operations.md`](../design/10-operations.md) | 01, 04, 09, 11, 12, 18.2, 20 | Config/secrets, XDG, permissions, doctor, logging, progress, backup |
+| [`11-quality.md`](../design/11-quality.md) | 01, 03, 08, 10, 13, 18.1, 18.2, 20 | Test pyramid, fixtures, CI, security, license audit, progress/tag interop tests |
 | [`12-roadmap.md`](../design/12-roadmap.md) | 01, 09, 11, 14, 16, 18, 18.1, 20 | Phase 1–5, MVP scope, критерии готовности, риски |
 | [`13-consistency-review.md`](../design/13-consistency-review.md) | 02, 04, 07, 20 | Probe как observer, claim_events, locks, renders, identity artifact-only |
 | [`14-phase0-spikes-assessment.md`](../design/14-phase0-spikes-assessment.md) | 10, 13, 14, 20 | Go/no-go, benchmark-таблицы, выбор моделей, CPU/RAM бюджет |
@@ -183,6 +186,8 @@ flowchart TD
 | D9 | `tag_basis` по умолчанию | (a) `album_first`; (b) `playlist_first`; (c) `ask` | (a) с fallback на playlist/unknown при низкой уверенности | 18 |
 | D10 | Scope v1.0 | (a) 01–12 + 14–15; (b) + 16–18.1 при go; (c) + GUI | (b): 16–18.1 при go, no-go — Deferred и не блокирует 1.0; 19 optional; URL no-go → 0.9 local | 20 |
 | D11 | Кто основной artist у nightcore/remix? | (a) original artist, remixer отдельно; (b) remixer feat. original; (c) только remixer | (b) по выбору пользователя: remixer main, original featured; filename `Remixer feat. Original - Title (Qualifier)` | 18.1 |
+| D12 | Как доставлять live-progress в CLI и будущий GUI? | (a) progress board + snapshot polling; (b) event на каждый тик; (c) polling SQLite | (a): board хранит последнее состояние, CLI обновляет TTY не чаще раза в секунду, GUI/SSE читают тот же snapshot | 18.2, 19 |
+| D13 | Что делать с нестандартными tag-ключами? | (a) стандартные audio-теги + provenance в sidecar; (b) оставить `TRACKFORGE_*`/freeform; (c) только стандартные теги без sidecar | (a): убрать `TRACKFORGE_*` из audio, использовать TPE4/TOPE/TLAN/WOAS, `©lan`/`©ope`/`©url`/`©grp`, Vorbis LANGUAGE/REMIXER/ORIGINALARTIST; sidecar schema не меняется | 18.2 |
 
 ## 10. Пробелы, противоречия и отклонения
 

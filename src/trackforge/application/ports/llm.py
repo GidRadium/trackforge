@@ -36,6 +36,7 @@ class LLMTask(StrEnum):
     """Supported LLM call sites."""
 
     EXTRACT = "extract"
+    SOURCE_EXTRACT = "source_extract"
     ADJUDICATE = "adjudicate"
     AUTOPILOT = "autopilot"
 

@@ -635,3 +635,44 @@ def test_invalid_cookie_route_host_is_rejected(
         TrackForgeConfig.from_file(path)
 
     assert exc_info.value.key == "ytdlp_cookie_files"
+
+
+def test_download_defaults_and_cli_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text(
+        """
+[download]
+playlist_items = "2-3"
+progress = "plain"
+progress_interval = 2.5
+reports = "summary"
+sidecar = false
+
+[network.ytdlp]
+download_retries = 4
+download_retry_delay = 1.5
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TRACKFORGE_CONFIG_DIR", str(config_dir))
+
+    config = TrackForgeConfig.from_file()
+
+    assert config.download_playlist_items == "2-3"
+    assert config.download_progress == "plain"
+    assert config.download_progress_interval == 2.5
+    assert config.download_reports == "summary"
+    assert config.download_sidecar is False
+    assert config.ytdlp_download_retries == 4
+    assert config.ytdlp_download_retry_delay == 1.5
+
+
+def test_example_config_parses() -> None:
+    example = Path(__file__).resolve().parents[2] / "config.example.toml"
+    config = TrackForgeConfig.from_file(example)
+
+    assert config.download_progress == "auto"
+    assert config.download_sidecar is True

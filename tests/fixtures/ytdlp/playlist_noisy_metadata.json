@@ -1,0 +1,74 @@
+{
+  "_type": "playlist",
+  "id": "fixture-noisy-metadata",
+  "title": "Fixture Noisy Playlist",
+  "uploader": "Rock Goes Nightcore",
+  "description": "Two-item synthetic playlist for metadata-quality tests.",
+  "upload_date": "20240501",
+  "extractor": "youtube",
+  "extractor_key": "Youtube",
+  "webpage_url": "https://www.youtube.com/playlist?list=fixture-noisy-metadata",
+  "thumbnails": [
+    {"url": "https://i.ytimg.com/vi/noisy-playlist/hqdefault.jpg", "width": 480, "height": 360}
+  ],
+  "entries": [
+    {
+      "_type": "url",
+      "id": "noisy-one",
+      "url": "https://www.youtube.com/watch?v=noisy-one",
+      "webpage_url": "https://www.youtube.com/watch?v=noisy-one",
+      "title": "{642} Nightcore (End Of The Dream) - Collide (with lyrics)",
+      "uploader": "Rock Goes Nightcore",
+      "duration": 2.0,
+      "playlist_index": 1,
+      "description": "Synthetic fixture description.\nLyrics:\nA paper moon is not a real moon light\nA paper boat is not a real boat tonight\nSynthetic words repeat across the sky\nNothing here is taken from a real song\nFollow\nOriginal art: synthetic fixture",
+      "tags": ["Music", "Lyrics (Website Category)", "Electronic", "Drama (TV Genre)"],
+      "webpage_url": "https://www.youtube.com/watch?v=noisy-one",
+      "extractor": "youtube",
+      "extractor_key": "Youtube",
+      "formats": [
+        {
+          "format_id": "140",
+          "ext": "m4a",
+          "acodec": "mp4a.40.2",
+          "vcodec": "none",
+          "abr": 128.0,
+          "asr": 44100,
+          "audio_channels": 2,
+          "filesize": 12000,
+          "has_drm": false,
+          "url": "https://cdn.example.test/noisy-one.m4a"
+        }
+      ]
+    },
+    {
+      "_type": "url",
+      "id": "noisy-two",
+      "url": "https://www.youtube.com/watch?v=noisy-two",
+      "webpage_url": "https://www.youtube.com/watch?v=noisy-two",
+      "title": "Another Song (Official Audio)",
+      "uploader": "Channel Two",
+      "duration": 2.0,
+      "playlist_index": 2,
+      "description": "Synthetic fixture description line one.\nLine two is also synthetic.\nLine three keeps the section long enough.\nLine four is not an original title.\nOriginal title: Another Artist - Another Song\nBusiness: synthetic fixture",
+      "tags": ["Music", "Lyrics", "Pop (Website Category)"],
+      "webpage_url": "https://www.youtube.com/watch?v=noisy-two",
+      "extractor": "youtube",
+      "extractor_key": "Youtube",
+      "formats": [
+        {
+          "format_id": "140",
+          "ext": "m4a",
+          "acodec": "mp4a.40.2",
+          "vcodec": "none",
+          "abr": 128.0,
+          "asr": 44100,
+          "audio_channels": 2,
+          "filesize": 12000,
+          "has_drm": false,
+          "url": "https://cdn.example.test/noisy-two.m4a"
+        }
+      ]
+    }
+  ]
+}

@@ -83,10 +83,10 @@ def test_supports_only_directories(tmp_path: Path) -> None:
 async def test_enumeration_is_bounded_for_large_folders(tmp_path: Path) -> None:
     root = tmp_path / "large"
     root.mkdir()
-    for index in range(501):
+    for index in range(1001):
         (root / f"{index:04d}.mp3").write_bytes(b"x")
 
     collection = await LocalFolderSource().resolve_collection(LocalPath(str(root)))
 
-    assert len(collection.items) == 501
+    assert len(collection.items) == 1001
     assert any("truncated" in warning for warning in collection.warnings)

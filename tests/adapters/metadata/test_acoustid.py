@@ -102,6 +102,27 @@ async def test_error_status_is_reported(
 
 
 @pytest.mark.asyncio
+async def test_invalid_api_key_400_is_actionable(
+    fake_http_client: Callable[..., HttpClient],
+) -> None:
+    provider = AcoustIdProvider(fake_http_client(max_retries=0), api_key="bad-key")
+    with respx.mock:
+        respx.get(LOOKUP).mock(
+            return_value=httpx.Response(
+                400,
+                json={"status": "error", "error": {"code": 4, "message": "invalid API key"}},
+            )
+        )
+        with pytest.raises(ProviderUnavailable, match="invalid API key") as caught:
+            await provider.search(MetadataQuery(fingerprint="AQADtEmi", duration=1.0))
+
+    assert "valid AcoustID" in (caught.value.user_action or "")
+    assert caught.value.context["status"] == 400
+    assert "invalid API key" in caught.value.context["body_excerpt"]
+    await provider.aclose()
+
+
+@pytest.mark.asyncio
 async def test_404_is_a_provider_error(
     fake_http_client: Callable[..., HttpClient],
 ) -> None:

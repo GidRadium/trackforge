@@ -38,6 +38,10 @@ def full_tagset() -> TagSet:
         album="Album ✓",
         date="2024-05-01",
         originaldate="2019",
+        originaltitle="Original Upload Title (Lyrics)",
+        remixer="Rock Goes Nightcore",
+        originalartist="End Of The Dream",
+        qualifier="Nightcore",
         track=3,
         tracktotal=12,
         disc=1,
@@ -67,7 +71,12 @@ def cover_art(tmp_path: Path) -> CoverArt:
     return CoverArt.from_path(generate_png(tmp_path / "media"), description="front")
 
 
-def _assert_tagset(actual: TagSet, expected: TagSet) -> None:
+def _assert_tagset(
+    actual: TagSet,
+    expected: TagSet,
+    *,
+    ignore_remixer: bool = False,
+) -> None:
     for field_name in (
         "title",
         "artists",
@@ -75,6 +84,8 @@ def _assert_tagset(actual: TagSet, expected: TagSet) -> None:
         "album",
         "date",
         "originaldate",
+        "remixer",
+        "originalartist",
         "track",
         "tracktotal",
         "disc",
@@ -92,15 +103,55 @@ def _assert_tagset(actual: TagSet, expected: TagSet) -> None:
         "description",
         "lyrics",
         "source_url",
-        "source_id",
         "copyright",
         "license",
     ):
+        if ignore_remixer and field_name == "remixer":
+            continue
         assert getattr(actual, field_name) == getattr(expected, field_name), field_name
     for field_name in MBIDS:
         assert getattr(actual, field_name) == getattr(expected, field_name), field_name
-    for key, value in expected.trackforge.items():
-        assert actual.trackforge.get(key) == value, key
+
+
+@pytest.mark.parametrize("container", FORMATS)
+def test_remixer_and_original_artist_mapping(tmp_path: Path, container: str) -> None:
+    skip_without_media_tools()
+    fixture = generate_media(tmp_path / "media", container, with_tags=False, duration=0.3)
+    expected = TagSet(
+        title="Collide",
+        artists=("Rock Goes Nightcore", "End Of The Dream"),
+        remixer="Rock Goes Nightcore",
+        originalartist="End Of The Dream",
+    )
+    reader = MutagenTagReader()
+    writer = MutagenTagWriter(reader=reader)
+
+    writer.write(fixture.path, expected, None, RenderOptions())
+
+    actual = reader.read(fixture.path)
+    if container == "m4a":
+        # MP4 has no portable remixer atom; the credit lives in ©ART/comment.
+        assert actual.remixer is None
+    else:
+        assert actual.remixer == "Rock Goes Nightcore"
+    assert actual.originalartist == "End Of The Dream"
+    assert writer.verify(fixture.path, expected, None) == []
+
+    import mutagen
+
+    audio = mutagen.File(str(fixture.path))
+    assert audio is not None
+    if container == "mp3":
+        assert "TPE4" in audio.tags
+        assert "TOPE" in audio.tags
+        assert not any(str(key).startswith("TXXX:TRACKFORGE") for key in audio.tags)
+    elif container == "m4a":
+        assert "©ope" in audio.tags
+        assert "----:com.apple.iTunes:REMIXER" not in audio.tags
+        assert "----:com.apple.iTunes:ORIGINALARTIST" not in audio.tags
+    else:
+        assert audio.tags["REMIXER"] == ["Rock Goes Nightcore"]
+        assert audio.tags["ORIGINALARTIST"] == ["End Of The Dream"]
 
 
 @pytest.mark.parametrize("container", FORMATS)
@@ -115,7 +166,7 @@ def test_canonical_roundtrip(tmp_path: Path, container: str) -> None:
     writer.write(fixture.path, expected, cover, RenderOptions())
 
     actual = reader.read(fixture.path)
-    _assert_tagset(actual, expected)
+    _assert_tagset(actual, expected, ignore_remixer=container == "m4a")
     actual_cover = reader.read_cover(fixture.path)
     assert actual_cover is not None
     assert actual_cover.mime_type == "image/png"

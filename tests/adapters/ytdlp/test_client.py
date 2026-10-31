@@ -135,7 +135,7 @@ def test_progress_callback_receives_events(
         tmp_path / "download",
         DownloadOptions(format_id="140", progress=events.append),
     )
-    assert events
+    assert len(events) >= 2
     assert events[-1].percent == 1.0
 
 

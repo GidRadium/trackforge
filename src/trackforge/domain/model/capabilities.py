@@ -198,6 +198,7 @@ class CapabilityManifest:
     config_schema: dict[str, Any] = field(default_factory=dict)
     license: str | None = None
     description: str | None = None
+    optional_requires: tuple[ArtifactRef, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", require_text(self.id, "id"))
@@ -212,6 +213,20 @@ class CapabilityManifest:
             "requires",
             _artifact_refs(self.requires, "requires"),
         )
+        object.__setattr__(
+            self,
+            "optional_requires",
+            _artifact_refs(self.optional_requires, "optional_requires"),
+        )
+        required_keys = {str(item) for item in self.requires}
+        optional_keys = {str(item) for item in self.optional_requires}
+        if required_keys.intersection(optional_keys):
+            raise DomainValidationError(
+                "requires and optional_requires must not overlap",
+                context={
+                    "overlap": sorted(required_keys.intersection(optional_keys)),
+                },
+            )
         object.__setattr__(
             self,
             "provides",

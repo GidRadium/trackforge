@@ -109,7 +109,8 @@ async def test_nightcore_metadata_creates_claims_and_derived_title(
     assert payload.status == "proposed"
     assert payload.hypotheses
     assert payload.hypotheses[0].transformations
-    assert resolved.fields["title"] == "Song (Nightcore)"
+    assert resolved.fields["title"] == "Song"
+    assert resolved.fields["qualifier"] == "Nightcore"
     assert resolved.fields["artist"] == "Artist"
 
 
@@ -131,7 +132,8 @@ async def test_musicbrainz_official_relationship_sets_official_flag(
     official = _claims(view, "is_official")
     assert [claim.value for claim in official] == [True]
     assert official[0].source == "musicbrainz"
-    assert resolved.fields["title"] == "Song (Remix)"
+    assert resolved.fields["title"] == "Song"
+    assert resolved.fields["qualifier"] == "Remix"
 
 
 async def test_no_official_claim_without_musicbrainz_evidence(
@@ -241,7 +243,8 @@ async def test_source_description_and_bpm_are_evidence(
         "slowed",
         "reverb",
     }
-    assert resolved.fields["title"] == "Song (Slowed)"
+    assert resolved.fields["title"] == "Song"
+    assert resolved.fields["qualifier"] == "Slowed"
 
 
 async def test_no_evidence_produces_no_derivative_claims(
@@ -294,7 +297,8 @@ async def test_qualifier_is_not_duplicated_when_source_title_has_it(
     resolved = await catalog_context.resolve_item().resolve(item_id)
 
     assert [claim.value for claim in _claims(view, "status")] == ["proposed"]
-    assert resolved.fields["title"] == "Song (Nightcore)"
+    assert resolved.fields["title"] == "Song"
+    assert resolved.fields["qualifier"] == "Nightcore"
 
 
 async def test_bpm_ratio_from_tags_and_musicbrainz_is_evidence(
@@ -317,7 +321,8 @@ async def test_bpm_ratio_from_tags_and_musicbrainz_is_evidence(
     assert "sped_up" in {claim.value for claim in _claims(view, "transformation")}
     speed_factor = [claim.value for claim in _claims(view, "bpm_ratio")]
     assert speed_factor == [pytest.approx(1.25)]
-    assert resolved.fields["title"] == "Song (Sped Up)"
+    assert resolved.fields["title"] == "Song"
+    assert resolved.fields["qualifier"] == "Sped Up"
 
 
 async def test_hypotheses_artifact_type_is_exposed(
@@ -365,8 +370,11 @@ async def test_youtube_description_gives_artist_and_base_title(
     view = await catalog_context.interpret_item().interpret(item_id, observed)
     resolved = await catalog_context.resolve_item().resolve(item_id)
 
-    assert resolved.fields["artist"] == "Delain"
-    assert resolved.fields["title"] == "Queen of Shadow (Nightcore)"
+    assert resolved.fields["artist"] == ["Purely's Metal Nightcore", "Delain"]
+    assert resolved.fields["title"] == "Queen of Shadow"
+    assert resolved.fields["qualifier"] == "Nightcore"
+    assert resolved.fields["remixer"] == "Purely's Metal Nightcore"
+    assert resolved.fields["originalartist"] == "Delain"
     assert resolved.fields["album"] == "Dark Waters"
     assert {claim.value for claim in _claims(view, "transformation")} >= {"nightcore"}
 

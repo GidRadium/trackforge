@@ -19,11 +19,25 @@ from trackforge.application.dto.collections import (
     CollectionRunResult,
     CollectionRunStatus,
 )
+from trackforge.application.dto.progress import (
+    STAGE_INDEX,
+    CollectionProgressStatus,
+    HandlerReport,
+    ItemProgress,
+    ProgressContext,
+    ProgressStatus,
+)
 from trackforge.application.dto.results import RunOptions, RunResult
 from trackforge.application.ports.repositories import UnitOfWork
+from trackforge.application.services.collection_cover import (
+    CollectionCoverService,
+    cover_context_claim,
+)
 from trackforge.application.services.collection_queue import CollectionQueue
-from trackforge.application.use_cases.process_item import ProcessItem
+from trackforge.application.services.progress import ProgressBoard, ProgressTracker
+from trackforge.application.use_cases.process_item import ProcessItem, _candidate_label
 from trackforge.domain.errors import DomainValidationError, RecordNotFound, TrackForgeError
+from trackforge.domain.model.claims import Subject
 from trackforge.domain.model.collection import (
     Collection,
     CollectionItem,
@@ -40,12 +54,16 @@ class ProcessCollection:
         unit_of_work_factory: Callable[[], UnitOfWork],
         process_item: ProcessItem,
         *,
+        collection_cover: CollectionCoverService | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
+        progress: ProgressBoard | None = None,
     ) -> None:
         self._uow_factory = unit_of_work_factory
         self._process_item = process_item
+        self._collection_cover = collection_cover
         self._sleep = sleep or asyncio.sleep
         self._queue: CollectionQueue | None = None
+        self._progress = progress if progress is not None else ProgressBoard()
 
     def pause(self) -> None:
         if self._queue is not None:
@@ -124,7 +142,12 @@ class ProcessCollection:
         selected = [
             item
             for item in collection.items
-            if item.status in {CollectionItemStatus.PLANNED, CollectionItemStatus.ACQUIRED}
+            if item.status
+            in {
+                CollectionItemStatus.PLANNED,
+                CollectionItemStatus.ACQUIRED,
+                CollectionItemStatus.FAILED,
+            }
         ]
         return await self._run_selected(
             collection,
@@ -132,6 +155,7 @@ class ProcessCollection:
             opts,
             fail_fast=fail_fast,
             min_sleep=min_sleep,
+            retry_failed=True,
         )
 
     async def _persist_plan(
@@ -199,6 +223,7 @@ class ProcessCollection:
         *,
         fail_fast: bool,
         min_sleep: float,
+        retry_failed: bool = False,
     ) -> CollectionRunResult:
         results: list[CollectionRunItem] = []
         pending: list[CollectionItem] = []
@@ -207,16 +232,64 @@ class ProcessCollection:
         attempted_successes = 0
         attempted_failures = 0
         skipped = 0
+        handler_reports: list[HandlerReport] = []
 
-        for item in sorted(selected, key=lambda value: value.position):
-            if item.status is CollectionItemStatus.PROCESSED:
+        ordered = sorted(selected, key=lambda value: value.position)
+        total = len(ordered)
+        contexts: dict[int, ProgressContext] = {}
+        queued: list[ItemProgress] = []
+        for index, collection_item in enumerate(ordered, start=1):
+            context = ProgressContext(
+                scope_id=str(collection.id),
+                collection_id=str(collection.id),
+                item_id=(
+                    str(collection_item.item_id) if collection_item.item_id is not None else None
+                ),
+                position=index,
+                total=max(1, total),
+                label=_candidate_label(collection_item.candidate, collection_item.position),
+                stage="plan",
+            )
+            contexts[collection_item.position] = context
+            queued.append(context.queued())
+        self._progress.start_collection(str(collection.id), queued)
+
+        collection_claims = collection.context_claims
+        if self._collection_cover is not None and selected:
+            cover_hash = await self._collection_cover.resolve(collection)
+            warnings.extend(self._collection_cover.warnings)
+            if cover_hash is not None:
+                collection_claims = (*collection_claims, cover_context_claim(cover_hash))
+
+        force_reprocess = (
+            bool(
+                set(options.force_steps) & {"observe", "interpret", "resolve", "render", "publish"}
+            )
+            or options.refresh
+        )
+        for item in ordered:
+            context = contexts[item.position]
+            if item.status is CollectionItemStatus.PROCESSED and not force_reprocess:
                 skipped += 1
+                output_path = await self._published_path(item.item_id)
+                context = replace(
+                    context,
+                    label=await self._final_label(item.item_id, context.label),
+                )
+                self._progress.update(
+                    _board_item(
+                        context,
+                        status=ProgressStatus.DONE,
+                        output_path=output_path,
+                        warnings=("already_processed",),
+                    )
+                )
                 results.append(
                     CollectionRunItem(
                         position=item.position,
                         status=CollectionItemStatus.PROCESSED,
                         item_id=item.item_id,
-                        output_path=await self._published_path(item.item_id),
+                        output_path=output_path,
                         warnings=("already_processed",),
                         cached=True,
                     )
@@ -224,6 +297,13 @@ class ProcessCollection:
                 continue
             if item.status is CollectionItemStatus.SKIPPED:
                 skipped += 1
+                self._progress.update(
+                    _board_item(
+                        context,
+                        status=ProgressStatus.SKIPPED,
+                        message=item.error,
+                    )
+                )
                 results.append(
                     CollectionRunItem(
                         position=item.position,
@@ -234,7 +314,30 @@ class ProcessCollection:
                 )
                 continue
             if item.status is CollectionItemStatus.FAILED:
+                if retry_failed:
+                    if item.item_id is not None and await self._artifact_ready(item.item_id):
+                        pending.append(
+                            replace(item, status=CollectionItemStatus.ACQUIRED, error=None)
+                        )
+                    else:
+                        await self._reset_for_retry(collection.id, item)
+                        pending.append(
+                            replace(
+                                item,
+                                status=CollectionItemStatus.PLANNED,
+                                item_id=None,
+                                error=None,
+                            )
+                        )
+                    continue
                 attempted_failures += 1
+                self._progress.update(
+                    _board_item(
+                        context,
+                        status=ProgressStatus.FAILED,
+                        message=item.error or "previous attempt failed",
+                    )
+                )
                 results.append(
                     CollectionRunItem(
                         position=item.position,
@@ -268,16 +371,28 @@ class ProcessCollection:
         self._queue = queue
         try:
             async for item in queue:
-                context = CollectionItemContext.from_collection(collection, item)
+                item_context = CollectionItemContext.from_collection(collection, item)
+                if collection_claims is not collection.context_claims:
+                    item_context = replace(
+                        item_context,
+                        context_claims=collection_claims,
+                    )
+                progress_context = contexts[item.position]
                 acquired_id: ItemId | None = item.item_id
+                tracker = ProgressTracker(self._progress, progress_context)
+                if acquired_id is not None:
+                    tracker.bind(item_id=acquired_id)
+                tracker.stage("plan", message="collection item")
 
                 async def on_acquired(
                     new_item_id: ItemId,
                     *,
                     position: int = item.position,
+                    tracker: ProgressTracker = tracker,
                 ) -> None:
                     nonlocal acquired_id
                     acquired_id = new_item_id
+                    tracker.bind(item_id=new_item_id)
                     async with self._uow_factory() as uow:
                         await uow.collections.update_item(
                             collection.id,
@@ -290,19 +405,25 @@ class ProcessCollection:
                 try:
                     run_result: RunResult
                     final_item_id: ItemId | None
-                    if item.status is CollectionItemStatus.ACQUIRED and item.item_id is not None:
+                    if (
+                        item.status
+                        in {CollectionItemStatus.ACQUIRED, CollectionItemStatus.PROCESSED}
+                        and item.item_id is not None
+                    ):
                         run_result = await self._process_item.run_item(
                             item.item_id,
                             options,
-                            collection=context,
+                            collection=item_context,
+                            tracker=tracker,
                         )
                         final_item_id = item.item_id
                     else:
                         candidate_result = await self._process_item.run_candidate(
                             item.candidate,
                             options,
-                            collection=context,
+                            collection=item_context,
                             on_acquired=on_acquired,
+                            tracker=tracker,
                         )
                         if not isinstance(candidate_result, RunResult):
                             raise DomainValidationError(
@@ -329,6 +450,12 @@ class ProcessCollection:
                 except Exception as exc:
                     message = exc.message if isinstance(exc, TrackForgeError) else str(exc)
                     message = message or type(exc).__name__
+                    tracker.failed(message)
+                    self._append_board_reports(
+                        handler_reports,
+                        str(collection.id),
+                        progress_context.position,
+                    )
                     attempted_failures += 1
                     errors.append(f"position {item.position}: {message}")
                     async with self._uow_factory() as uow:
@@ -353,7 +480,9 @@ class ProcessCollection:
 
                 attempted_successes += 1
                 warnings.extend(run_result.warnings)
+                handler_reports.extend(run_result.handler_reports)
                 output = run_result.output_paths[0] if run_result.output_paths else None
+                tracker.done(output)
                 results.append(
                     CollectionRunItem(
                         position=item.position,
@@ -364,8 +493,40 @@ class ProcessCollection:
                         cached=run_result.cache_hit,
                     )
                 )
+        except asyncio.CancelledError:
+            finished_positions = {result.position for result in results}
+            for pending_item in pending:
+                if pending_item.position not in finished_positions:
+                    self._progress.update(
+                        _board_item(
+                            contexts[pending_item.position],
+                            status=ProgressStatus.SKIPPED,
+                            message="cancelled",
+                        )
+                    )
+            self._progress.mark_collection(
+                str(collection.id),
+                CollectionProgressStatus.CANCELLED,
+            )
+            raise
         finally:
             self._queue = None
+
+        if queue.cancelled:
+            finished_positions = {result.position for result in results}
+            for item in pending:
+                if item.position not in finished_positions:
+                    self._progress.update(
+                        _board_item(
+                            contexts[item.position],
+                            status=ProgressStatus.SKIPPED,
+                            message="cancelled",
+                        )
+                    )
+            self._progress.mark_collection(
+                str(collection.id),
+                CollectionProgressStatus.CANCELLED,
+            )
 
         processed_items = tuple(sorted(results, key=lambda result: result.position))
         output_paths = tuple(
@@ -390,7 +551,38 @@ class ProcessCollection:
             failed=attempted_failures,
             skipped=skipped,
             remaining=remaining,
+            handler_reports=tuple(handler_reports),
         )
+
+    def _append_board_reports(
+        self,
+        reports: list[HandlerReport],
+        collection_id: str,
+        position: int,
+    ) -> None:
+        seen = {(report.position, report.capability_id, report.stage) for report in reports}
+        for report in self._progress.reports(collection_id):
+            key = (report.position, report.capability_id, report.stage)
+            if report.position == position and key not in seen:
+                reports.append(report)
+                seen.add(key)
+
+    async def _final_label(self, item_id: ItemId | None, fallback: str) -> str:
+        if item_id is None:
+            return fallback
+        async with self._uow_factory() as uow:
+            item = await uow.items.get(item_id)
+            if item is None or item.decision_record_id is None:
+                return fallback
+            record = await uow.decisions.get_record(item.decision_record_id)
+        if record is None:
+            return fallback
+        for decision in record.decisions:
+            if decision.subject is Subject.ITEM and decision.field == "title":
+                value = decision.value
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return fallback
 
     async def _artifact_ready(self, item_id: ItemId | None) -> bool:
         if item_id is None:
@@ -429,6 +621,30 @@ class ProcessCollection:
             for item in collection.items
             if item.status in {CollectionItemStatus.PLANNED, CollectionItemStatus.ACQUIRED}
         )
+
+
+def _board_item(
+    context: ProgressContext,
+    *,
+    status: ProgressStatus,
+    output_path: str | None = None,
+    message: str | None = None,
+    warnings: Sequence[str] = (),
+) -> ItemProgress:
+    return ItemProgress(
+        scope_id=context.scope_id,
+        collection_id=context.collection_id,
+        item_id=context.item_id,
+        position=context.position,
+        total=context.total,
+        label=context.label,
+        stage=context.stage,
+        stage_index=STAGE_INDEX[context.stage],
+        status=status,
+        output_path=output_path,
+        message=message,
+        warnings=tuple(warnings),
+    )
 
 
 def _collection_status(

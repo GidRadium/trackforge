@@ -1,0 +1,104 @@
+# TrackForge example configuration.
+#
+# Copy to:
+#   ~/.config/trackforge/config.toml
+# or point TRACKFORGE_CONFIG_DIR at another directory.
+#
+# Precedence: explicit CLI flags > environment variables > this file > defaults.
+# Secrets do not belong here; put them in .env (see .env.example).
+
+[core]
+# fast | balanced | full | custom
+profile = "balanced"
+# policy | llm_assisted | llm_autopilot | manual
+mode = "policy"
+# album_first | playlist_first | ask
+tag_basis = "album_first"
+# Pause between collection items; CLI --min-sleep overrides it.
+collection_min_sleep = 1.0
+# Optional explicit locations. Relative paths are expanded by the app.
+# data_dir = "~/.local/share/trackforge"
+# library_dir = "~/Music/TrackForge"
+# cache_dir = "~/.cache/trackforge"
+# state_dir = "~/.local/state/trackforge"
+# Enables network metadata observers without a provider key.
+metadata_enabled = false
+source_cover_enabled = true
+
+[download]
+# Defaults for `collection add`, `add`, and `import`; explicit CLI flags win.
+# Absolute source positions. Omit to process the whole collection.
+# playlist_start = 1
+# playlist_end = 100
+# Examples: "1,3-5". Empty means all selected positions.
+playlist_items = ""
+# Examples: "2,8-9".
+skip = ""
+# yt-dlp format id, when the source offers several audio formats.
+format_id = ""
+# Skip interactive prompts where possible.
+auto = false
+# auto | rich | plain | off
+progress = "auto"
+# Seconds between live progress updates (0.25..10.0).
+progress_interval = 1.0
+# auto | full | summary | off
+reports = "auto"
+# Publish trackforge.json next to audio. Use false to keep only audio+lrc.
+sidecar = true
+
+[network.ytdlp]
+# Direct connection when empty. Standard proxy env vars are ignored.
+proxy = ""
+# Retry transient download errors (timeouts, 403 Forbidden, 429, 5xx)
+# with linear backoff.
+download_retries = 2
+download_retry_delay = 5.0
+
+[network.ytdlp.sites]
+# Per-host proxy overrides. An empty string forces a direct connection.
+# "youtube.com" = "socks5h://127.0.0.1:1080"
+# "music.yandex.ru" = ""
+
+[network.ytdlp.cookies]
+# Netscape cookie files must be mode 0600. Drop youtube.com.txt into
+# ~/.config/trackforge/cookies/ to use automatic host discovery instead.
+# "youtube.com" = "~/.config/trackforge/cookies/youtube.com.txt"
+# "youtu.be" = "~/.config/trackforge/cookies/youtube.com.txt"
+
+[network.metadata]
+proxy = ""
+
+[network.llm]
+proxy = ""
+
+[network.models]
+proxy = ""
+
+[llm]
+# No default provider endpoint or model is baked into the code.
+provider = "openai-compatible"
+base_url = ""
+model = ""
+# The value of this environment variable is the secret; it is never stored here.
+api_key_env = "TRACKFORGE_LLM_API_KEY"
+max_cost_usd_per_item = 0.50
+max_tokens = 2000
+temperature = 0.1
+timeout_seconds = 30
+max_retries = 1
+strict_schema = true
+
+[privacy]
+# Send titles/descriptions to the configured LLM. Audio is never sent.
+send_text_to_cloud = true
+send_audio_to_cloud = false
+
+[models]
+# Never download model weights implicitly during analysis.
+offline = true
+max_heavy_models = 1
+
+[ranker]
+# lexical | cross_encoder | hybrid
+strategy = "lexical"

@@ -235,3 +235,62 @@ async def test_local_folder_collection_publishes_into_subfolder(
     audio = _audio_files(config.library_dir / "Fixture Folder")
     assert len(audio) == 2
     assert len(list((config.library_dir / "Fixture Folder").glob("trackforge*.json"))) == 2
+
+
+@pytest.mark.asyncio
+async def test_force_observe_reprocesses_processed_folder_item(
+    playlist_config: tuple[TrackForgeConfig, Path],
+    tmp_path: Path,
+) -> None:
+    skip_without_media_tools()
+    config, _log = playlist_config
+    folder = tmp_path / "Force Folder"
+    generate_media(folder, "mp3", name="a.mp3")
+
+    async with AsyncTrackForge(config) as facade:
+        first = await facade.collection_add(
+            folder,
+            RunOptions(auto=True),
+            collection_options=CollectionPlanOptions(),
+            min_sleep=0,
+        )
+        assert isinstance(first, CollectionRunResult)
+        forced = await facade.collection_add(
+            folder,
+            RunOptions(auto=True, force_steps=("observe",)),
+            collection_options=CollectionPlanOptions(),
+            min_sleep=0,
+        )
+
+    assert isinstance(forced, CollectionRunResult)
+    assert forced.processed == 1
+    assert forced.skipped == 0
+
+
+@pytest.mark.asyncio
+async def test_resume_retries_failed_items(
+    playlist_config: tuple[TrackForgeConfig, Path],
+) -> None:
+    skip_without_media_tools()
+    config, log = playlist_config
+
+    async with AsyncTrackForge(config) as facade:
+        first = await facade.collection_add(
+            FAILED_PLAYLIST_URL,
+            RunOptions(auto=True),
+            collection_options=CollectionPlanOptions(items="1-3"),
+            min_sleep=0,
+        )
+        assert isinstance(first, CollectionRunResult)
+        assert first.failed == 1
+        downloads_before = _downloads(log)
+
+        retried = await facade.collection_resume(
+            first.collection_id,
+            RunOptions(auto=True),
+            min_sleep=0,
+        )
+
+    assert isinstance(retried, CollectionRunResult)
+    assert retried.failed == 1
+    assert _downloads(log) > downloads_before

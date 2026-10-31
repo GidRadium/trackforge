@@ -19,6 +19,7 @@ import asyncio
 import json
 import os
 import random
+import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -41,6 +42,11 @@ _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 _DEFAULT_TIMEOUT = 20.0
 _DEFAULT_MAX_BYTES = 10 * 1024 * 1024
 _USER_AGENT_ENV = "TRACKFORGE_MUSICBRAINZ_USER_AGENT"
+_BODY_SECRET_RE = re.compile(
+    r'(?i)("?(?:cookie|set-cookie|authorization|api[_-]?key|access[_-]?token|'
+    r'refresh[_-]?token|token|secret|session(?:[_-]?id)?)"?\s*[:=]\s*)'
+    r'("[^"]*"|[^,;}\s]+)'
+)
 
 Sleeper = Callable[[float], Awaitable[None]]
 
@@ -95,18 +101,46 @@ class HttpResponse:
                 context={"url": sanitize_url(self.url), "error": str(exc)},
             ) from exc
 
+    def body_excerpt(self, max_chars: int = 512) -> str:
+        """Return a redacted, bounded text excerpt of the response body.
+
+        Headers, cookies, and URL query strings are intentionally excluded.
+        Binary-looking bodies are summarized instead of decoded.
+        """
+
+        if not self.content:
+            return ""
+        content_type = (self.content_type or "").casefold()
+        if content_type.startswith(("image/", "audio/", "video/", "application/octet-stream")):
+            return f"<binary:{len(self.content)} bytes>"
+        text = self.content.decode("utf-8", errors="replace")
+        text = text.replace("\x00", " ")
+        text = _BODY_SECRET_RE.sub(r'\1"***"', text)
+        text = redact_text(text)
+        text = " ".join(text.split())
+        if max_chars < 1:
+            return ""
+        if len(text) > max_chars:
+            text = f"{text[: max_chars - 1]}…"
+        return text
+
     def raise_for_status(self) -> None:
         if self.ok:
             return
+        context = {
+            "url": sanitize_url(self.url),
+            "status": self.status_code,
+            "body_excerpt": self.body_excerpt(),
+        }
         if self.status_code == 429:
             raise RateLimited(
                 "provider rate-limited the request",
-                context={"url": sanitize_url(self.url), "status": self.status_code},
+                context=context,
             )
         raise ProviderUnavailable(
             f"provider returned HTTP {self.status_code}",
             retryable=self.status_code >= 500,
-            context={"url": sanitize_url(self.url), "status": self.status_code},
+            context=context,
         )
 
 

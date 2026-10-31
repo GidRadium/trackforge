@@ -506,8 +506,8 @@ _VORBIS_KEYS = {
     "lyrics": ("LYRICS", "UNSYNCEDLYRICS"),
     "copyright": ("COPYRIGHT",),
     "license": ("LICENSE",),
-    "source_url": ("TRACKFORGE_SOURCE_URL", "SOURCE_URL"),
-    "source_id": ("TRACKFORGE_SOURCE_ID", "SOURCE_ID"),
+    "source_url": ("SOURCE", "SOURCE_URL"),
+    "source_id": ("SOURCE_ID",),
 }
 
 
@@ -525,6 +525,21 @@ def _frame_values(tags: Any, frame_id: str) -> list[str]:
 def _frame_first(tags: Any, frame_id: str) -> str | None:
     values = _frame_values(tags, frame_id)
     return values[0] if values else None
+
+
+def _frame_url(tags: Any, frame_id: str) -> str | None:
+    try:
+        frames = tags.getall(frame_id)
+    except (AttributeError, KeyError, TypeError):
+        return None
+    for frame in frames:
+        url = str(getattr(frame, "url", "") or "").strip()
+        if url:
+            return url
+        text = _frame_first(tags, frame_id)
+        if text:
+            return text
+    return None
 
 
 def _id3_multi(values: list[str], version: tuple[int, ...]) -> list[str]:
@@ -593,11 +608,6 @@ def _read_id3(tags: Any, module: Any) -> TagSet:
         if field_name == "isrc":
             continue
         mbids[field_name] = _txxx_lookup(txxx, aliases)
-    trackforge = {
-        key.upper(): values[0]
-        for key, values in txxx.items()
-        if key.upper().startswith("TRACKFORGE_") and values
-    }
     comments = _frame_values(tags, "COMM")
     if not comments:
         fallback = _txxx_lookup(txxx, ("COMMENT", "comment"))
@@ -612,6 +622,9 @@ def _read_id3(tags: Any, module: Any) -> TagSet:
         album=_frame_first(tags, "TALB"),
         date=date,
         originaldate=_frame_first(tags, "TDOR"),
+        remixer=_frame_first(tags, "TPE4"),
+        originalartist=_frame_first(tags, "TOPE"),
+        qualifier=_frame_first(tags, "TIT1"),
         track=track,
         tracktotal=tracktotal,
         disc=disc,
@@ -632,8 +645,8 @@ def _read_id3(tags: Any, module: Any) -> TagSet:
         comment=comments[0] if comments else None,
         description=_txxx_lookup(txxx, ("DESCRIPTION", "description")),
         lyrics=_plain_lyrics(lyrics[0] if lyrics else None),
-        source_url=trackforge.get("TRACKFORGE_SOURCE_URL") or _txxx_lookup(txxx, ("SOURCE_URL",)),
-        source_id=trackforge.get("TRACKFORGE_SOURCE_ID") or _txxx_lookup(txxx, ("SOURCE_ID",)),
+        source_url=_frame_url(tags, "WOAS") or _txxx_lookup(txxx, ("SOURCE_URL", "SOURCE")),
+        source_id=None,
         copyright=_frame_first(tags, "TCOP"),
         license=_txxx_lookup(txxx, ("LICENSE",)),
         mb_recording_id=mbids.get("mb_recording_id"),
@@ -642,7 +655,6 @@ def _read_id3(tags: Any, module: Any) -> TagSet:
         mb_artist_id=mbids.get("mb_artist_id"),
         mb_albumartist_id=mbids.get("mb_albumartist_id"),
         acoustid=mbids.get("acoustid"),
-        trackforge=trackforge,
     )
 
 
@@ -720,11 +732,6 @@ def _read_mp4(tags: Any) -> TagSet:
         compilation = bool(raw_compilation[0]) if raw_compilation else None
     elif raw_compilation is not None:
         compilation = bool(raw_compilation)
-    trackforge = {
-        key.upper(): values[0]
-        for key, values in freeform.items()
-        if key.upper().startswith("TRACKFORGE_") and values
-    }
     return TagSet(
         title=_first_mp4(tags, "©nam"),
         artists=tuple(_mp4_values(tags, "©ART")),
@@ -732,6 +739,9 @@ def _read_mp4(tags: Any) -> TagSet:
         album=_first_mp4(tags, "©alb"),
         date=_first_mp4(tags, "©day"),
         originaldate=_freeform_lookup(freeform, ("ORIGINALDATE", "ORIGINAL DATE")),
+        remixer=None,
+        originalartist=_first_mp4(tags, "©ope"),
+        qualifier=_first_mp4(tags, "©grp"),
         track=track,
         tracktotal=tracktotal,
         disc=disc,
@@ -739,7 +749,7 @@ def _read_mp4(tags: Any) -> TagSet:
         genre=tuple(_mp4_values(tags, "©gen")),
         bpm=bpm,
         key=_freeform_lookup(freeform, ("KEY", "INITIALKEY")),
-        language=_freeform_lookup(freeform, ("LANGUAGE",)),
+        language=_first_mp4(tags, "©lan"),
         label=_freeform_lookup(freeform, ("LABEL",)),
         catalog_number=_freeform_lookup(freeform, ("CATALOGNUMBER",)),
         barcode=_freeform_lookup(freeform, ("BARCODE",)),
@@ -748,10 +758,8 @@ def _read_mp4(tags: Any) -> TagSet:
         comment=_first_mp4(tags, "©cmt"),
         description=_freeform_lookup(freeform, ("DESCRIPTION",)),
         lyrics=_plain_lyrics(_first_mp4(tags, "©lyr")),
-        source_url=trackforge.get("TRACKFORGE_SOURCE_URL")
-        or _freeform_lookup(freeform, ("SOURCE_URL",)),
-        source_id=trackforge.get("TRACKFORGE_SOURCE_ID")
-        or _freeform_lookup(freeform, ("SOURCE_ID",)),
+        source_url=_first_mp4(tags, "©url") or _freeform_lookup(freeform, ("SOURCE_URL",)),
+        source_id=None,
         copyright=_first_mp4(tags, "cprt"),
         license=_freeform_lookup(freeform, ("LICENSE",)),
         mb_recording_id=_freeform_lookup(
@@ -766,7 +774,6 @@ def _read_mp4(tags: Any) -> TagSet:
         mb_artist_id=_freeform_lookup(freeform, ("MusicBrainz Artist Id",)),
         mb_albumartist_id=_freeform_lookup(freeform, ("MusicBrainz Album Artist Id",)),
         acoustid=_freeform_lookup(freeform, ("Acoustid Id",)),
-        trackforge=trackforge,
     )
 
 
@@ -833,9 +840,6 @@ def _read_vorbis(tags: Any) -> TagSet:
     description = _vorbis_first(values, _VORBIS_KEYS["description"])
     if comment is None:
         comment = description
-    trackforge = {
-        key: items[0] for key, items in values.items() if key.startswith("TRACKFORGE_") and items
-    }
 
     def joined(field_name: str) -> str | None:
         artists = values.get(field_name)
@@ -848,6 +852,9 @@ def _read_vorbis(tags: Any) -> TagSet:
         album=_vorbis_first(values, _VORBIS_KEYS["album"]),
         date=_vorbis_first(values, _VORBIS_KEYS["date"]),
         originaldate=_vorbis_first(values, _VORBIS_KEYS["originaldate"]),
+        remixer=_vorbis_first(values, ("REMIXER",)),
+        originalartist=_vorbis_first(values, ("ORIGINALARTIST", "ORIGINAL ARTIST")),
+        qualifier=_vorbis_first(values, ("GROUPING",)),
         track=track,
         tracktotal=tracktotal,
         disc=disc,
@@ -869,7 +876,7 @@ def _read_vorbis(tags: Any) -> TagSet:
         description=description,
         lyrics=_plain_lyrics(_vorbis_first(values, _VORBIS_KEYS["lyrics"])),
         source_url=_vorbis_first(values, _VORBIS_KEYS["source_url"]),
-        source_id=_vorbis_first(values, _VORBIS_KEYS["source_id"]),
+        source_id=None,
         copyright=_vorbis_first(values, _VORBIS_KEYS["copyright"]),
         license=_vorbis_first(values, _VORBIS_KEYS["license"]),
         mb_recording_id=_vorbis_first(
@@ -884,7 +891,6 @@ def _read_vorbis(tags: Any) -> TagSet:
         mb_artist_id=_vorbis_first(values, ("MUSICBRAINZ_ARTISTID",)),
         mb_albumartist_id=_vorbis_first(values, ("MUSICBRAINZ_ALBUMARTISTID",)),
         acoustid=_vorbis_first(values, ("ACOUSTID_ID", "ACOUSTID")),
-        trackforge=trackforge,
     )
 
 

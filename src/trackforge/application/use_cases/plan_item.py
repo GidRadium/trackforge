@@ -17,6 +17,7 @@ from trackforge.application.ports.observations import (
     MUSICBRAINZ_ARTIFACT,
     PATH_STRUCTURE_ARTIFACT,
     PROBE_ARTIFACT,
+    SOURCE_IDENTITY_ARTIFACT,
     SOURCE_METADATA_ARTIFACT,
     SOURCE_SNAPSHOT_ARTIFACT,
     STEMS_ARTIFACT,
@@ -33,6 +34,7 @@ DEFAULT_OBSERVE_OUTPUTS = (
     PATH_STRUCTURE_ARTIFACT,
 )
 METADATA_OBSERVE_OUTPUTS = (
+    SOURCE_IDENTITY_ARTIFACT,
     FINGERPRINT_ARTIFACT,
     ACOUSTID_ARTIFACT,
     MUSICBRAINZ_ARTIFACT,
@@ -200,6 +202,8 @@ class PlanItem:
         }
         for output in METADATA_OBSERVE_OUTPUTS:
             if output not in provided:
+                continue
+            if output == SOURCE_IDENTITY_ARTIFACT and not is_url:
                 continue
             if output == ACOUSTID_ARTIFACT and FINGERPRINT_ARTIFACT not in provided:
                 continue

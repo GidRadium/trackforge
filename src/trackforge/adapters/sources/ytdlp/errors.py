@@ -79,6 +79,15 @@ _BROKEN_RE = re.compile(
     re.IGNORECASE,
 )
 _SERVER_RE = re.compile(r"(http error 5\d\d|status(?: code)? 5\d\d|\b5\d\d\b)", re.I)
+# YouTube sometimes returns a short-lived 403 / "unable to download video
+# data" for anonymous clients even when the same URL works on a later attempt.
+# Keep genuine login/age-gate failures non-retryable, but let this specific
+# Forbidden variant participate in the bounded download retry loop.
+_TRANSIENT_FORBIDDEN_RE = re.compile(
+    r"(http error 403|status(?: code)? 403|\b403\b|forbidden|"
+    r"unable to download video data)",
+    re.IGNORECASE,
+)
 _TIMEOUT_RE = re.compile(r"(timed out|timeout|read timeout|connection reset)", re.I)
 _PRIVATE_RE = re.compile(
     r"(private video|video is private|video unavailable|has been removed|"
@@ -173,7 +182,12 @@ def map_error(
             context=context,
         )
     message = _message_for(error_type, safe_stderr)
-    return error_type(message, context=context)
+    retryable = (
+        True
+        if error_type is LoginRequired and _TRANSIENT_FORBIDDEN_RE.search(safe_stderr)
+        else None
+    )
+    return error_type(message, context=context, retryable=retryable)
 
 
 def map_ytdlp_error(

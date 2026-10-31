@@ -10,7 +10,8 @@ Two artifacts are produced for every URL acquisition:
     A small, stable subset consumed by the interpretation pipeline.
 
 The observer is deterministic and side-effect free.  It only reads an already
-stored snapshot artifact; it never invokes the network.
+stored snapshot artifact; it never invokes the network.  Version 2 preserves
+public YouTube video/playlist ids in ``webpage_url`` while redacting tokens.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ _SENSITIVE_KEY_PARTS = (
     "token",
 )
 _SOURCE_METADATA_PRODUCER_ID = "ytdlp"
-_SOURCE_METADATA_PRODUCER_VERSION = "1"
+_SOURCE_METADATA_PRODUCER_VERSION = "2"
 _SOURCE_METADATA_CAPABILITY_ID = "source_metadata"
 
 

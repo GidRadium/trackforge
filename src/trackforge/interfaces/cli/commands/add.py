@@ -26,8 +26,16 @@ from trackforge.interfaces.cli.presenters import (
     emit_json,
     print_collection_plan,
     print_collection_run,
+    print_handler_reports,
     print_plan,
     print_run,
+    report_labels,
+)
+from trackforge.interfaces.cli.progress import (
+    ProgressReporter,
+    clamp_progress_interval,
+    resolve_progress_mode,
+    resolve_reports_mode,
 )
 
 
@@ -123,6 +131,22 @@ def add_command(
         bool,
         typer.Option("--refresh", help="Refresh external metadata despite its TTL."),
     ] = False,
+    progress: Annotated[
+        str | None,
+        typer.Option("--progress", help="auto, rich, plain, or off."),
+    ] = None,
+    progress_interval: Annotated[
+        float | None,
+        typer.Option("--progress-interval", help="Seconds between live updates."),
+    ] = None,
+    reports: Annotated[
+        str | None,
+        typer.Option("--reports", help="full, summary, or off."),
+    ] = None,
+    sidecar: Annotated[
+        bool | None,
+        typer.Option("--sidecar/--no-sidecar", help="Publish the JSON sidecar file."),
+    ] = None,
     data_dir: Annotated[
         str | None,
         typer.Option("--data-dir", help="Override the data directory."),
@@ -142,20 +166,24 @@ def add_command(
             mode=mode,
             offline=offline,
         )
+        effective_auto = auto or (config.download_auto and not review)
+        effective_format = format_id or (config.download_format_id or None)
+        effective_sidecar = sidecar if sidecar is not None else config.download_sidecar
         options = build_run_options(
             config,
             profile=profile,
             mode=mode,
-            auto=auto or not review,
+            auto=effective_auto or not review,
             review=review,
             dry_run=dry_run,
             force=force,
             enable=enable,
             disable=disable,
             target_format=target_format,
-            format_id=format_id,
+            format_id=effective_format,
             offline=offline,
             refresh=refresh,
+            sidecar=effective_sidecar,
         )
         is_url = source.strip().casefold().startswith(("http://", "https://"))
         collection_source = is_collection_input(source)
@@ -164,18 +192,44 @@ def add_command(
         if collection_source:
             collection_options, collection_warnings = make_collection_options(
                 config,
-                start=playlist_start,
-                end=playlist_end,
-                items=playlist_items,
-                skip=skip,
+                start=(
+                    playlist_start if playlist_start is not None else config.download_playlist_start
+                ),
+                end=(playlist_end if playlist_end is not None else config.download_playlist_end),
+                items=(
+                    playlist_items
+                    if playlist_items is not None
+                    else (config.download_playlist_items or None)
+                ),
+                skip=skip if skip is not None else (config.download_skip or None),
                 tag_basis=tag_basis,
-                auto=auto,
+                auto=effective_auto,
                 as_json=as_json,
                 prompt=not dry_run,
             )
 
+        progress_mode = resolve_progress_mode(
+            progress if progress is not None else config.download_progress,
+            as_json=as_json,
+        )
+        report_mode = resolve_reports_mode(
+            reports if reports is not None else config.download_reports,
+            as_json=as_json,
+        )
+        interval = clamp_progress_interval(
+            progress_interval
+            if progress_interval is not None
+            else config.download_progress_interval
+        )
+        facade = AsyncTrackForge(config)
+        reporter = ProgressReporter(
+            facade.progress_board,
+            mode=progress_mode,
+            interval=interval,
+            as_json=as_json,
+        )
+
         async def operation() -> RunResult | PlanView | CollectionPlanView | CollectionRunResult:
-            facade = AsyncTrackForge(config)
             try:
                 if collection_source and collection_options is not None:
                     result = await facade.collection_add(
@@ -194,33 +248,62 @@ def add_command(
                     return result
                 if dry_run:
                     return await facade.add(source, options)
-                async with facade:
-                    if not is_url or format_id is not None or auto or review:
-                        return await facade.add(source, options)
-                    plan = await facade.plan(source, options)
-                    if not isinstance(plan, PlanView):
-                        return await facade.add(source, options)
-                    if plan.blocked_reason is not None or not plan.candidates:
-                        raise CandidateNotFound(
-                            plan.blocked_reason or "source resolved to zero candidates",
-                            context={"warnings": list(plan.warnings)},
-                        )
-                    chosen = _choose_format(plan, as_json=as_json)
-                    return await facade.add(source, replace(options, format_id=chosen))
+                if not is_url or effective_format is not None or effective_auto or review:
+                    return await facade.add(source, options)
+                plan = await facade.plan(source, options)
+                if not isinstance(plan, PlanView):
+                    return await facade.add(source, options)
+                if plan.blocked_reason is not None or not plan.candidates:
+                    raise CandidateNotFound(
+                        plan.blocked_reason or "source resolved to zero candidates",
+                        context={"warnings": list(plan.warnings)},
+                    )
+                chosen = _choose_format(plan, as_json=as_json)
+                return await facade.add(source, replace(options, format_id=chosen))
             finally:
                 await facade.close()
 
-        result = asyncio.run(operation())
+        reporter.start()
+        try:
+            result = asyncio.run(operation())
+        except KeyboardInterrupt:
+            reporter.stop()
+            snapshot = reporter.snapshot()
+            if snapshot is not None and not as_json:
+                print_handler_reports(
+                    facade.progress_board.reports(snapshot.collection_id),
+                    mode=report_mode,
+                    labels=report_labels(snapshot),
+                    total=snapshot.total,
+                )
+            raise
+        finally:
+            reporter.stop()
         if as_json:
             emit_json(result)
         elif isinstance(result, CollectionPlanView):
             print_collection_plan(result)
         elif isinstance(result, CollectionRunResult):
             print_collection_run(result)
+            snapshot = reporter.snapshot()
+            print_handler_reports(
+                result.handler_reports,
+                mode=report_mode,
+                labels=report_labels(snapshot) if snapshot is not None else {},
+                total=snapshot.total if snapshot is not None else len(result.items),
+                aggregate=True,
+            )
         elif isinstance(result, PlanView):
             print_plan(result)
         else:
             print_run(result)
+            snapshot = reporter.snapshot()
+            print_handler_reports(
+                result.handler_reports,
+                mode=report_mode,
+                labels=report_labels(snapshot) if snapshot is not None else {},
+                total=snapshot.total if snapshot is not None else 1,
+            )
 
     execute(as_json, body)
 

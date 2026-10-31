@@ -166,6 +166,14 @@ def test_event_to_dict_has_no_secret_payload() -> None:
         "warning_codes",
         "sequence",
         "timestamp",
+        "message",
+        "progress",
+        "item_position",
+        "item_total",
+        "item_label",
+        "stage",
+        "stage_index",
+        "stage_total",
     }
 
 

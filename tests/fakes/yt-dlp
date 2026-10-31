@@ -41,6 +41,20 @@ def _fixture(url: str) -> dict:
     folded = url.casefold()
     if "playlist-fail" in folded:
         return json.loads((FIXTURE_DIR / "playlist_5_failed.json").read_text(encoding="utf-8"))
+    if "noisy" in folded:
+        playlist = json.loads(
+            (FIXTURE_DIR / "playlist_noisy_metadata.json").read_text(encoding="utf-8")
+        )
+        for entry in playlist.get("entries", []):
+            if not isinstance(entry, dict):
+                continue
+            entry_id = str(entry.get("id") or "").casefold()
+            entry_url = str(entry.get("webpage_url") or entry.get("url") or "").casefold()
+            if (entry_id and entry_id in folded) or (entry_url and entry_url == folded):
+                document = dict(entry)
+                document["_type"] = "video"
+                return document
+        return playlist
     if "playlist" in folded:
         return json.loads((FIXTURE_DIR / "playlist_5.json").read_text(encoding="utf-8"))
     if "soundcloud" in folded:
@@ -169,8 +183,10 @@ def main() -> int:
     info["requested_downloads"] = [{"format_id": selected.get("format_id")}]
     info_path.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
     total = path.stat().st_size
-    print(f"TF_PROGRESS {total} {total} 100.0%")
-    print(str(path))
+    for percent in (25.0, 50.0, 75.0, 100.0):
+        downloaded = int(total * percent / 100.0)
+        print(f"TF_PROGRESS {downloaded} {total} {percent:.1f}%", flush=True)
+    print(str(path), flush=True)
     return 0
 
 

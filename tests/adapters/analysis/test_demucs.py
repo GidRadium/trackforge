@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -304,3 +305,15 @@ def test_stem_payload_rejects_negative_duration() -> None:
                 "instrumental": 0.5,
             },
         )
+
+
+@pytest.mark.asyncio
+async def test_demucs_does_not_invent_progress_percent(tmp_path: Path) -> None:
+    observer = _observer(_manager(tmp_path))
+    events: list[tuple[float, str | None]] = []
+    ctx = replace(_context(tmp_path), report_progress=lambda f, m: events.append((f, m)))
+
+    result = await observer.run(ctx)
+
+    assert result.status is StepResultStatus.SUCCEEDED
+    assert events == []

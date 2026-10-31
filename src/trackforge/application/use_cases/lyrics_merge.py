@@ -112,6 +112,28 @@ class LyricsMerger:
         asr_quality = _asr_quality(asr_transcript)
 
         language = _merge_language(asr_transcript, lrc_candidate, plain_candidate, warnings)
+        if (
+            nightcore
+            and speed_factor is None
+            and duration is not None
+            and duration > 0
+            and lrc_document is not None
+            and lrc_document.lines
+        ):
+            # LRCLIB often returns the original-tempo timings while the audio
+            # is a nightcore speed-up.  The last lyric line gives a safe
+            # lower-bound duration of the original song; only use it when the
+            # LRC clearly extends past the measured derivative audio.
+            last_ms = max(line.timestamp_ms for line in lrc_document.lines)
+            measured_ms = duration * 1000.0
+            if measured_ms > 0 and last_ms > measured_ms * 1.02:
+                inferred = last_ms / measured_ms
+                if 1.02 <= inferred <= 2.5:
+                    speed_factor = inferred
+                    warnings = [
+                        item for item in warnings if item != "nightcore_speed_factor_missing"
+                    ]
+                    warnings.append("nightcore_speed_factor_inferred_from_lrc")
         timing_scale = (1.0 / speed_factor) if nightcore and speed_factor else None
         plain: str | None = None
 

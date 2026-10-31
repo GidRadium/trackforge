@@ -150,7 +150,7 @@ async def test_derivative_title_is_derived_without_duplicate(
         if claim.subject is Subject.DERIVATIVE and claim.field == "transformation"
     ]
     assert {claim.value for claim in transformations} >= {"nightcore", "remix"}
-    assert resolved.fields["title"] == "Song (Nightcore)"
+    assert resolved.fields["title"] == "Song"
     assert resolved.fields["artist"] == "Artist"
 
 
@@ -377,3 +377,87 @@ async def test_asr_and_plain_lyrics_merge_into_separate_fields(
     assert fields["elrc"][0].startswith("[00:01.00]<00:01.00>hello")
     assert fields["language"] == ["en"]
     assert "[00:" not in fields["lyrics"][0]
+
+
+async def test_llm_source_identity_feeds_original_artist_claims(
+    catalog_context: CatalogContext,
+    create_item: Callable[..., Any],
+    make_observations: Callable[..., dict[str, bytes]],
+) -> None:
+    from trackforge.application.dto.observations import (
+        SourceIdentityPayload,
+        SourceMetadataPayload,
+    )
+
+    item_id = await create_item()
+    observed = make_observations(
+        title="",
+        artists=(),
+        album=None,
+        path=None,
+    )
+    observed_str: dict[str, bytes] = {str(key): value for key, value in observed.items()}
+    source = SourceMetadataPayload(
+        external_id="video-1",
+        title="{71.3} Nightcore - Invincible (with lyrics)",
+        uploader="Rock Goes Nightcore",
+        description="Original artist: Breakaway",
+        duration_seconds=180.0,
+    )
+    identity = SourceIdentityPayload(
+        title="Invincible",
+        artist="Breakaway",
+        originalartist="Breakaway",
+        qualifier="Nightcore",
+        source_title=source.title,
+        uploader=source.uploader,
+        confidence=0.93,
+        method="llm",
+        warnings=(),
+    )
+    observed_str["source.metadata.v1"] = source.model_dump_json().encode("utf-8")
+    observed_str["source.identity.v1"] = identity.model_dump_json().encode("utf-8")
+
+    view = await catalog_context.interpret_item().interpret(item_id, observed_str)
+    fields = _field_values(view)
+
+    assert "Invincible" in fields["title"]
+    assert "Breakaway" in fields["artist"]
+    assert fields["originalartist"] == ["Breakaway"]
+    assert fields["qualifier"] == ["Nightcore"]
+    llm_claims = [claim for claim in view.claims if claim.source == "llm"]
+    assert any(claim.field == "originalartist" for claim in llm_claims)
+
+
+async def test_mix_tracks_keep_raw_title_and_uploader(
+    catalog_context: CatalogContext,
+    create_item: Callable[..., Any],
+    make_observations: Callable[..., dict[str, bytes]],
+) -> None:
+    from trackforge.application.dto.observations import SourceMetadataPayload
+
+    item_id = await create_item()
+    observed = make_observations(
+        title="",
+        artists=(),
+        album=None,
+        path=None,
+        duration=3701.0,
+    )
+    observed_str: dict[str, bytes] = {str(key): value for key, value in observed.items()}
+    source = SourceMetadataPayload(
+        external_id="mix-1",
+        title="[1] Nightcore Rock Mix",
+        artist="Rock Goes Nightcore Mixes, RGN, Rock Goes Nightcore",
+        uploader="Rock Goes Nightcore Mixes",
+        duration_seconds=3701.0,
+    )
+    observed_str["source.metadata.v1"] = source.model_dump_json().encode("utf-8")
+
+    view = await catalog_context.interpret_item().interpret(item_id, observed_str)
+    fields = _field_values(view)
+
+    assert fields["title"] == ["[1] Nightcore Rock Mix"]
+    assert fields["artist"] == ["Rock Goes Nightcore Mixes"]
+    assert fields.get("originalartist", []) == []
+    assert fields.get("qualifier", []) == []

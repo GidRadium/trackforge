@@ -23,6 +23,19 @@ Observation → Claim → Decision → Render
 
 Каждое значение имеет источник, метод, уверенность и доказательство. Оригиналы не изменяются; результат можно пересобрать, а спорные случаи уходят в review.
 
+## Конфигурация
+
+Все доступные параметры собраны в комментариях в [`config.example.toml`](config.example.toml):
+
+```bash
+mkdir -p ~/.config/trackforge
+cp config.example.toml ~/.config/trackforge/config.toml
+cp .env.example .env   # секреты; chmod 600 .env
+```
+
+Приоритет: параметры CLI > переменные окружения > `config.toml` > значения по умолчанию.
+Секреты (`LLM API key`, AcoustID, MusicBrainz User-Agent) не хранятся в `config.toml`.
+
 ## Требования (предварительно)
 
 - Python 3.12+;

@@ -24,6 +24,14 @@ from trackforge.application.dto.db import (
     StepRecord,
     StepStatus,
 )
+from trackforge.application.dto.progress import (
+    STAGE_INDEX,
+    HandlerReport,
+    HandlerStatus,
+    ItemProgress,
+    ProgressContext,
+    ProgressStatus,
+)
 from trackforge.application.ports.execution import (
     Capability,
     StepContext,
@@ -32,6 +40,7 @@ from trackforge.application.ports.execution import (
     StepResultStatus,
     StepWarning,
 )
+from trackforge.application.ports.progress import ProgressSink
 from trackforge.application.ports.repositories import RunRepository
 from trackforge.application.ports.storage import ArtifactStore, StorageError
 from trackforge.application.services.canonical_json import canonical_json, sha256_hex
@@ -80,6 +89,9 @@ class StepOutcome:
     duration_ms: int
     warning_codes: tuple[str, ...] = ()
     error: dict[str, Any] | None = None
+    summary: str | None = None
+    details: Mapping[str, Any] = field(default_factory=dict)
+    cache_hit: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +104,7 @@ class RunResult:
     warnings: tuple[StepWarning, ...]
     artifacts: Mapping[str, StepInput] = field(default_factory=dict)
     error: dict[str, Any] | None = None
+    handler_reports: tuple[HandlerReport, ...] = ()
 
     @property
     def completed(self) -> bool:
@@ -120,6 +133,9 @@ class _NodeResult:
     artifacts: tuple[StepInput, ...] = ()
     cached: bool = False
     degraded: bool = False
+    summary: str | None = None
+    details: Mapping[str, Any] = field(default_factory=dict)
+    report: HandlerReport | None = None
 
 
 @dataclass
@@ -137,6 +153,10 @@ class _ExecutionState:
     outcomes: dict[str, StepOutcome] = field(default_factory=dict)
     warnings: list[StepWarning] = field(default_factory=list)
     degraded: set[str] = field(default_factory=set)
+    reports: list[HandlerReport] = field(default_factory=list)
+    progress_sink: ProgressSink | None = None
+    progress_context: ProgressContext | None = None
+    active_capabilities: list[str] = field(default_factory=list)
 
     @property
     def input_keys(self) -> set[str]:
@@ -243,6 +263,8 @@ class Executor:
         force_steps: Iterable[str] | None = None,
         force_all: bool | None = None,
         initial_inputs: Mapping[ArtifactType | str, StepInput] | None = None,
+        progress: ProgressSink | None = None,
+        progress_context: ProgressContext | None = None,
     ) -> RunResult:
         """Create a run, persist its steps, and execute the plan."""
 
@@ -265,6 +287,8 @@ class Executor:
             force_steps=force_steps,
             force_all=force_all,
             initial_inputs=initial_inputs,
+            progress=progress,
+            progress_context=progress_context,
         )
 
     async def execute(
@@ -278,6 +302,8 @@ class Executor:
         force_steps: Iterable[str] | None = None,
         force_all: bool | None = None,
         initial_inputs: Mapping[ArtifactType | str, StepInput] | None = None,
+        progress: ProgressSink | None = None,
+        progress_context: ProgressContext | None = None,
     ) -> RunResult:
         """Alias for :meth:`run`."""
 
@@ -290,6 +316,8 @@ class Executor:
             force_steps=force_steps,
             force_all=force_all,
             initial_inputs=initial_inputs,
+            progress=progress,
+            progress_context=progress_context,
         )
 
     async def resume(
@@ -301,6 +329,8 @@ class Executor:
         force_steps: Iterable[str] | None = None,
         force_all: bool | None = None,
         initial_inputs: Mapping[ArtifactType | str, StepInput] | None = None,
+        progress: ProgressSink | None = None,
+        progress_context: ProgressContext | None = None,
     ) -> RunResult:
         """Recover a running/paused run and continue only unfinished steps."""
 
@@ -326,6 +356,8 @@ class Executor:
             force_all=force_all,
             initial_inputs=initial_inputs,
             resuming=True,
+            progress=progress,
+            progress_context=progress_context,
         )
 
     # -- validation ---------------------------------------------------
@@ -364,6 +396,8 @@ class Executor:
         force_all: bool | None = None,
         initial_inputs: Mapping[ArtifactType | str, StepInput] | None = None,
         resuming: bool = False,
+        progress: ProgressSink | None = None,
+        progress_context: ProgressContext | None = None,
     ) -> RunResult:
         run = await self._jobs.start(run.id)
         cancel_event = self._cancel_events.setdefault(str(run.id), asyncio.Event())
@@ -380,6 +414,8 @@ class Executor:
             cancel_event=cancel_event,
             forced=forced,
             force_all=self._force_all if force_all is None else force_all,
+            progress_sink=progress,
+            progress_context=progress_context,
         )
         state.warnings.extend(plan.warnings)
         if initial_inputs:
@@ -488,6 +524,22 @@ class Executor:
                         state.outcomes[node.node_id] = self._outcome(
                             state, node, step, duration_ms=0
                         )
+                        report = self._build_report(
+                            state,
+                            node,
+                            status=HandlerStatus.CACHED,
+                            started_at=step.started_at or utc_now(),
+                            duration_ms=0,
+                            attempts=step.attempts,
+                            artifacts=tuple(
+                                str(artifact.type) for artifact in entry.result.artifacts
+                            ),
+                            summary=entry.result.summary or "restored from cache",
+                            details=entry.result.details,
+                            warnings=entry.result.warnings,
+                            cache_hit=True,
+                        )
+                        self._emit_report(state, report)
                         restored = True
                 except (CacheMiss, StorageError, PipelineError):
                     restored = False
@@ -604,6 +656,22 @@ class Executor:
             ):
                 return "wait"
             return "blocked"
+        # Optional artifacts must not block a capability when their provider
+        # fails or when local input has no source metadata at all.  If the
+        # provider is still in flight we wait so the consumer can use it.
+        for requirement in node.optional_requires:
+            key = artifact_key(requirement)
+            if key in state.available or key in input_keys:
+                continue
+            providers = state.plan.provider_groups.get(key, ())
+            statuses = [
+                state.node_status.get(provider, StepStatus.PENDING) for provider in providers
+            ]
+            if any(
+                status in (StepStatus.PENDING, StepStatus.READY, StepStatus.RUNNING)
+                for status in statuses
+            ):
+                return "wait"
         return "run"
 
     async def _execute_node(
@@ -681,14 +749,32 @@ class Executor:
                         status="cached",
                         warning_codes=[warning.code for warning in cache_warnings],
                     )
+                    cached_inputs = tuple(artifact.to_step_input() for artifact in entry.artifacts)
+                    report = self._build_report(
+                        state,
+                        node,
+                        status=HandlerStatus.CACHED,
+                        started_at=step.started_at or utc_now(),
+                        duration_ms=0,
+                        attempts=step.attempts,
+                        artifacts=tuple(str(artifact.type) for artifact in entry.result.artifacts),
+                        summary=entry.result.summary or "cached from artifact store",
+                        details=entry.result.details,
+                        warnings=cache_warnings,
+                        cache_hit=True,
+                    )
+                    self._emit_report(state, report)
                     return _NodeResult(
                         node_id=node.node_id,
                         step_id=step.id,
                         status=StepStatus.CACHED,
                         warnings=tuple(cache_warnings),
                         duration_ms=int((time.monotonic() - started) * 1000),
-                        artifacts=tuple(artifact.to_step_input() for artifact in entry.artifacts),
+                        artifacts=cached_inputs,
                         cached=True,
+                        summary=entry.result.summary,
+                        details=entry.result.details,
+                        report=report,
                     )
             except (CacheMiss, StorageError, PipelineError, ValueError):
                 pass
@@ -709,6 +795,7 @@ class Executor:
                 status=StepStatus.SKIPPED,
                 warnings=(warning,),
                 duration_ms=int((time.monotonic() - started) * 1000),
+                summary=warning.message,
             )
 
         if step.status is StepStatus.PENDING:
@@ -741,6 +828,7 @@ class Executor:
                 force=self._is_forced(state, node),
                 cancelled=state.cancel_event,
                 report_progress=self._progress_callback(state, node, step),
+                report_message=self._message_callback(state, node, step),
             )
             try:
                 result = await capability.run(context)
@@ -800,13 +888,31 @@ class Executor:
                     warning_codes=[item.code for item in warnings],
                     message="step failed",
                 )
+                duration_ms = int((time.monotonic() - started) * 1000)
+                report = self._build_report(
+                    state,
+                    node,
+                    status=HandlerStatus.FAILED,
+                    started_at=step.started_at or utc_now(),
+                    duration_ms=duration_ms,
+                    attempts=failed.attempts,
+                    artifacts=(),
+                    summary=str(exc) or type(exc).__name__,
+                    details=_error_payload(exc),
+                    warnings=warnings,
+                    error=str(exc) or type(exc).__name__,
+                )
+                self._emit_report(state, report)
                 return _NodeResult(
                     node_id=node.node_id,
                     step_id=step.id,
                     status=StepStatus.FAILED,
                     warnings=tuple(warnings),
-                    duration_ms=int((time.monotonic() - started) * 1000),
+                    duration_ms=duration_ms,
                     error=_error_payload(exc),
+                    summary=str(exc) or type(exc).__name__,
+                    details=_error_payload(exc),
+                    report=report,
                 )
 
             if result.status is StepResultStatus.SKIPPED:
@@ -837,12 +943,29 @@ class Executor:
                     status="skipped",
                     warning_codes=[item.code for item in warnings],
                 )
+                duration_ms = int((time.monotonic() - started) * 1000)
+                report = self._build_report(
+                    state,
+                    node,
+                    status=HandlerStatus.SKIPPED,
+                    started_at=step.started_at or utc_now(),
+                    duration_ms=duration_ms,
+                    attempts=skipped.attempts,
+                    artifacts=(),
+                    summary=result.summary or (warnings[0].message if warnings else "skipped"),
+                    details=result.details,
+                    warnings=warnings,
+                )
+                self._emit_report(state, report)
                 return _NodeResult(
                     node_id=node.node_id,
                     step_id=step.id,
                     status=StepStatus.SKIPPED,
                     warnings=tuple(warnings),
-                    duration_ms=int((time.monotonic() - started) * 1000),
+                    duration_ms=duration_ms,
+                    summary=result.summary,
+                    details=result.details,
+                    report=report,
                 )
 
             warnings.extend(result.warnings)
@@ -919,14 +1042,31 @@ class Executor:
                 status=event_status,
                 warning_codes=[warning.code for warning in warnings],
             )
+            duration_ms = int((time.monotonic() - started) * 1000)
+            report = self._build_report(
+                state,
+                node,
+                status=(HandlerStatus.DEGRADED if is_degraded else HandlerStatus.SUCCEEDED),
+                started_at=step.started_at or utc_now(),
+                duration_ms=duration_ms,
+                attempts=succeeded.attempts,
+                artifacts=tuple(str(artifact.type) for artifact in result.artifacts),
+                summary=result.summary,
+                details=result.details,
+                warnings=warnings,
+            )
+            self._emit_report(state, report)
             return _NodeResult(
                 node_id=node.node_id,
                 step_id=step.id,
                 status=StepStatus.SUCCEEDED,
                 warnings=tuple(warnings),
-                duration_ms=int((time.monotonic() - started) * 1000),
+                duration_ms=duration_ms,
                 artifacts=step_inputs,
                 degraded=is_degraded,
+                summary=result.summary,
+                details=result.details,
+                report=report,
             )
 
     async def _cancel_node(
@@ -953,15 +1093,30 @@ class Executor:
         state.node_steps[node.node_id] = current
         state.node_status[node.node_id] = current.status
         state.warnings.extend(payload)
+        duration_ms = int((time.monotonic() - started) * 1000)
         self._emit(
             EventType.STEP_SKIPPED,
             state,
             node=node,
             step=current,
-            duration_ms=int((time.monotonic() - started) * 1000),
+            duration_ms=duration_ms,
             status="cancelled",
             warning_codes=[warning.code for warning in payload],
+            message="cancelled",
         )
+        report = self._build_report(
+            state,
+            node,
+            status=HandlerStatus.SKIPPED,
+            started_at=current.started_at or utc_now(),
+            duration_ms=duration_ms,
+            attempts=current.attempts,
+            artifacts=(),
+            summary="cancelled",
+            details=None,
+            warnings=payload,
+        )
+        self._emit_report(state, report)
         return _NodeResult(
             node_id=node.node_id,
             step_id=step.id,
@@ -1003,6 +1158,19 @@ class Executor:
         state.node_steps[node.node_id] = current
         state.node_status[node.node_id] = current.status
         state.outcomes[node.node_id] = self._outcome(state, node, current, duration_ms=0)
+        report = self._build_report(
+            state,
+            node,
+            status=HandlerStatus.SKIPPED,
+            started_at=current.started_at or utc_now(),
+            duration_ms=0,
+            attempts=current.attempts,
+            artifacts=(),
+            summary=message,
+            details=None,
+            warnings=(warning,),
+        )
+        self._emit_report(state, report)
 
     def _apply_result(self, state: _ExecutionState, result: _NodeResult) -> None:
         node = state.plan.node(result.node_id)
@@ -1024,6 +1192,9 @@ class Executor:
             duration_ms=result.duration_ms,
             warning_codes=tuple(warning.code for warning in result.warnings),
             error=result.error,
+            summary=result.summary,
+            details=dict(result.details),
+            cache_hit=result.cached,
         )
 
     async def _finalize(
@@ -1109,6 +1280,7 @@ class Executor:
             warnings=warnings,
             artifacts=dict(state.available),
             error=error if persisted.error is None else persisted.error,
+            handler_reports=tuple(state.reports),
         )
         self._emit_terminal(state, result)
         return result
@@ -1148,6 +1320,7 @@ class Executor:
             duration_ms=duration_ms,
             warning_codes=warning_codes,
             error=step.error,
+            cache_hit=step.status is StepStatus.CACHED,
         )
 
     def _outcome_warnings(
@@ -1186,6 +1359,132 @@ class Executor:
                 )
         return tuple(warnings)
 
+    def _build_report(
+        self,
+        state: _ExecutionState,
+        node: Node,
+        *,
+        status: HandlerStatus,
+        started_at: datetime,
+        duration_ms: int,
+        attempts: int,
+        artifacts: Iterable[str],
+        summary: str | None,
+        details: Mapping[str, Any] | None,
+        warnings: Iterable[StepWarning],
+        error: str | None = None,
+        cache_hit: bool = False,
+    ) -> HandlerReport | None:
+        """Build a handler report; observability errors never fail the run."""
+
+        try:
+            manifest = self._capabilities[node.capability_id].manifest
+            context = state.progress_context
+            stage = context.stage if context is not None else "observe"
+            provider = None
+            raw_provider = node.params.get("provider") if isinstance(node.params, Mapping) else None
+            if isinstance(raw_provider, str) and raw_provider.strip():
+                provider = raw_provider.strip()
+            warning_list = tuple(
+                warning.message if warning.message else warning.code for warning in warnings
+            )
+            fallback = {
+                HandlerStatus.SUCCEEDED: f"{node.capability_id} completed",
+                HandlerStatus.DEGRADED: f"{node.capability_id} completed in degraded mode",
+                HandlerStatus.CACHED: "cached from artifact store",
+                HandlerStatus.SKIPPED: warning_list[0] if warning_list else "skipped",
+                HandlerStatus.FAILED: error or f"{node.capability_id} failed",
+            }[status]
+            return HandlerReport(
+                scope_id=(context.scope_id if context is not None else str(state.run.id)),
+                collection_id=(context.collection_id if context is not None else None),
+                item_id=str(state.item_id),
+                position=(context.position if context is not None else 1),
+                capability_id=node.capability_id,
+                provider=provider,
+                kind=manifest.kind.value,
+                stage=stage,
+                stage_index=STAGE_INDEX[stage],
+                status=status,
+                started_at=started_at,
+                duration_ms=0 if status is HandlerStatus.CACHED else max(0, duration_ms),
+                attempts=max(0, attempts),
+                cache_hit=cache_hit or status is HandlerStatus.CACHED,
+                artifacts=tuple(artifacts),
+                summary=summary or fallback,
+                details=dict(details or {}),
+                warnings=warning_list,
+                error=error,
+            )
+        except Exception:
+            return None
+
+    @staticmethod
+    def _provider_for(node: Node) -> str | None:
+        capability = node.capability_id.casefold()
+        for marker, provider in (
+            ("musicbrainz", "musicbrainz"),
+            ("acoustid", "acoustid"),
+            ("lrclib", "lrclib"),
+            ("cover", "cover_art_archive"),
+            ("whisper", "faster-whisper"),
+            ("demucs", "demucs"),
+            ("ffprobe", "ffprobe"),
+            ("ytdlp", "ytdlp"),
+            ("chromaprint", "chromaprint"),
+        ):
+            if marker in capability:
+                return provider
+        return None
+
+    def _emit_report(
+        self,
+        state: _ExecutionState,
+        report: HandlerReport | None,
+    ) -> None:
+        if report is None:
+            return
+        state.reports.append(report)
+        sink = state.progress_sink
+        if sink is None:
+            return
+        try:
+            sink.handler(report)
+        except Exception:
+            return
+
+    def _emit_item_progress(
+        self,
+        state: _ExecutionState,
+        *,
+        capability_id: str,
+        fraction: float | None,
+        message: str | None,
+    ) -> None:
+        sink = state.progress_sink
+        context = state.progress_context
+        if sink is None or context is None:
+            return
+        stage = context.stage
+        try:
+            sink.update(
+                ItemProgress(
+                    scope_id=context.scope_id,
+                    collection_id=context.collection_id,
+                    item_id=str(state.item_id),
+                    position=context.position,
+                    total=context.total,
+                    label=context.label,
+                    stage=stage,
+                    stage_index=STAGE_INDEX[stage],
+                    status=ProgressStatus.RUNNING,
+                    percent=fraction,
+                    message=message or capability_id,
+                )
+            )
+        except Exception:
+            return
+
     # -- helpers ------------------------------------------------------
 
     def _inputs_for(
@@ -1194,7 +1493,7 @@ class Executor:
         node: Node,
     ) -> dict[ArtifactType, StepInput]:
         inputs: dict[ArtifactType, StepInput] = {}
-        for requirement in node.requires:
+        for requirement in (*node.requires, *node.optional_requires):
             key = artifact_key(requirement)
             value = state.available.get(key)
             if value is not None:
@@ -1336,6 +1635,24 @@ class Executor:
 
         return report
 
+    def _message_callback(
+        self,
+        state: _ExecutionState,
+        node: Node,
+        step: StepRecord,
+    ) -> Callable[[str | None], None]:
+        def report(message: str | None) -> None:
+            self._emit(
+                EventType.STEP_PROGRESS,
+                state,
+                node=node,
+                step=step,
+                status="running",
+                message=message,
+            )
+
+        return report
+
     def _emit(
         self,
         event_type: EventType,
@@ -1350,8 +1667,32 @@ class Executor:
         progress: float | None = None,
     ) -> Event:
         codes = tuple(warning_codes)
-        if progress is not None:
-            message = f"{progress:.0%} {message}" if message else f"{progress:.0%}"
+        context = state.progress_context
+        if node is not None and event_type.is_step:
+            capability_id = node.capability_id
+            if event_type is EventType.STEP_STARTED:
+                if capability_id not in state.active_capabilities:
+                    state.active_capabilities.append(capability_id)
+            elif event_type in {
+                EventType.STEP_CACHED,
+                EventType.STEP_FINISHED,
+                EventType.STEP_FAILED,
+                EventType.STEP_SKIPPED,
+            }:
+                if capability_id in state.active_capabilities:
+                    state.active_capabilities.remove(capability_id)
+            if event_type is EventType.STEP_PROGRESS:
+                detail = f"{capability_id}: {message}" if message else capability_id
+            elif state.active_capabilities:
+                detail = ", ".join(state.active_capabilities) + " (running)"
+            else:
+                detail = f"{capability_id}: {status or event_type.value}"
+            self._emit_item_progress(
+                state,
+                capability_id=capability_id,
+                fraction=progress,
+                message=detail,
+            )
         return self._events.publish(
             Event(
                 type=event_type,
@@ -1364,6 +1705,13 @@ class Executor:
                 status=status,
                 warning_codes=codes,
                 message=message,
+                progress=progress,
+                item_position=None if context is None else context.position,
+                item_total=None if context is None else context.total,
+                item_label=None if context is None else context.label,
+                stage=None if context is None else context.stage,
+                stage_index=None if context is None else context.stage_index,
+                stage_total=None if context is None else 7,
             )
         )
 

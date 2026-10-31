@@ -160,19 +160,19 @@ async def test_derivative_title_is_derived_and_not_duplicated(
     first = await catalog_context.resolve_item().resolve(item_id)
     second = await catalog_context.resolve_item().resolve(item_id)
 
-    assert first.fields["title"] == "Song (Nightcore)"
-    assert second.fields["title"] == "Song (Nightcore)"
+    assert first.fields["title"] == "Song"
+    assert second.fields["title"] == "Song"
     async with catalog_context.unit_of_work() as uow:
         record = await uow.decisions.get_record(second.decision_record_id)
     assert record is not None
     title = record.decision_for("title")
     assert title is not None
-    assert title.value == "Song (Nightcore)"
+    assert title.value == "Song"
     assert title.policy_id == "title.derivative"
     assert title.chosen_claim_id is not None
     assert transformation.id in title.derived_from
     assert path_title.id in title.alternatives
-    assert title.rationale.count("Nightcore") == 1
+    assert "separately" in title.rationale
 
 
 async def test_title_with_existing_qualifier_is_not_modified(

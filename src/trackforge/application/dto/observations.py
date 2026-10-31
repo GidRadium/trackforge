@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from trackforge.application.dto.progress import HandlerReport
 from trackforge.application.ports.storage import is_sha256_hex
 from trackforge.domain.model.ids import ItemId, MediaId
 from trackforge.domain.model.item import ItemStatus
@@ -227,6 +228,22 @@ class SourceMetadataPayload(BaseModel):
     webpage_url: str | None = None
 
 
+class SourceIdentityPayload(BaseModel):
+    """Schema for the ``source.identity.v1`` LLM/heuristic extraction."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    title: str | None = None
+    artist: str | None = None
+    originalartist: str | None = None
+    qualifier: str | None = None
+    source_title: str | None = None
+    uploader: str | None = None
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    method: str = Field(default="heuristic", min_length=1)
+    warnings: list[str] = Field(default_factory=list)
+
+
 @dataclass(frozen=True, slots=True)
 class ObservationWarning:
     """A user-visible warning attached to an observation run."""
@@ -284,6 +301,7 @@ class ObservationView:
     artifacts: tuple[ArtifactSummary, ...] = ()
     steps: tuple[ObservationStepView, ...] = ()
     warnings: tuple[ObservationWarning, ...] = field(default_factory=tuple)
+    step_reports: tuple[HandlerReport, ...] = ()
 
     @property
     def cache_hit(self) -> bool:
@@ -317,6 +335,7 @@ __all__ = [
     "ProbeStream",
     "RawTagInfo",
     "SourceChapter",
+    "SourceIdentityPayload",
     "SourceMetadataPayload",
     "SourceThumbnail",
     "TagReaderInfo",

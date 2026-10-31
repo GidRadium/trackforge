@@ -32,6 +32,7 @@ from trackforge.adapters.metadata.observers import (
     MusicBrainzObserver,
 )
 from trackforge.adapters.metadata.source_cover import SourceCoverObserver
+from trackforge.adapters.metadata.source_identity import SourceIdentityObserver
 from trackforge.adapters.models.local import LocalModelManager
 from trackforge.adapters.persistence.feedback import JsonlFeedbackJournal
 from trackforge.adapters.persistence.filesystem.artifacts import FileSystemArtifactStore
@@ -59,7 +60,12 @@ from trackforge.application.ports.ranking import ClaimRanker
 from trackforge.application.ports.rendering import Renderer, TagReader, TagWriter
 from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.ports.sources import CollectionResolver, SourceResolver
+from trackforge.application.services.collection_cover import (
+    MAX_COLLECTION_COVER_BYTES,
+    CollectionCoverService,
+)
 from trackforge.application.services.llm_guardrails import LLMGuardrails
+from trackforge.application.services.progress import ProgressBoard
 from trackforge.application.services.prompts import PromptLibrary
 from trackforge.application.services.proxy_routing import ProxyRouter
 from trackforge.application.use_cases.acquire_item import AcquireItem
@@ -249,7 +255,7 @@ class CatalogContext:
 
         return build_plan_collection(self.config)
 
-    def process_collection(self) -> ProcessCollection:
+    def process_collection(self, progress: ProgressBoard | None = None) -> ProcessCollection:
         """Build the sequential collection processor for this catalog."""
 
         return build_process_collection(
@@ -257,6 +263,7 @@ class CatalogContext:
             self.unit_of_work,
             cas=self.cas,
             artifact_store=self.artifact_store,
+            progress=progress,
         )
 
     def resume_collection(self) -> ResumeCollection:
@@ -427,18 +434,37 @@ def build_process_collection(
     cas: FileSystemCas | None = None,
     artifact_store: FileSystemArtifactStore | None = None,
     publisher: Publisher | None = None,
+    progress: ProgressBoard | None = None,
 ) -> ProcessCollection:
     """Build the sequential collection runner with a fresh item pipeline."""
+
+    content_store = cas if cas is not None else build_cas(config)
+    cover_client = HttpClient(
+        contact=config.musicbrainz_user_agent or None,
+        offline=config.offline,
+        limiter=HostRateLimiter(),
+        proxy=config.metadata_proxy or None,
+    )
+
+    async def fetch_cover(url: str) -> bytes:
+        return await cover_client.get_bytes(url, max_bytes=MAX_COLLECTION_COVER_BYTES)
 
     return ProcessCollection(
         unit_of_work_factory,
         build_process_item(
             config,
             unit_of_work_factory,
-            cas=cas,
+            cas=content_store,
             artifact_store=artifact_store,
             publisher=publisher,
+            progress=progress,
         ),
+        collection_cover=CollectionCoverService(
+            cas=content_store,
+            fetcher=fetch_cover,
+            enabled=config.source_cover_enabled,
+        ),
+        progress=progress,
     )
 
 
@@ -462,6 +488,10 @@ def build_acquirers(
                 client=_build_ytdlp_client(config),
                 cookie_dir=config.cookies_dir if config is not None else None,
                 cookie_files=config.ytdlp_cookie_files if config is not None else None,
+                download_retries=config.ytdlp_download_retries if config is not None else 2,
+                download_retry_delay=(
+                    config.ytdlp_download_retry_delay if config is not None else 5.0
+                ),
             )
         )
     return tuple(acquirers)
@@ -523,8 +553,28 @@ def build_observer_capabilities(
         else None
     )
 
+    llm_provider = build_llm_provider(config) if config is not None else None
+    source_identity = (
+        SourceIdentityObserver(
+            llm_provider=llm_provider,
+            guardrails=LLMGuardrails(
+                max_cost_usd_per_item=config.llm_max_cost_usd_per_item,
+            ),
+            max_cost_usd=config.llm_max_cost_usd_per_item,
+            max_tokens=config.llm_max_tokens,
+            temperature=config.llm_temperature,
+        )
+        if config is not None and llm_provider is not None
+        else None
+    )
+    optional_identity = (source_identity,) if source_identity is not None else ()
+
     if config is None or not config.metadata_providers_enabled:
-        return (*local, *((source_cover,) if source_cover is not None else ()))
+        return (
+            *local,
+            *optional_identity,
+            *((source_cover,) if source_cover is not None else ()),
+        )
     client = http_client or HttpClient(
         contact=config.musicbrainz_user_agent or None,
         offline=config.offline,
@@ -533,6 +583,7 @@ def build_observer_capabilities(
     )
     return (
         *local,
+        *optional_identity,
         ChromaprintObserver(executable=fpcalc_executable),
         AcoustIdObserver(
             client=client,
@@ -875,6 +926,7 @@ def build_process_item(
     cas: FileSystemCas | None = None,
     artifact_store: FileSystemArtifactStore | None = None,
     publisher: Publisher | None = None,
+    progress: ProgressBoard | None = None,
 ) -> ProcessItem:
     """Build the full local pipeline with one consistent capability set."""
 
@@ -916,6 +968,7 @@ def build_process_item(
             publisher=publisher,
         ),
         library_root=config.library_dir,
+        progress=progress,
     )
 
 

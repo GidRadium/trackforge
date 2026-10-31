@@ -15,6 +15,7 @@ from trackforge.application.dto.observations import (
     ObservationView,
     ObservationWarning,
 )
+from trackforge.application.dto.progress import ProgressContext
 from trackforge.application.ports.execution import Capability, StepInput, StepWarning
 from trackforge.application.ports.observations import (
     ACOUSTID_ARTIFACT,
@@ -26,10 +27,12 @@ from trackforge.application.ports.observations import (
     MUSICBRAINZ_ARTIFACT,
     PATH_STRUCTURE_ARTIFACT,
     PROBE_ARTIFACT,
+    SOURCE_IDENTITY_ARTIFACT,
     SOURCE_METADATA_ARTIFACT,
     SOURCE_SNAPSHOT_ARTIFACT,
     STEMS_ARTIFACT,
 )
+from trackforge.application.ports.progress import ProgressSink
 from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.ports.storage import ArtifactStore, StorageError
 from trackforge.application.services.canonical_json import canonical_json, sha256_hex
@@ -104,6 +107,8 @@ class ObserveItem:
         metadata: bool | None = None,
         enabled: Sequence[str] = (),
         disabled: Sequence[str] = (),
+        progress: ProgressSink | None = None,
+        progress_context: ProgressContext | None = None,
     ) -> ObservationView:
         """Execute observations, update measured media fields, and mark observed.
 
@@ -206,6 +211,8 @@ class ObserveItem:
             )
             if snapshot is not None and has_source_metadata:
                 desired_list.append(SOURCE_METADATA_ARTIFACT)
+                if include_metadata and self._provides(SOURCE_IDENTITY_ARTIFACT):
+                    desired_list.append(SOURCE_IDENTITY_ARTIFACT)
                 if self._provides(COVER_ARTIFACT):
                     desired_list.append(COVER_ARTIFACT)
             else:
@@ -257,6 +264,8 @@ class ObserveItem:
                 profile=analysis_profile.name,
                 mode="auto",
                 initial_inputs=initial_inputs,
+                progress=progress,
+                progress_context=progress_context,
             )
 
             summaries = await self._index_artifacts(uow, run, warnings)
@@ -273,6 +282,7 @@ class ObserveItem:
                 artifacts=summaries,
                 steps=_step_views(run),
                 warnings=_merge_warnings(run.warnings, warnings),
+                step_reports=run.handler_reports,
             )
 
         if run.status is not RunStatus.COMPLETED:

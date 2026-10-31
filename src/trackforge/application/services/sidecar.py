@@ -28,6 +28,18 @@ SIDECAR_SCHEMA_VERSION = 1
 SIDECAR_FILENAME = "trackforge.json"
 BUNDLE_HASH_PLACEHOLDER = ""
 _URL_IN_TEXT_RE = re.compile(r"https?://[^\s]+")
+_YOUTUBE_HOSTS = frozenset(
+    {
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+        "music.youtube.com",
+        "youtube-nocookie.com",
+        "www.youtube-nocookie.com",
+        "youtu.be",
+    }
+)
+_YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,150}$")
 
 
 def _iso_z(value: datetime) -> str:
@@ -46,10 +58,11 @@ def _dedupe(values: Sequence[str]) -> list[str]:
 
 
 def sanitize_source_url(url: str | None) -> str | None:
-    """Remove credentials, query strings, and fragments from a source URL.
+    """Remove credentials/tokens but keep public YouTube video/playlist IDs.
 
     Source pages sometimes carry signed query parameters or tokens.  They are
-    never needed in a portable sidecar.
+    never needed in a portable sidecar, while ``watch?v=...`` and
+    ``playlist?list=...`` identify the actual source.
     """
 
     if url is None:
@@ -57,7 +70,7 @@ def sanitize_source_url(url: str | None) -> str | None:
     text = url.strip()
     if not text:
         return None
-    from urllib.parse import urlsplit, urlunsplit
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
     try:
         parts = urlsplit(text)
@@ -65,28 +78,38 @@ def sanitize_source_url(url: str | None) -> str | None:
         return None
     if not parts.scheme or not parts.netloc:
         return text.split("?", 1)[0].split("#", 1)[0]
-    host = parts.hostname or ""
+    host = (parts.hostname or "").casefold()
     try:
         port = parts.port
     except ValueError:
         port = None
     if port:
         host = f"{host}:{port}"
-    return urlunsplit((parts.scheme, host, parts.path, "", ""))
+    path = parts.path.rstrip("/") or parts.path
+    allowed = {"v"} if path == "/watch" else {"list"} if path == "/playlist" else set()
+    kept: list[tuple[str, str]] = []
+    if host in _YOUTUBE_HOSTS and allowed:
+        for key, value in parse_qsl(parts.query, keep_blank_values=False):
+            if key in allowed and _YOUTUBE_ID_RE.fullmatch(value):
+                kept.append((key, value))
+    return urlunsplit((parts.scheme, host, parts.path, urlencode(kept), ""))
 
 
 @dataclass(frozen=True, slots=True)
 class SidecarSource:
-    """Portable source reference; URLs are stripped of query parameters."""
+    """Portable source reference; secret query parameters are stripped."""
 
     url: str | None = None
     extractor: str | None = None
     source_id: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "url", sanitize_source_url(self.url))
+        url = sanitize_source_url(self.url)
+        source_id = _optional(self.source_id)
+        url = _canonical_youtube_url(url, source_id)
+        object.__setattr__(self, "url", url)
         object.__setattr__(self, "extractor", _optional(self.extractor))
-        object.__setattr__(self, "source_id", _optional(self.source_id))
+        object.__setattr__(self, "source_id", source_id)
 
     def document(self) -> dict[str, Any]:
         return {
@@ -94,6 +117,26 @@ class SidecarSource:
             "extractor": self.extractor,
             "source_id": self.source_id,
         }
+
+
+def _canonical_youtube_url(url: str | None, source_id: str | None) -> str | None:
+    """Restore ``watch?v=<id>`` for older sidecars whose URL lost its query."""
+
+    if url is None or not source_id:
+        return url
+    from urllib.parse import parse_qs, quote, urlsplit
+
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    if (parts.hostname or "").casefold() not in _YOUTUBE_HOSTS or parts.path != "/watch":
+        return url
+    if parse_qs(parts.query).get("v"):
+        return url
+    if not _YOUTUBE_ID_RE.fullmatch(source_id):
+        return url
+    return f"{parts.scheme}://{parts.netloc}/watch?v={quote(source_id)}"
 
 
 @dataclass(frozen=True, slots=True)

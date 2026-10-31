@@ -105,7 +105,7 @@ async def test_range_items_and_skip_filters() -> None:
         CollectionPlanOptions(items="1,3-5", skip="4"),
     )
     assert [item.position for item in selected.selected_items] == [1, 3, 5]
-    assert selected.limits == {"max_items": 500, "total_items": 6, "selected_items": 3}
+    assert selected.limits == {"max_items": 1000, "total_items": 6, "selected_items": 3}
 
 
 @pytest.mark.asyncio
@@ -122,20 +122,20 @@ async def test_tag_basis_is_carried_into_the_plan() -> None:
 
 
 @pytest.mark.asyncio
-async def test_more_than_500_items_is_rejected() -> None:
-    planner = PlanCollection([FakeResolver(collection(501))])
+async def test_more_than_1000_items_is_rejected() -> None:
+    planner = PlanCollection([FakeResolver(collection(1001))])
 
     with pytest.raises(CollectionTooLarge):
         await planner.plan(URL, CollectionPlanOptions())
 
 
 @pytest.mark.asyncio
-async def test_filter_can_select_fewer_than_500_with_warning() -> None:
-    planner = PlanCollection([FakeResolver(collection(501))])
+async def test_filter_can_select_fewer_than_1000_with_warning() -> None:
+    planner = PlanCollection([FakeResolver(collection(1001))])
 
-    plan = await planner.plan(URL, CollectionPlanOptions(start=1, end=500))
+    plan = await planner.plan(URL, CollectionPlanOptions(start=1, end=1000))
 
-    assert len(plan.selected_items) == 500
+    assert len(plan.selected_items) == 1000
     assert any("limited_by_filter" in warning for warning in plan.warnings)
 
 

@@ -248,3 +248,23 @@ def test_mapping_candidates_are_accepted() -> None:
 
     assert result.plain == "hello world"
     assert result.lrc is not None
+
+
+def test_nightcore_infers_speed_from_lrc_span_when_claims_are_missing() -> None:
+    result = LyricsMerger().merge(
+        [
+            _candidate(
+                lrc="[00:10.00]First line\n[00:20.00]Second line\n[03:20.00]Last line\n",
+                plain="First line\nSecond line\nLast line\n",
+            )
+        ],
+        None,
+        [{"transformation": "nightcore"}],
+        160.0,
+    )
+
+    assert "nightcore_speed_factor_inferred_from_lrc" in result.warnings
+    assert "nightcore_speed_factor_missing" not in result.warnings
+    assert result.lrc is not None
+    assert "[00:08.00]First line" in result.lrc
+    assert "[02:40.00]Last line" in result.lrc

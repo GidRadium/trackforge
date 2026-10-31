@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime, time
 from enum import Enum
 from pathlib import Path
@@ -23,6 +23,7 @@ from trackforge.application.dto.collections import (
 )
 from trackforge.application.dto.decisions import ExplanationView
 from trackforge.application.dto.plan import PlanView
+from trackforge.application.dto.progress import HandlerReport
 from trackforge.application.dto.results import (
     DoctorReport,
     PublishResult,
@@ -299,6 +300,99 @@ def print_explanation(view: ExplanationView) -> None:
         typer.echo(f"warning: {warning}", err=True)
 
 
+def print_handler_reports(
+    reports: Sequence[HandlerReport],
+    *,
+    mode: str = "full",
+    labels: Mapping[int, str] | None = None,
+    total: int | None = None,
+    as_json: bool = False,
+    aggregate: bool = False,
+) -> None:
+    """Print per-handler reports after a run.
+
+    ``mode=summary`` aggregates one row per capability; ``off`` prints nothing.
+    Reports never go to stdout when ``--json`` is active.
+    """
+
+    if mode == "off" or as_json or not reports:
+        return
+    label_map = dict(labels or {})
+    if mode == "summary":
+        _print_handler_aggregate(reports)
+        return
+    groups: dict[int, list[HandlerReport]] = {}
+    for report in reports:
+        groups.setdefault(report.position, []).append(report)
+    for position, group in groups.items():
+        item_id = next((report.item_id for report in group if report.item_id), None)
+        label = label_map.get(position)
+        if label is None:
+            label = item_id or f"item {position}"
+        suffix = f"/{total}" if total is not None else ""
+        typer.echo(f"Handler report — [{position}{suffix}] {label}", err=True)
+        for report in group:
+            typer.echo(
+                "  "
+                f"{report.capability_id:<14} "
+                f"{report.status.value:<9} "
+                f"{_duration_text(report.duration_ms):>7}  "
+                f"{report.summary}",
+                err=True,
+            )
+            extras: list[str] = []
+            if report.attempts > 1:
+                extras.append(f"attempts={report.attempts}")
+            if report.cache_hit:
+                extras.append("cached")
+            if report.artifacts:
+                extras.append("artifacts=" + ",".join(report.artifacts[:3]))
+            if report.warnings:
+                extras.append("warning: " + report.warnings[0])
+            if report.error:
+                extras.append("error: " + report.error)
+            if extras:
+                typer.echo(f"{'':<15}{'':<9}{'':<8}" + " | ".join(extras), err=True)
+    if aggregate:
+        _print_handler_aggregate(reports)
+
+
+def _print_handler_aggregate(reports: Sequence[HandlerReport]) -> None:
+    aggregates: dict[str, dict[str, Any]] = {}
+    for report in reports:
+        row = aggregates.setdefault(
+            report.capability_id,
+            {"count": 0, "duration_ms": 0, "statuses": {}},
+        )
+        row["count"] += 1
+        row["duration_ms"] += report.duration_ms
+        status_counts: dict[str, int] = row["statuses"]
+        status_counts[report.status.value] = status_counts.get(report.status.value, 0) + 1
+    typer.echo("Handler report — aggregate", err=True)
+    for capability in sorted(aggregates):
+        row = aggregates[capability]
+        status_text = ", ".join(
+            f"{name} {count}" for name, count in sorted(row["statuses"].items())
+        )
+        typer.echo(
+            f"  {capability:<14} {row['count']:>3}×  "
+            f"{_duration_text(int(row['duration_ms'])):>7}  {status_text}",
+            err=True,
+        )
+
+
+def _duration_text(milliseconds: int) -> str:
+    if milliseconds < 1000:
+        return f"{milliseconds}ms"
+    return f"{milliseconds / 1000:.1f}s"
+
+
+def report_labels(snapshot: Any) -> dict[int, str]:
+    """Extract position→label mapping from a progress snapshot."""
+
+    return {int(item.position): item.label for item in getattr(snapshot, "items", ()) or ()}
+
+
 def print_doctor(report: DoctorReport) -> None:
     for check in report.checks:
         typer.echo(f"[{check.status.value}] {check.name}: {check.message}")
@@ -342,6 +436,8 @@ __all__ = [
     "print_collection_plan",
     "print_collection_run",
     "print_doctor",
+    "print_handler_reports",
+    "report_labels",
     "print_explanation",
     "print_plan",
     "print_publish",

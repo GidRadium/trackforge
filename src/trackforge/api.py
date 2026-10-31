@@ -27,6 +27,10 @@ from trackforge.application.dto.feedback import (
     FeedbackStatsReport,
 )
 from trackforge.application.dto.plan import PlanOptions, PlanView
+from trackforge.application.dto.progress import (
+    CollectionProgressSnapshot,
+    HandlerReport,
+)
 from trackforge.application.dto.results import (
     AnalysisView,
     DoctorReport,
@@ -43,6 +47,7 @@ from trackforge.application.dto.views import (
     ResolveView,
     ReviewView,
 )
+from trackforge.application.services.progress import ProgressBoard
 from trackforge.application.use_cases.process_item import (
     ImportPath,
     ProcessItem,
@@ -79,11 +84,18 @@ class AsyncTrackForge:
         self._process: ProcessItem | None = None
         self._importer: ImportPath | None = None
         self._feedback: _AsyncFeedbackAPI | None = None
+        self._progress = ProgressBoard()
         self._closed = False
 
     @property
     def config(self) -> TrackForgeConfig:
         return self._config
+
+    @property
+    def progress_board(self) -> ProgressBoard:
+        """In-memory live progress shared by runs started through this facade."""
+
+        return self._progress
 
     @property
     def feedback(self) -> _AsyncFeedbackAPI:
@@ -129,6 +141,7 @@ class AsyncTrackForge:
                 self._context.unit_of_work,
                 cas=self._context.cas,
                 artifact_store=self._context.artifact_store,
+                progress=self._progress,
             )
         return self._process
 
@@ -221,7 +234,7 @@ class AsyncTrackForge:
         if opts.dry_run:
             return plan
         context = await self._ensure_open()
-        return await context.process_collection().process_plan(
+        return await context.process_collection(self._progress).process_plan(
             plan,
             opts,
             resume=resume,
@@ -241,12 +254,28 @@ class AsyncTrackForge:
         """Continue a persisted collection from its planned/acquired items."""
 
         context = await self._ensure_open()
-        return await context.resume_collection().resume(
+        return await context.process_collection(self._progress).resume(
             CollectionId(str(collection_id)),
             options,
             fail_fast=fail_fast,
             min_sleep=(self._config.collection_min_sleep if min_sleep is None else min_sleep),
         )
+
+    async def collection_progress(
+        self,
+        collection_id: CollectionId | str,
+    ) -> CollectionProgressSnapshot:
+        """Return the same latest-state snapshot a GUI/SSE consumer would read."""
+
+        return self._progress.snapshot(str(collection_id))
+
+    async def collection_handler_reports(
+        self,
+        collection_id: CollectionId | str,
+    ) -> tuple[HandlerReport, ...]:
+        """Return handler reports accumulated in memory for this run."""
+
+        return self._progress.reports(str(collection_id))
 
     async def list_collections(self) -> tuple[Collection, ...]:
         """Return persisted collections, newest first."""
@@ -688,6 +717,10 @@ class TrackForge:
     def config(self) -> TrackForgeConfig:
         return self._async.config
 
+    @property
+    def progress_board(self) -> ProgressBoard:
+        return self._async.progress_board
+
     def _call[T](
         self,
         function: Callable[..., Coroutine[Any, Any, T]],
@@ -761,6 +794,24 @@ class TrackForge:
             options,
             fail_fast=fail_fast,
             min_sleep=min_sleep,
+        )
+
+    def collection_progress(
+        self,
+        collection_id: CollectionId | str,
+    ) -> CollectionProgressSnapshot:
+        return self._call(
+            self._async.collection_progress,
+            collection_id,
+        )
+
+    def collection_handler_reports(
+        self,
+        collection_id: CollectionId | str,
+    ) -> tuple[HandlerReport, ...]:
+        return self._call(
+            self._async.collection_handler_reports,
+            collection_id,
         )
 
     def list_collections(self) -> tuple[Collection, ...]:

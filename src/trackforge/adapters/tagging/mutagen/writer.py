@@ -29,6 +29,10 @@ _ID3_MANAGED_FRAMES = frozenset(
         "TIT2",
         "TPE1",
         "TPE2",
+        "TPE4",
+        "TOPE",
+        "TIT1",
+        "WOAS",
         "TALB",
         "TDRC",
         "TYER",
@@ -66,6 +70,9 @@ _ID3_MANAGED_TXXX = frozenset(
         "LICENSE",
         "SOURCE_URL",
         "SOURCE_ID",
+        "REMIXER",
+        "ORIGINALARTIST",
+        "SOURCE",
     }
 )
 
@@ -82,6 +89,10 @@ _MP4_MANAGED_ATOMS = frozenset(
         "tmpo",
         "©lyr",
         "©cmt",
+        "©lan",
+        "©ope",
+        "©url",
+        "©grp",
         "covr",
         "cpil",
         "cprt",
@@ -110,6 +121,8 @@ _MP4_MANAGED_FREEFORM = frozenset(
         "LICENSE",
         "SOURCE_URL",
         "SOURCE_ID",
+        "REMIXER",
+        "ORIGINALARTIST",
     }
 )
 
@@ -149,6 +162,10 @@ _VORBIS_MANAGED = frozenset(
         "MUSICBRAINZ_ALBUMARTISTID",
         "ACOUSTID_ID",
         "METADATA_BLOCK_PICTURE",
+        "REMIXER",
+        "ORIGINALARTIST",
+        "GROUPING",
+        "SOURCE",
     }
 )
 
@@ -229,7 +246,12 @@ class MutagenTagWriter:
                 user_action=exc.user_action,
                 context={"path": str(target), "error": exc.message},
             ) from exc
-        mismatches = _compare_tagset(tagset, actual)
+        try:
+            audio = self._open(target)
+            format_name = type(audio).__name__
+        except RenderFailed:
+            format_name = ""
+        mismatches = _compare_tagset(tagset, actual, format_name=format_name)
         if cover is not None:
             if actual_cover is None:
                 mismatches.append(
@@ -336,6 +358,9 @@ class MutagenTagWriter:
             ("TIT2", _one(tagset.title)),
             ("TPE1", list(tagset.artists)),
             ("TPE2", _one(tagset.albumartist)),
+            ("TPE4", _one(tagset.remixer)),
+            ("TOPE", _one(tagset.originalartist)),
+            ("TIT1", _one(tagset.qualifier)),
             ("TALB", _one(tagset.album)),
             ("TDRC", _one(tagset.date)),
             ("TDOR", _one(tagset.originaldate)),
@@ -351,6 +376,8 @@ class MutagenTagWriter:
         for frame_id, values in frames:
             if values:
                 tags.add(_id3_text_frame(module, frame_id, values))
+        if tagset.source_url:
+            tags.add(module.id3.WOAS(url=tagset.source_url))
 
         if tagset.compilation is not None:
             tags.add(
@@ -402,6 +429,10 @@ class MutagenTagWriter:
             "©day": tagset.date,
             "©cmt": tagset.comment,
             "©lyr": tagset.lyrics,
+            "©lan": tagset.language,
+            "©ope": tagset.originalartist,
+            "©url": tagset.source_url,
+            "©grp": tagset.qualifier,
             "cprt": tagset.copyright,
         }
         for atom, value in text_atoms.items():
@@ -531,23 +562,13 @@ def _txxx_values(tagset: TagSet) -> dict[str, str]:
         result["MusicBrainz Artist Id"] = tagset.mb_artist_id
     if tagset.mb_albumartist_id:
         result["MusicBrainz Album Artist Id"] = tagset.mb_albumartist_id
-    if tagset.source_url:
-        result["TRACKFORGE_SOURCE_URL"] = tagset.source_url
-    if tagset.source_id:
-        result["TRACKFORGE_SOURCE_ID"] = tagset.source_id
-    for key, value in tagset.trackforge.items():
-        result[key] = value
     return result
 
 
 def _freeform_values(tagset: TagSet) -> dict[str, str]:
     result: dict[str, str] = {}
-    if tagset.bpm is not None:
-        result["BPM"] = _number_text(tagset.bpm) or ""
     if tagset.key:
         result["KEY"] = tagset.key
-    if tagset.language:
-        result["LANGUAGE"] = tagset.language
     if tagset.label:
         result["LABEL"] = tagset.label
     if tagset.catalog_number:
@@ -574,12 +595,6 @@ def _freeform_values(tagset: TagSet) -> dict[str, str]:
         result["MusicBrainz Album Artist Id"] = tagset.mb_albumartist_id
     if tagset.acoustid:
         result["Acoustid Id"] = tagset.acoustid
-    if tagset.source_url:
-        result["TRACKFORGE_SOURCE_URL"] = tagset.source_url
-    if tagset.source_id:
-        result["TRACKFORGE_SOURCE_ID"] = tagset.source_id
-    for key, value in tagset.trackforge.items():
-        result[key] = value
     return result
 
 
@@ -613,6 +628,8 @@ def _vorbis_values(tagset: TagSet) -> dict[str, list[str]]:
         result["KEY"] = [tagset.key]
     if tagset.language:
         result["LANGUAGE"] = [tagset.language]
+    if tagset.qualifier:
+        result["GROUPING"] = [tagset.qualifier]
     if tagset.label:
         result["LABEL"] = [tagset.label]
     if tagset.catalog_number:
@@ -633,6 +650,10 @@ def _vorbis_values(tagset: TagSet) -> dict[str, list[str]]:
         result["COPYRIGHT"] = [tagset.copyright]
     if tagset.license:
         result["LICENSE"] = [tagset.license]
+    if tagset.remixer:
+        result["REMIXER"] = [tagset.remixer]
+    if tagset.originalartist:
+        result["ORIGINALARTIST"] = [tagset.originalartist]
     if tagset.mb_recording_id:
         result["MUSICBRAINZ_TRACKID"] = [tagset.mb_recording_id]
     if tagset.mb_release_id:
@@ -646,11 +667,7 @@ def _vorbis_values(tagset: TagSet) -> dict[str, list[str]]:
     if tagset.acoustid:
         result["ACOUSTID_ID"] = [tagset.acoustid]
     if tagset.source_url:
-        result["TRACKFORGE_SOURCE_URL"] = [tagset.source_url]
-    if tagset.source_id:
-        result["TRACKFORGE_SOURCE_ID"] = [tagset.source_id]
-    for key, value in tagset.trackforge.items():
-        result[key] = [value]
+        result["SOURCE"] = [tagset.source_url]
     return result
 
 
@@ -696,8 +713,18 @@ def _delete_vorbis_key(tags: Any, key: str) -> bool:
     return False
 
 
-def _compare_tagset(expected: TagSet, actual: TagSet) -> list[TagMismatch]:
+def _compare_tagset(
+    expected: TagSet,
+    actual: TagSet,
+    *,
+    format_name: str = "",
+) -> list[TagMismatch]:
     mismatches: list[TagMismatch] = []
+    unsupported = {"source_id", "originaltitle"}
+    if format_name == "MP4":
+        # MP4 has no dedicated remixer atom; the value is already represented
+        # by ©ART and the comment, so verify must not demand a second copy.
+        unsupported.add("remixer")
 
     def check(field_name: str, expected_value: object, actual_value: object) -> None:
         if expected_value is None:
@@ -725,6 +752,9 @@ def _compare_tagset(expected: TagSet, actual: TagSet) -> list[TagMismatch]:
         "album",
         "date",
         "originaldate",
+        "qualifier",
+        "remixer",
+        "originalartist",
         "track",
         "tracktotal",
         "disc",
@@ -750,13 +780,12 @@ def _compare_tagset(expected: TagSet, actual: TagSet) -> list[TagMismatch]:
         "mb_albumartist_id",
         "acoustid",
     ):
+        if field_name in unsupported:
+            continue
         check(field_name, getattr(expected, field_name), getattr(actual, field_name))
     check("artists", expected.artists, actual.artists)
     check("genre", expected.genre, actual.genre)
     check("bpm", expected.bpm, actual.bpm)
-    for key, value in expected.trackforge.items():
-        if actual.trackforge.get(key) != value:
-            mismatches.append(TagMismatch(f"trackforge.{key}", value, actual.trackforge.get(key)))
     return mismatches
 
 

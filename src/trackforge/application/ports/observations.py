@@ -27,6 +27,7 @@ INITIAL_TAGS_ARTIFACT = ArtifactType.parse("initial.tags.v1")
 PATH_STRUCTURE_ARTIFACT = ArtifactType.parse("path.structure.v1")
 SOURCE_SNAPSHOT_ARTIFACT = ArtifactType.parse("source.snapshot.v1")
 SOURCE_METADATA_ARTIFACT = ArtifactType.parse("source.metadata.v1")
+SOURCE_IDENTITY_ARTIFACT = ArtifactType.parse("source.identity.v1")
 FINGERPRINT_ARTIFACT = ArtifactType.parse("audio.fingerprint.v1")
 ACOUSTID_ARTIFACT = ArtifactType.parse("acoustid.lookup.v1")
 MUSICBRAINZ_ARTIFACT = ArtifactType.parse("musicbrainz.search.v1")
@@ -78,6 +79,7 @@ __all__ = [
     "MUSICBRAINZ_ARTIFACT",
     "PATH_STRUCTURE_ARTIFACT",
     "PROBE_ARTIFACT",
+    "SOURCE_IDENTITY_ARTIFACT",
     "SOURCE_METADATA_ARTIFACT",
     "SOURCE_SNAPSHOT_ARTIFACT",
     "STEMS_ARTIFACT",

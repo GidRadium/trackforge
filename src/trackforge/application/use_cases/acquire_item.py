@@ -53,6 +53,8 @@ def item_view(result: IntakeResult) -> ItemView:
         cas_path=result.media.cas_path,
         source_path=result.file_instance.path,
         reused_media=result.reused_media,
+        container=result.media.container.value,
+        duration_seconds=result.media.duration_seconds,
     )
 
 

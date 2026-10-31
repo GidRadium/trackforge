@@ -31,6 +31,7 @@ from trackforge.domain.model._validation import (
     ensure_datetime,
     ensure_float,
     json_mapping,
+    optional_text,
     require_text,
     utc_now,
 )
@@ -245,6 +246,8 @@ class StepResult:
     warnings: tuple[StepWarning, ...] = ()
     actual_cost: Cost = field(default_factory=Cost)
     status: StepResultStatus = StepResultStatus.SUCCEEDED
+    summary: str | None = None
+    details: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         artifacts = tuple(self.artifacts)
@@ -270,6 +273,8 @@ class StepResult:
             "status",
             coerce_enum(self.status, StepResultStatus, "status"),
         )
+        object.__setattr__(self, "summary", optional_text(self.summary, "summary"))
+        object.__setattr__(self, "details", json_mapping(self.details, "details"))
 
     @classmethod
     def skipped(
@@ -277,6 +282,8 @@ class StepResult:
         *,
         warnings: tuple[StepWarning, ...] = (),
         actual_cost: Cost | None = None,
+        summary: str | None = None,
+        details: Mapping[str, Any] | None = None,
     ) -> StepResult:
         """Build a skipped result without artifacts."""
 
@@ -284,6 +291,8 @@ class StepResult:
             warnings=warnings,
             actual_cost=actual_cost or Cost(),
             status=StepResultStatus.SKIPPED,
+            summary=summary,
+            details=dict(details or {}),
         )
 
     @classmethod
@@ -293,6 +302,8 @@ class StepResult:
         artifacts: tuple[ArtifactDraft, ...] = (),
         warnings: tuple[StepWarning, ...] = (),
         actual_cost: Cost | None = None,
+        summary: str | None = None,
+        details: Mapping[str, Any] | None = None,
     ) -> StepResult:
         """Build a degraded but usable result."""
 
@@ -301,6 +312,8 @@ class StepResult:
             warnings=warnings,
             actual_cost=actual_cost or Cost(),
             status=StepResultStatus.DEGRADED,
+            summary=summary,
+            details=dict(details or {}),
         )
 
     @property
@@ -322,6 +335,7 @@ class StepContext:
     force: bool = False
     cancelled: asyncio.Event = field(default_factory=asyncio.Event)
     report_progress: Callable[[float, str | None], None] | None = None
+    report_message: Callable[[str | None], None] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "inputs", dict(self.inputs))
@@ -345,6 +359,12 @@ class StepContext:
         value = max(0.0, min(1.0, float(fraction)))
         if self.report_progress is not None:
             self.report_progress(value, message)
+
+    def note(self, message: str | None) -> None:
+        """Report a stage note without inventing a measured percentage."""
+
+        if self.report_message is not None:
+            self.report_message(message)
 
 
 @runtime_checkable

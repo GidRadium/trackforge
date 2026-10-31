@@ -21,7 +21,7 @@ import socket
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import SplitResult, urlsplit, urlunsplit
+from urllib.parse import SplitResult, parse_qsl, urlencode, urlsplit, urlunsplit
 
 from trackforge.domain.errors import UnsafeUrl
 
@@ -31,6 +31,18 @@ _LOCAL_SUFFIXES = (".localhost", ".local", ".internal", ".home.arpa")
 _LOCAL_NAMES = frozenset({"localhost", "localhost.localdomain", "ip6-localhost"})
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+_YOUTUBE_HOSTS = frozenset(
+    {
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+        "music.youtube.com",
+        "youtube-nocookie.com",
+        "www.youtube-nocookie.com",
+        "youtu.be",
+    }
+)
+_YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,150}$")
 
 Resolver = Callable[[str, int], Sequence[str]]
 
@@ -286,7 +298,12 @@ UrlGuard = UrlSafetyGuard
 
 
 def sanitize_url(value: str | None) -> str | None:
-    """Remove userinfo, query, and fragment from a URL for display/logging."""
+    """Remove userinfo, secrets, and fragments from a URL for display/logging.
+
+    Public YouTube identifiers (``v`` for a video, ``list`` for a playlist)
+    are preserved because they are the identity of the source, not a secret.
+    Every other query parameter is dropped.
+    """
 
     if value is None:
         return None
@@ -299,7 +316,7 @@ def sanitize_url(value: str | None) -> str | None:
         return text.split("?", 1)[0].split("#", 1)[0]
     if not parts.scheme or not parts.netloc:
         return text.split("?", 1)[0].split("#", 1)[0]
-    host = parts.hostname or ""
+    host = (parts.hostname or "").casefold()
     try:
         port = parts.port
     except ValueError:
@@ -307,7 +324,28 @@ def sanitize_url(value: str | None) -> str | None:
     display_host = f"[{host}]" if ":" in host else host
     if port is not None and port != _DEFAULT_PORTS.get(parts.scheme.lower()):
         display_host = f"{display_host}:{port}"
-    return urlunsplit((parts.scheme, display_host, parts.path, "", ""))
+    query = _safe_source_query(parts.path, host, parts.query)
+    return urlunsplit((parts.scheme, display_host, parts.path, query, ""))
+
+
+def _safe_source_query(path: str, host: str, query: str) -> str:
+    if not query or host not in _YOUTUBE_HOSTS:
+        return ""
+    allowed = (
+        {"v"}
+        if path.rstrip("/") == "/watch"
+        else {"list"}
+        if path.rstrip("/") == "/playlist"
+        else set()
+    )
+    if not allowed:
+        return ""
+    kept: list[tuple[str, str]] = []
+    for key, item in parse_qsl(query, keep_blank_values=False):
+        if key not in allowed or not _YOUTUBE_ID_RE.fullmatch(item):
+            continue
+        kept.append((key, item))
+    return urlencode(kept)
 
 
 def redact_url(value: str | None) -> str | None:

@@ -124,7 +124,7 @@ def test_invalid_tag_basis_exits_two(
     assert not data.exists()
 
 
-def test_more_than_500_folder_items_exits_two(
+def test_more_than_1000_folder_items_exits_two(
     tmp_path: Path,
     cli_dirs: tuple[Path, Path],
     clean_env: None,
@@ -132,7 +132,7 @@ def test_more_than_500_folder_items_exits_two(
     data, library = cli_dirs
     folder = tmp_path / "Large Folder"
     folder.mkdir()
-    for index in range(501):
+    for index in range(1001):
         (folder / f"{index:04d}.mp3").write_bytes(b"x")
 
     result = invoke("plan", str(folder), *cli_paths(data, library), "--json")
@@ -231,3 +231,71 @@ def test_root_add_local_folder_routes_to_collection(
         if path.suffix in {".mp3", ".m4a", ".flac", ".ogg", ".opus"}
     ]
     assert len(audio) == 1
+
+
+def test_no_sidecar_flag_keeps_only_audio_and_lyrics(
+    tmp_path: Path,
+    cli_dirs: tuple[Path, Path],
+    clean_env: None,
+) -> None:
+    skip_without_media_tools()
+    data, library = cli_dirs
+    folder = tmp_path / "No Sidecar Folder"
+    generate_media(folder, "mp3", name="only.mp3")
+
+    result = invoke(
+        "collection",
+        "add",
+        str(folder),
+        *cli_paths(data, library),
+        "--auto",
+        "--min-sleep",
+        "0",
+        "--no-sidecar",
+        "--json",
+    )
+
+    assert result.exit_code == 0, result.stderr
+    published = library / "No Sidecar Folder"
+    assert not list(published.glob("trackforge*.json"))
+    assert list(published.glob("*.mp3")) or list(published.glob("*.flac"))
+
+
+def test_config_download_defaults_apply_when_cli_omits_flags(
+    tmp_path: Path,
+    cli_dirs: tuple[Path, Path],
+    clean_env: None,
+    fake_ytdlp: Path,
+) -> None:
+    skip_without_media_tools()
+    data, library = cli_dirs
+    config_dir = data / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text(
+        """
+[download]
+playlist_items = "2"
+sidecar = false
+progress = "off"
+reports = "off"
+""",
+        encoding="utf-8",
+    )
+
+    result = invoke(
+        "collection",
+        "add",
+        PLAYLIST_URL,
+        *cli_paths(data, library),
+        "--auto",
+        "--min-sleep",
+        "0",
+        "--json",
+    )
+
+    assert result.exit_code == 0, result.stderr
+    payload = parse_json(result)
+    assert payload["processed"] == 1
+    assert [item["position"] for item in payload["items"]] == [2]
+    published = library / "Fixture Playlist Five"
+    assert not list(published.glob("trackforge*.json"))

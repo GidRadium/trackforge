@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import subprocess  # noqa: S404 - explicit argument list, no shell
+import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -360,15 +363,12 @@ class YtDlpClient:
         command.extend(str(item) for item in options.extra_args)
         command.extend(["--", url])
         timeout = options.timeout_seconds or self._timeout_download
-        completed = self._run(command, timeout=timeout, url=url)
-        progress = _parse_progress(completed.stdout or "")
-        if options.progress is not None:
-            for event in progress:
-                try:
-                    options.progress(event)
-                except Exception:  # noqa: S110 - UI callbacks must not break acquisition
-                    # A progress UI must not break a completed download.
-                    pass
+        completed = self._run_streaming(
+            command,
+            timeout=timeout,
+            url=url,
+            progress=options.progress,
+        )
         if completed.returncode != 0:
             raise self._failure(completed.stderr, completed.returncode, url)
         media_path, info = _locate_result(directory, completed.stdout or "")
@@ -393,13 +393,7 @@ class YtDlpClient:
             duration=duration,
         )
 
-    def _run(
-        self,
-        command: Sequence[str],
-        *,
-        timeout: float,
-        url: str | None,
-    ) -> subprocess.CompletedProcess[str]:
+    def _environment(self) -> dict[str, str]:
         # Ambient proxy variables must never leak into a network component.
         # The effective proxy is passed explicitly with ``--proxy`` instead;
         # an empty value forces a direct connection for unconfigured sites.
@@ -408,6 +402,16 @@ class YtDlpClient:
         }
         if self._env is not None:
             env = {**env, **self._env}
+        return env
+
+    def _run(
+        self,
+        command: Sequence[str],
+        *,
+        timeout: float,
+        url: str | None,
+    ) -> subprocess.CompletedProcess[str]:
+        env = self._environment()
         try:
             return subprocess.run(  # noqa: S603 - explicit arg list, shell=False
                 list(command),
@@ -436,6 +440,132 @@ class YtDlpClient:
                 "yt-dlp could not be executed",
                 context={"executable": self._executable, "error": str(exc)},
             ) from exc
+
+    def _run_streaming(
+        self,
+        command: Sequence[str],
+        *,
+        timeout: float,
+        url: str | None,
+        progress: ProgressCallback | None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run a download while parsing progress lines as they arrive."""
+
+        env = self._environment()
+        try:
+            process = subprocess.Popen(  # noqa: S603 - explicit arg list, shell=False
+                list(command),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                shell=False,
+                env=env,
+                start_new_session=True,
+            )
+        except FileNotFoundError as exc:
+            raise DownloaderNotFound(
+                "yt-dlp executable was not found",
+                user_action="Install yt-dlp and ensure it is on PATH.",
+                context={"executable": self._executable},
+            ) from exc
+        except OSError as exc:
+            raise DownloaderNotFound(
+                "yt-dlp could not be executed",
+                context={"executable": self._executable, "error": str(exc)},
+            ) from exc
+
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        stderr_chars = 0
+        stdout_queue: queue.Queue[str | None] = queue.Queue()
+
+        def read_stdout() -> None:
+            stream = process.stdout
+            try:
+                if stream is not None:
+                    for line in stream:
+                        stdout_queue.put(line)
+            finally:
+                stdout_queue.put(None)
+
+        def read_stderr() -> None:
+            nonlocal stderr_chars
+            stream = process.stderr
+            if stream is None:
+                return
+            try:
+                for line in stream:
+                    if stderr_chars < self._max_stderr_bytes * 2:
+                        stderr_lines.append(line)
+                        stderr_chars += len(line)
+            except (OSError, ValueError):
+                return
+
+        stdout_thread = threading.Thread(target=read_stdout, name="ytdlp-stdout", daemon=True)
+        stderr_thread = threading.Thread(target=read_stderr, name="ytdlp-stderr", daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+        deadline = time.monotonic() + timeout
+        last_emit = 0.0
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    process.kill()
+                    process.wait()
+                    raise DownloadTimeout(
+                        "yt-dlp timed out",
+                        retryable=True,
+                        context={"timeout_seconds": timeout, "url": _safe_url(url)},
+                    )
+                try:
+                    line = stdout_queue.get(timeout=min(0.2, remaining))
+                except queue.Empty:
+                    continue
+                if line is None:
+                    break
+                stdout_lines.append(line)
+                event = _parse_progress_line(line)
+                if event is None or progress is None:
+                    continue
+                now = time.monotonic()
+                if event.percent is not None and event.percent >= 1.0:
+                    should_emit = True
+                else:
+                    should_emit = (now - last_emit) >= 0.25
+                if should_emit:
+                    last_emit = now
+                    try:
+                        progress(event)
+                    except Exception:  # noqa: S110 - UI callbacks must not break acquisition
+                        pass
+            try:
+                process.wait(timeout=max(0.1, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired as exc:
+                process.kill()
+                process.wait()
+                raise DownloadTimeout(
+                    "yt-dlp timed out",
+                    retryable=True,
+                    context={"timeout_seconds": timeout, "url": _safe_url(url)},
+                ) from exc
+        finally:
+            stdout_thread.join(timeout=1.0)
+            stderr_thread.join(timeout=1.0)
+            for stream in (process.stdout, process.stderr):
+                try:
+                    if stream is not None:
+                        stream.close()
+                except (OSError, ValueError):
+                    pass
+        return subprocess.CompletedProcess(
+            args=list(command),
+            returncode=process.returncode,
+            stdout="".join(stdout_lines),
+            stderr="".join(stderr_lines),
+        )
 
     def _failure(
         self,
@@ -545,6 +675,21 @@ def _safe_url(url: str | None) -> str | None:
     from trackforge.adapters.http.url_safety import sanitize_url
 
     return sanitize_url(url)
+
+
+def _parse_progress_line(line: str) -> DownloadProgress | None:
+    text = line.strip()
+    if not text.startswith(_PROGRESS_PREFIX):
+        return None
+    parts = text.split()
+    downloaded = _int_or_none(parts[1] if len(parts) > 1 else None)
+    total = _int_or_none(parts[2] if len(parts) > 2 else None)
+    percent = _percent(parts[3] if len(parts) > 3 else None)
+    return DownloadProgress(
+        downloaded_bytes=downloaded,
+        total_bytes=total,
+        percent=percent,
+    )
 
 
 def _parse_progress(stdout: str) -> tuple[DumpProgress, ...]:

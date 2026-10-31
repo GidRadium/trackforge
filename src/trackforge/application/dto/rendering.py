@@ -30,7 +30,7 @@ from trackforge.domain.model.outputs import (
     TargetFormat,
 )
 
-TAG_MAPPING_VERSION = "canonical-v1"
+TAG_MAPPING_VERSION = "canonical-v2"
 RENDER_NAMING_TEMPLATE = "track.{ext}"
 
 COVER_MAX_BYTES = 10 * 1024 * 1024
@@ -440,6 +440,11 @@ class TagSet:
     album: str | None = None
     date: str | None = None
     originaldate: str | None = None
+    originaltitle: str | None = None
+    remixer: str | None = None
+    originalartist: str | None = None
+    qualifier: str | None = None
+    artwork: str | None = None
     track: int | None = None
     tracktotal: int | None = None
     disc: int | None = None
@@ -480,6 +485,11 @@ class TagSet:
             "album",
             "date",
             "originaldate",
+            "originaltitle",
+            "remixer",
+            "originalartist",
+            "qualifier",
+            "artwork",
             "key",
             "language",
             "label",
@@ -527,6 +537,15 @@ class TagSet:
         object.__setattr__(self, "mbids", _mbid_aliases(self.mbids))
         if self.source_url is None and self.source is not None:
             object.__setattr__(self, "source_url", self.source)
+        if self.source_url is not None:
+            from trackforge.application.services.sidecar import sanitize_source_url
+
+            object.__setattr__(
+                self,
+                "source_url",
+                sanitize_source_url(self.source_url),
+            )
+            object.__setattr__(self, "source", self.source_url)
         if self.catalog_number is None and self.catalog is not None:
             object.__setattr__(self, "catalog_number", self.catalog)
         if self.source_url is not None or self.source_id is not None:
@@ -610,6 +629,11 @@ class TagSet:
             album=text("album"),
             date=text("date"),
             originaldate=text("originaldate"),
+            originaltitle=text("originaltitle"),
+            remixer=text("remixer"),
+            originalartist=text("originalartist"),
+            qualifier=text("qualifier"),
+            artwork=text("artwork"),
             track=_int_value(values.get("track")),
             tracktotal=_int_value(values.get("tracktotal")),
             disc=_int_value(values.get("disc")),
@@ -649,6 +673,11 @@ class TagSet:
             "album": self.album,
             "date": self.date,
             "originaldate": self.originaldate,
+            "originaltitle": self.originaltitle,
+            "remixer": self.remixer,
+            "originalartist": self.originalartist,
+            "qualifier": self.qualifier,
+            "artwork": self.artwork,
             "track": self.track,
             "tracktotal": self.tracktotal,
             "disc": self.disc,
@@ -687,6 +716,11 @@ class TagSet:
             album=self.album,
             date=self.date,
             originaldate=self.originaldate,
+            originaltitle=self.originaltitle,
+            remixer=self.remixer,
+            originalartist=self.originalartist,
+            qualifier=self.qualifier,
+            artwork=self.artwork,
             track=self.track,
             tracktotal=self.tracktotal,
             disc=self.disc,

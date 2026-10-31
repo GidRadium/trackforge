@@ -84,3 +84,17 @@ def test_url_redaction_removes_query_userinfo_and_fragment() -> None:
     assert redact_text("failed at https://example.com/x?token=secret here") == (
         "failed at https://example.com/x here"
     )
+
+
+def test_youtube_source_identity_is_preserved_while_tokens_are_removed() -> None:
+    assert (
+        sanitize_url("https://www.youtube.com/watch?v=abc_DEF-123&token=secret")
+        == "https://www.youtube.com/watch?v=abc_DEF-123"
+    )
+    assert (
+        sanitize_url("https://www.youtube.com/playlist?list=PLabc_-123&si=tracking")
+        == "https://www.youtube.com/playlist?list=PLabc_-123"
+    )
+    assert (
+        sanitize_url("https://youtu.be/abc_DEF-123?si=tracking") == "https://youtu.be/abc_DEF-123"
+    )

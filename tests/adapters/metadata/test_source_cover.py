@@ -65,6 +65,19 @@ def _png(width: int, height: int) -> bytes:
     )
 
 
+def _webp(width: int, height: int) -> bytes:
+    return (
+        b"RIFF"
+        + (22).to_bytes(4, "little")
+        + b"WEBP"
+        + b"VP8X"
+        + (10).to_bytes(4, "little")
+        + b"\x00\x00\x00\x00"
+        + (width - 1).to_bytes(3, "little")
+        + (height - 1).to_bytes(3, "little")
+    )
+
+
 def _source(**overrides: Any) -> SourceMetadataPayload:
     data: dict[str, Any] = {
         "external_id": "k9MNcoWj1fo",
@@ -107,7 +120,7 @@ def _context(source: SourceMetadataPayload) -> StepContext:
 async def test_youtube_maxresdefault_is_fetched_and_stored() -> None:
     cas = _FakeCas()
     image = _png(1920, 1080)
-    client = _FakeClient({"https://i.ytimg.com/vi/k9MNcoWj1fo/maxresdefault.jpg": image})
+    client = _FakeClient({"https://img.youtube.com/vi/k9MNcoWj1fo/maxresdefault.jpg": image})
     observer = SourceCoverObserver(client=client, cas=cas)  # type: ignore[arg-type]
 
     result = await observer.run(_context(_source()))
@@ -129,8 +142,14 @@ async def test_falls_back_to_next_thumbnail_when_maxres_is_missing() -> None:
     image = _png(640, 480)
     client = _FakeClient(
         {
-            "https://i.ytimg.com/vi/k9MNcoWj1fo/maxresdefault.jpg": ProviderUnavailable("missing"),
-            "https://i.ytimg.com/vi/k9MNcoWj1fo/sddefault.jpg": image,
+            "https://img.youtube.com/vi/k9MNcoWj1fo/maxresdefault.jpg": ProviderUnavailable(
+                "missing"
+            ),
+            "https://img.youtube.com/vi/k9MNcoWj1fo/hq720.jpg": ProviderUnavailable("missing"),
+            "https://img.youtube.com/vi/k9MNcoWj1fo/maxresdefault.webp": ProviderUnavailable(
+                "missing"
+            ),
+            "https://img.youtube.com/vi/k9MNcoWj1fo/sddefault.jpg": image,
         }
     )
     observer = SourceCoverObserver(client=client, cas=cas)  # type: ignore[arg-type]
@@ -140,6 +159,76 @@ async def test_falls_back_to_next_thumbnail_when_maxres_is_missing() -> None:
     assert result.status is StepResultStatus.SUCCEEDED
     assert result.artifacts[0].payload["candidates"][0]["width"] == 640
     assert any(warning.code == "source_cover_fetch_failed" for warning in result.warnings)
+
+
+async def test_small_maxres_placeholder_falls_back_to_hq720() -> None:
+    cas = _FakeCas()
+    placeholder = _png(120, 90)
+    high_quality = _png(1280, 720)
+    client = _FakeClient(
+        {
+            "https://img.youtube.com/vi/k9MNcoWj1fo/maxresdefault.jpg": placeholder,
+            "https://img.youtube.com/vi/k9MNcoWj1fo/hq720.jpg": high_quality,
+        }
+    )
+    observer = SourceCoverObserver(client=client, cas=cas)  # type: ignore[arg-type]
+
+    result = await observer.run(_context(_source()))
+
+    assert result.status is StepResultStatus.SUCCEEDED
+    candidate = result.artifacts[0].payload["candidates"][0]
+    assert candidate["width"] == 1280
+    assert candidate["height"] == 720
+    assert candidate["url"].endswith("/hq720.jpg")
+    assert any(warning.code == "source_cover_too_small" for warning in result.warnings)
+    assert cas.payloads == [high_quality]
+
+
+async def test_better_lower_priority_candidate_replaces_smaller_one() -> None:
+    cas = _FakeCas()
+    medium = _png(640, 360)
+    high_quality = _png(1280, 720)
+    client = _FakeClient(
+        {
+            "https://img.youtube.com/vi/k9MNcoWj1fo/maxresdefault.jpg": medium,
+            "https://img.youtube.com/vi/k9MNcoWj1fo/hq720.jpg": high_quality,
+        }
+    )
+    observer = SourceCoverObserver(client=client, cas=cas)  # type: ignore[arg-type]
+
+    result = await observer.run(_context(_source()))
+
+    candidate = result.artifacts[0].payload["candidates"][0]
+    assert (candidate["width"], candidate["height"]) == (1280, 720)
+    assert candidate["url"].endswith("/hq720.jpg")
+    assert cas.payloads == [high_quality]
+
+
+async def test_webp_cover_is_converted_to_png() -> None:
+    cas = _FakeCas()
+    converted = _png(1280, 720)
+    client = _FakeClient(
+        {
+            "https://img.youtube.com/vi/k9MNcoWj1fo/maxresdefault.jpg": ProviderUnavailable(
+                "missing"
+            ),
+            "https://img.youtube.com/vi/k9MNcoWj1fo/hq720.jpg": ProviderUnavailable("missing"),
+            "https://img.youtube.com/vi/k9MNcoWj1fo/maxresdefault.webp": _webp(1280, 720),
+        }
+    )
+    observer = SourceCoverObserver(
+        client=client,  # type: ignore[arg-type]
+        cas=cas,
+        webp_converter=lambda data: converted,
+    )
+
+    result = await observer.run(_context(_source()))
+
+    assert result.status is StepResultStatus.SUCCEEDED
+    candidate = result.artifacts[0].payload["candidates"][0]
+    assert candidate["mime"] == "image/png"
+    assert candidate["url"].endswith("/maxresdefault.webp")
+    assert cas.payloads == [converted]
 
 
 async def test_yandex_thumbnail_is_used_without_youtube_urls() -> None:

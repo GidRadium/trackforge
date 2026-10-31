@@ -9,6 +9,7 @@ in the library.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import tempfile
 from collections.abc import Callable, Mapping
@@ -18,7 +19,12 @@ from pathlib import Path
 from typing import Any
 
 from trackforge.adapters.http.url_safety import UrlSafetyGuard, sanitize_url
-from trackforge.adapters.sources.ytdlp.client import DownloadedFile, DownloadOptions, YtDlpClient
+from trackforge.adapters.sources.ytdlp.client import (
+    DownloadedFile,
+    DownloadOptions,
+    DownloadProgress,
+    YtDlpClient,
+)
 from trackforge.adapters.sources.ytdlp.cookies import CookieResolver
 from trackforge.adapters.sources.ytdlp.metadata import build_source_metadata, sanitize_snapshot
 from trackforge.adapters.sources.ytdlp.source import select_best_audio
@@ -50,6 +56,7 @@ from trackforge.domain.errors import (
     OfflineModeError,
     PreviewOnly,
     StorageError,
+    TrackForgeError,
     UnsafeUrl,
     UnsupportedSource,
 )
@@ -94,6 +101,8 @@ class YtDlpAcquirer:
         cookie_dir: Path | None = None,
         cookie_files: Mapping[str, str] | None = None,
         guard: UrlSafetyGuard | None = None,
+        download_retries: int = 2,
+        download_retry_delay: float = 5.0,
     ) -> None:
         self._cas = cas
         self._uow_factory = unit_of_work_factory
@@ -106,6 +115,8 @@ class YtDlpAcquirer:
             cookie_files,
         )
         self._guard = guard if guard is not None else UrlSafetyGuard()
+        self._download_retries = max(0, int(download_retries))
+        self._download_retry_delay = max(0.0, float(download_retry_delay))
 
     @property
     def client(self) -> YtDlpClient:
@@ -163,17 +174,35 @@ class YtDlpAcquirer:
         downloader_version = self._client.version()
         workdir = self._new_workdir()
         try:
-            downloaded = self._client.download(
-                url,
-                candidate,
-                workdir,
-                DownloadOptions(
-                    format_id=selected.format_id,
-                    cookies_path=cookie.path if cookie is not None else None,
-                    cookie_validated=cookie is not None,
-                    site_hint=site_hint,
-                ),
-            )
+            attempt = 0
+            while True:
+                try:
+                    downloaded = self._client.download(
+                        url,
+                        candidate,
+                        workdir,
+                        DownloadOptions(
+                            format_id=selected.format_id,
+                            cookies_path=cookie.path if cookie is not None else None,
+                            cookie_validated=cookie is not None,
+                            site_hint=site_hint,
+                            progress=(
+                                None
+                                if options.progress is None
+                                else _download_progress_callback(options.progress)
+                            ),
+                        ),
+                    )
+                    break
+                except TrackForgeError as exc:
+                    if attempt >= self._download_retries or not exc.retryable:
+                        raise
+                    attempt += 1
+                    shutil.rmtree(workdir, ignore_errors=True)
+                    workdir = self._new_workdir()
+                    delay = self._download_retry_delay * attempt
+                    if delay > 0:
+                        await asyncio.sleep(delay)
             _validate_download(downloaded, candidate, selected)
             content_hash = await self._put_cas(downloaded.path)
             snapshot = await self._store_snapshot(
@@ -510,6 +539,20 @@ class _StoredArtifact:
     def __init__(self, *, ref: ArtifactRef, manifest: ArtifactManifest) -> None:
         self.ref = ref
         self.manifest = manifest
+
+
+def _download_progress_callback(
+    sink: Callable[[float, str | None], None],
+) -> Callable[[DownloadProgress], None]:
+    def report(event: DownloadProgress) -> None:
+        if event.percent is None:
+            return
+        try:
+            sink(event.percent, None)
+        except Exception:
+            return
+
+    return report
 
 
 def _selected_format(candidate: Candidate, options: AcquireOptions) -> Format:

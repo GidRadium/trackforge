@@ -95,6 +95,7 @@ class Node:
     params: Mapping[str, Any] = field(default_factory=dict)
     cacheable: bool = True
     kind: str | None = None
+    optional_requires: tuple[ArtifactRef, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "node_id", require_text(self.node_id, "node_id"))
@@ -109,6 +110,18 @@ class Node:
             require_text(self.capability_version, "capability_version"),
         )
         object.__setattr__(self, "requires", _artifact_refs(self.requires, "requires"))
+        object.__setattr__(
+            self,
+            "optional_requires",
+            _artifact_refs(self.optional_requires, "optional_requires"),
+        )
+        required_keys = {artifact_key(item) for item in self.requires}
+        optional_keys = {artifact_key(item) for item in self.optional_requires}
+        if required_keys.intersection(optional_keys):
+            raise DomainValidationError(
+                "requires and optional_requires must not overlap",
+                context={"overlap": sorted(required_keys.intersection(optional_keys))},
+            )
         object.__setattr__(self, "provides", _artifact_refs(self.provides, "provides"))
         if self.fallback_group is not None:
             object.__setattr__(
@@ -133,6 +146,10 @@ class Node:
     @property
     def requires_keys(self) -> tuple[str, ...]:
         return tuple(artifact_key(item) for item in self.requires)
+
+    @property
+    def optional_requires_keys(self) -> tuple[str, ...]:
+        return tuple(artifact_key(item) for item in self.optional_requires)
 
     @property
     def provides_keys(self) -> tuple[str, ...]:

@@ -8,7 +8,7 @@ or ``degraded`` results; they never fail the whole observation run.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import timedelta
 from typing import Any
 
@@ -25,6 +25,7 @@ from trackforge.adapters.metadata.musicbrainz import MusicBrainzProvider
 from trackforge.application.dto.observations import (
     AudioProbePayload,
     InitialTagsPayload,
+    SourceIdentityPayload,
     SourceMetadataPayload,
 )
 from trackforge.application.dto.providers import (
@@ -52,9 +53,11 @@ from trackforge.application.ports.observations import (
     LYRICS_ARTIFACT,
     MUSICBRAINZ_ARTIFACT,
     PROBE_ARTIFACT,
+    SOURCE_IDENTITY_ARTIFACT,
     SOURCE_METADATA_ARTIFACT,
 )
 from trackforge.application.ports.storage import ContentAddressedStore
+from trackforge.application.services.source_identity import normalize_source_identity
 from trackforge.domain.errors import (
     OfflineModeError,
     ProviderUnavailable,
@@ -68,6 +71,11 @@ from trackforge.domain.model.capabilities import (
     Cost,
     Determinism,
     SideEffect,
+)
+from trackforge.domain.policies.normalization import (
+    detect_source_noise,
+    detect_transformations,
+    has_source_noise,
 )
 
 _OFFLINE = "offline"
@@ -159,6 +167,7 @@ def _draft(
 ) -> tuple[ArtifactDraft, StepResult]:
     codes = list(dict.fromkeys([*warnings, *observation.warnings]))
     warning_objects = tuple(StepWarning(code=code, message=code) for code in codes)
+    summary, details = _observation_summary(artifact_type, observation.payload)
     draft = ArtifactDraft(
         type=artifact_type,
         payload=observation.payload,
@@ -172,8 +181,92 @@ def _draft(
             artifacts=(draft,),
             warnings=warning_objects,
             actual_cost=actual_cost,
+            summary=summary,
+            details=details,
         )
-    return draft, StepResult(artifacts=(draft,), actual_cost=actual_cost)
+    return draft, StepResult(
+        artifacts=(draft,),
+        actual_cost=actual_cost,
+        summary=summary,
+        details=details,
+    )
+
+
+def _observation_summary(
+    artifact_type: Any,
+    payload: Mapping[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Build a short human summary without lyrics/description payloads."""
+
+    key = str(artifact_type)
+    if "musicbrainz" in key:
+        recordings = payload.get("recordings") or ()
+        if recordings:
+            recording = recordings[0]
+            title = str(recording.get("title") or "")
+            artists = recording.get("artists") or ()
+            artist = ", ".join(
+                str(item.get("name") or "")
+                for item in artists
+                if isinstance(item, Mapping) and item.get("name")
+            )
+            score = recording.get("score")
+            suffix = f" ({float(score):.2f})" if isinstance(score, (int, float)) else ""
+            return (
+                f'matched "{title}" — {artist or "unknown artist"}{suffix}',
+                {"recording_mbid": recording.get("mbid"), "score": score},
+            )
+        return "no MusicBrainz match", {}
+    if "acoustid" in key:
+        candidates = payload.get("candidates") or ()
+        if candidates:
+            best = max(
+                (item for item in candidates if isinstance(item, Mapping)),
+                key=lambda item: float(item.get("score") or 0.0),
+                default={},
+            )
+            return (
+                f"{len(candidates)} candidate(s), best {float(best.get('score') or 0.0):.2f}",
+                {"candidates": len(candidates), "best_score": best.get("score")},
+            )
+        return "no AcoustID candidates", {}
+    if "cover" in key:
+        candidates = payload.get("candidates") or ()
+        if candidates:
+            cover = candidates[0]
+            width = cover.get("width") or 0
+            height = cover.get("height") or 0
+            mime = str(cover.get("mime") or "image")
+            source = str(cover.get("source") or "unknown")
+            return (
+                f"{width}×{height} {mime}, {source}",
+                {
+                    "width": width,
+                    "height": height,
+                    "mime": mime,
+                    "source": source,
+                },
+            )
+        return "no cover candidates", {}
+    if "lyrics" in key:
+        candidates = payload.get("candidates") or ()
+        if candidates:
+            candidate = candidates[0]
+            plain = str(candidate.get("plain") or "")
+            lrc = str(candidate.get("lrc") or "")
+            size_kb = len(plain.encode("utf-8")) / 1024
+            kind = "plain+synced" if plain and lrc else "synced" if lrc else "plain"
+            source = str(candidate.get("source") or "lrclib")
+            return (
+                f"{kind}, {size_kb:.1f} KB",
+                {
+                    "source": source,
+                    "plain_bytes": len(plain.encode("utf-8")),
+                    "synced": bool(lrc),
+                },
+            )
+        return "no lyrics candidates", {}
+    return f"{key} result", {}
 
 
 class _MetadataObserver:
@@ -200,7 +293,9 @@ class _MetadataObserver:
                     retryable=retryable,
                     user_action=user_action,
                 ),
-            )
+            ),
+            summary=message,
+            details={"provider": provider, "reason": code},
         )
 
 
@@ -212,6 +307,7 @@ class MusicBrainzObserver(_MetadataObserver):
         version="1",
         kind=CapabilityKind.OBSERVER,
         requires=(PROBE_ARTIFACT, INITIAL_TAGS_ARTIFACT),
+        optional_requires=(SOURCE_METADATA_ARTIFACT, SOURCE_IDENTITY_ARTIFACT),
         provides=(MUSICBRAINZ_ARTIFACT,),
         cost=Cost(cpu_seconds=0.2, memory_mb=32.0, network_calls=1),
         determinism=Determinism.NON_DETERMINISTIC,
@@ -265,32 +361,7 @@ class MusicBrainzObserver(_MetadataObserver):
         return _draft(MUSICBRAINZ_ARTIFACT, observations[0])[1]
 
     def _query(self, ctx: StepContext) -> MetadataQuery | None:
-        title: str | None = None
-        artist: str | None = None
-        album: str | None = None
-        duration: float | None = None
-        tags_step = ctx.inputs.get(INITIAL_TAGS_ARTIFACT)
-        if tags_step is not None:
-            try:
-                tags = _decode(tags_step.payload, InitialTagsPayload).tags
-            except ValueError:
-                tags = None
-            if tags is not None:
-                title = _clean(tags.title)
-                artist = _clean(", ".join(tags.artist)) if tags.artist else None
-                album = _clean(tags.album)
-        if title is None or artist is None:
-            source_step = ctx.inputs.get(SOURCE_METADATA_ARTIFACT)
-            if source_step is not None:
-                try:
-                    source = _decode(source_step.payload, SourceMetadataPayload)
-                except ValueError:
-                    source = None
-                if source is not None:
-                    title = title or _clean(source.title)
-                    artist = artist or _clean(source.artist) or _clean(source.uploader)
-                    album = album or _clean(source.album)
-                    duration = source.duration_seconds or source.duration
+        title, artist, album, duration = _query_values(ctx)
         probe_step = ctx.inputs.get(PROBE_ARTIFACT)
         if probe_step is not None and duration is None:
             try:
@@ -315,6 +386,7 @@ class AcoustIdObserver(_MetadataObserver):
         version="1",
         kind=CapabilityKind.OBSERVER,
         requires=(FINGERPRINT_ARTIFACT,),
+        optional_requires=(SOURCE_IDENTITY_ARTIFACT,),
         provides=(ACOUSTID_ARTIFACT,),
         cost=Cost(cpu_seconds=0.2, memory_mb=32.0, network_calls=1),
         determinism=Determinism.NON_DETERMINISTIC,
@@ -395,6 +467,7 @@ class CoverArtObserver(_MetadataObserver):
         version="1",
         kind=CapabilityKind.OBSERVER,
         requires=(MUSICBRAINZ_ARTIFACT,),
+        optional_requires=(SOURCE_IDENTITY_ARTIFACT,),
         provides=(COVER_ARTIFACT,),
         cost=Cost(cpu_seconds=0.2, memory_mb=32.0, network_calls=1),
         determinism=Determinism.NON_DETERMINISTIC,
@@ -468,6 +541,15 @@ class CoverArtObserver(_MetadataObserver):
                 artist = artist or _clean(source.artist) or _clean(source.uploader)
                 album = album or _clean(source.album)
                 duration = duration or source.duration_seconds or source.duration
+        identity_step = ctx.inputs.get(SOURCE_IDENTITY_ARTIFACT)
+        if identity_step is not None:
+            try:
+                extracted = SourceIdentityPayload.model_validate_json(identity_step.payload)
+            except ValueError:
+                extracted = None
+            if extracted is not None:
+                title = _clean(extracted.title) or title
+                artist = _clean(extracted.originalartist) or _clean(extracted.artist) or artist
         query = MetadataQuery(
             title=title,
             artist=artist,
@@ -529,6 +611,7 @@ class LrclibObserver(_MetadataObserver):
         version="1",
         kind=CapabilityKind.OBSERVER,
         requires=(PROBE_ARTIFACT, INITIAL_TAGS_ARTIFACT),
+        optional_requires=(SOURCE_METADATA_ARTIFACT, SOURCE_IDENTITY_ARTIFACT),
         provides=(LYRICS_ARTIFACT,),
         cost=Cost(cpu_seconds=0.2, memory_mb=32.0, network_calls=1),
         determinism=Determinism.NON_DETERMINISTIC,
@@ -562,6 +645,13 @@ class LrclibObserver(_MetadataObserver):
                 "LRCLIB needs a title and artist to search",
                 provider="lrclib",
                 user_action="Provide tags or source metadata with a usable title/artist.",
+            )
+        if not query.artist:
+            return self._skip(
+                "lyrics_artist_unknown",
+                "LRCLIB has a title but no artist to match lyrics",
+                provider="lrclib",
+                user_action="Add an artist tag or source metadata with the original artist.",
             )
         try:
             observations = await self._provider.search(query)
@@ -602,41 +692,18 @@ class LrclibObserver(_MetadataObserver):
         )[1]
 
     def _query(self, ctx: StepContext) -> MetadataQuery | None:
-        title: str | None = None
-        artist: str | None = None
-        album: str | None = None
-        tags_step = ctx.inputs.get(INITIAL_TAGS_ARTIFACT)
-        if tags_step is not None:
-            try:
-                tags = _decode(tags_step.payload, InitialTagsPayload).tags
-            except ValueError:
-                tags = None
-            if tags is not None:
-                title = _clean(tags.title)
-                artist = _clean(", ".join(tags.artist)) if tags.artist else None
-                album = _clean(tags.album)
-        if not title or not artist:
-            source_step = ctx.inputs.get(SOURCE_METADATA_ARTIFACT)
-            if source_step is not None:
-                try:
-                    source = _decode(source_step.payload, SourceMetadataPayload)
-                except ValueError:
-                    source = None
-                if source is not None:
-                    title = title or _clean(source.title)
-                    artist = artist or _clean(source.artist) or _clean(source.uploader)
-                    album = album or _clean(source.album)
-        if not title or not artist:
+        title, artist, album, duration = _query_values(ctx)
+        if not title:
             return None
-        duration: float | None = None
-        probe_step = ctx.inputs.get(PROBE_ARTIFACT)
-        if probe_step is not None:
-            try:
-                probe = _decode(probe_step.payload, AudioProbePayload)
-            except ValueError:
-                probe = None
-            if probe is not None:
-                duration = probe.duration_seconds
+        if duration is None:
+            probe_step = ctx.inputs.get(PROBE_ARTIFACT)
+            if probe_step is not None:
+                try:
+                    probe = _decode(probe_step.payload, AudioProbePayload)
+                except ValueError:
+                    probe = None
+                if probe is not None:
+                    duration = probe.duration_seconds
         if duration is None:
             fingerprint_step = ctx.inputs.get(FINGERPRINT_ARTIFACT)
             if fingerprint_step is not None:
@@ -647,6 +714,86 @@ class LrclibObserver(_MetadataObserver):
                 except ValueError:
                     duration = None
         return MetadataQuery(title=title, artist=artist, album=album, duration=duration)
+
+
+def _query_values(
+    ctx: StepContext,
+) -> tuple[str | None, str | None, str | None, float | None]:
+    """Return cleaned query values, preferring a normalized source identity.
+
+    Existing tags remain useful for local files.  A noisy/derivative source
+    title, however, must never become the provider query: the original artist
+    from ``Original title:`` (or the parsed channel prefix) is used instead.
+    """
+
+    title: str | None = None
+    artist: str | None = None
+    album: str | None = None
+    duration: float | None = None
+    tags_step = ctx.inputs.get(INITIAL_TAGS_ARTIFACT)
+    if tags_step is not None:
+        try:
+            tags = _decode(tags_step.payload, InitialTagsPayload).tags
+        except ValueError:
+            tags = None
+        if tags is not None:
+            title = _clean(tags.title)
+            artist = _clean(", ".join(tags.artist)) if tags.artist else None
+            album = _clean(tags.album)
+
+    source_step = ctx.inputs.get(SOURCE_METADATA_ARTIFACT)
+    source: SourceMetadataPayload | None = None
+    if source_step is not None:
+        try:
+            source = _decode(source_step.payload, SourceMetadataPayload)
+        except ValueError:
+            source = None
+    identity_step = ctx.inputs.get(SOURCE_IDENTITY_ARTIFACT)
+    if identity_step is not None:
+        try:
+            extracted = SourceIdentityPayload.model_validate_json(identity_step.payload)
+        except ValueError:
+            extracted = None
+        if extracted is not None:
+            title = _clean(extracted.title) or title
+            artist = _clean(extracted.originalartist) or _clean(extracted.artist) or artist
+            if source is not None:
+                album = album or _clean(source.album)
+                duration = source.duration_seconds or source.duration
+            return title, artist, album, duration
+    if source is not None:
+        identity = normalize_source_identity(
+            source.title,
+            source.artist or source.uploader,
+            source.description,
+        )
+        derivative = bool(
+            detect_transformations(source.title) or detect_transformations(source.uploader or "")
+        )
+        source_title = identity.title
+        source_artist = identity.artist
+        if source_artist is None:
+            source_artist = _clean(source.artist) or _clean(source.uploader)
+        prefer_source_title = bool(
+            title is None
+            or has_source_noise(source_title or "")
+            or detect_transformations(title)
+            or detect_source_noise(title)
+            or (source_title is not None and title.casefold() != source_title.casefold())
+        )
+        if source_title and (prefer_source_title or not title):
+            title = source_title
+        if derivative:
+            # D11 affects final credits, not the provider query: search for
+            # the original recording whenever the normalizer found it.
+            if source_artist:
+                artist = source_artist
+        else:
+            artist = artist or source_artist
+        title = title or source_title
+        album = album or _clean(source.album)
+        duration = source.duration_seconds or source.duration
+    return title, artist, album, duration
 
 
 def _clean(value: object) -> str | None:

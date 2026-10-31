@@ -91,6 +91,7 @@ OUTPUT_SCHEMA: dict[str, Any] = {
 }
 
 EXTRACT_FIELDS = ("title", "artist", "album", "date", "genre")
+SOURCE_EXTRACT_FIELDS = ("title", "artist", "originalartist", "qualifier")
 _ADJUDICATE_FIELDS = (
     "title",
     "artist",
@@ -123,6 +124,8 @@ class PromptLibrary:
     def task_fields(self, task: LLMTask) -> tuple[str, ...]:
         if task is LLMTask.EXTRACT:
             return EXTRACT_FIELDS
+        if task is LLMTask.SOURCE_EXTRACT:
+            return SOURCE_EXTRACT_FIELDS
         if task is LLMTask.AUTOPILOT:
             return AUTOPILOT_FIELDS
         return _ADJUDICATE_FIELDS

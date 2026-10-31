@@ -74,6 +74,13 @@ class Event:
     sequence: int = 0
     timestamp: datetime = field(default_factory=utc_now)
     message: str | None = None
+    progress: float | None = None
+    item_position: int | None = None
+    item_total: int | None = None
+    item_label: str | None = None
+    stage: str | None = None
+    stage_index: int | None = None
+    stage_total: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "type", coerce_enum(self.type, EventType, "type"))
@@ -82,10 +89,57 @@ class Event:
             object.__setattr__(self, "item_id", require_text(self.item_id, "item_id"))
         if self.step_id is not None:
             object.__setattr__(self, "step_id", require_text(self.step_id, "step_id"))
-        for name in ("capability", "provider", "status", "message"):
+        for name in ("capability", "provider", "status", "stage"):
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, require_text(value, name))
+        if self.message is not None:
+            from trackforge.application.dto.progress import sanitize_text
+
+            object.__setattr__(
+                self,
+                "message",
+                sanitize_text(require_text(self.message, "message"), limit=200),
+            )
+        if self.item_label is not None:
+            from trackforge.application.dto.progress import MAX_LABEL_GRAPHEMES, sanitize_text
+
+            object.__setattr__(
+                self,
+                "item_label",
+                sanitize_text(
+                    require_text(self.item_label, "item_label"),
+                    limit=MAX_LABEL_GRAPHEMES,
+                )
+                or None,
+            )
+        if self.progress is not None:
+            if isinstance(self.progress, bool) or not isinstance(self.progress, (int, float)):
+                raise ValueError("progress must be a float or None")
+            fraction = float(self.progress)
+            if not 0.0 <= fraction <= 1.0:
+                raise ValueError("progress must be between 0.0 and 1.0")
+            object.__setattr__(self, "progress", fraction)
+        for name in ("item_position", "item_total", "stage_index", "stage_total"):
+            value = getattr(self, name)
+            if value is not None:
+                if isinstance(value, bool) or not isinstance(value, int):
+                    raise ValueError(f"{name} must be an integer or None")
+                if value < 1:
+                    raise ValueError(f"{name} must be positive")
+        if self.stage is not None:
+            from trackforge.application.dto.progress import STAGE_INDEX
+
+            normalized_stage = self.stage.strip().casefold()
+            if normalized_stage not in STAGE_INDEX:
+                raise ValueError(f"unknown stage: {self.stage!r}")
+            object.__setattr__(self, "stage", normalized_stage)
+            if self.stage_index is None:
+                object.__setattr__(self, "stage_index", STAGE_INDEX[normalized_stage])
+            elif self.stage_index != STAGE_INDEX[normalized_stage]:
+                raise ValueError(
+                    f"stage_index {self.stage_index} does not match stage {normalized_stage!r}"
+                )
         if self.duration_ms is not None:
             if isinstance(self.duration_ms, bool) or not isinstance(self.duration_ms, int):
                 raise ValueError("duration_ms must be an integer or None")
@@ -145,6 +199,14 @@ class Event:
             "warning_codes": list(self.warning_codes),
             "sequence": self.sequence,
             "timestamp": self.timestamp.isoformat(),
+            "message": self.message,
+            "progress": self.progress,
+            "item_position": self.item_position,
+            "item_total": self.item_total,
+            "item_label": self.item_label,
+            "stage": self.stage,
+            "stage_index": self.stage_index,
+            "stage_total": self.stage_total,
         }
 
 

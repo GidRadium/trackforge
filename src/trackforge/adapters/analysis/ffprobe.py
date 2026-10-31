@@ -212,6 +212,22 @@ class FfprobeProbe:
             )
         document = await asyncio.to_thread(self._invoke, path)
         payload = parse_ffprobe_document(document, container=media.container)
+        stream = payload.first_audio_stream()
+        codec = (stream.codec_name if stream is not None else None) or payload.container
+        duration = payload.duration_seconds
+        if duration is None and stream is not None:
+            duration = stream.duration_seconds
+        bitrate = payload.bit_rate or (stream.bit_rate if stream is not None else None)
+        parts = [codec]
+        if duration is not None:
+            parts.append(f"{float(duration):.1f} s")
+        if bitrate:
+            parts.append(f"{int(bitrate) // 1000} kbps")
+        details: dict[str, Any] = {"container": payload.container, "codec": codec}
+        if duration is not None:
+            details["duration_seconds"] = float(duration)
+        if bitrate:
+            details["bit_rate"] = int(bitrate)
         return StepResult(
             artifacts=(
                 ArtifactDraft(
@@ -220,6 +236,8 @@ class FfprobeProbe:
                 ),
             ),
             actual_cost=Cost(cpu_seconds=0.2, memory_mb=32.0),
+            summary=", ".join(parts),
+            details=details,
         )
 
     def _resolve_executable(self) -> str:

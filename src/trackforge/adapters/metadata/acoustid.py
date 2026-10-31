@@ -147,6 +147,27 @@ class AcoustIdProvider:
         if acoustid_id:
             params["trackid"] = acoustid_id
         response = await self._effective_client().get(self._base_url, params=params)
+        if response.status_code == 400:
+            excerpt = response.body_excerpt()
+            invalid_key = "invalid api key" in excerpt.casefold()
+            raise ProviderUnavailable(
+                (
+                    "AcoustID rejected the API key (HTTP 400): invalid API key"
+                    if invalid_key
+                    else "AcoustID rejected the lookup request (HTTP 400)"
+                ),
+                retryable=False,
+                user_action=(
+                    "Replace TRACKFORGE_ACOUSTID_API_KEY with a valid AcoustID application key."
+                    if invalid_key
+                    else "Check TRACKFORGE_ACOUSTID_API_KEY and the AcoustID request parameters."
+                ),
+                context={
+                    "url": response.url,
+                    "status": response.status_code,
+                    "body_excerpt": excerpt,
+                },
+            )
         if not response.ok:
             response.raise_for_status()
         document = response.json()

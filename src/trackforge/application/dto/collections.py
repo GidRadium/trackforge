@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from trackforge.application.dto.progress import HandlerReport
 from trackforge.domain.errors import DomainValidationError
 from trackforge.domain.model._validation import (
     coerce_enum,
@@ -24,7 +25,7 @@ from trackforge.domain.model.collection import (
 from trackforge.domain.model.ids import CollectionId, ItemId
 from trackforge.domain.model.source import Candidate, SourceRef
 
-MAX_COLLECTION_ITEMS = 500
+MAX_COLLECTION_ITEMS = 1000
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,6 +217,7 @@ class CollectionRunResult:
     failed: int = 0
     skipped: int = 0
     remaining: int = 0
+    handler_reports: tuple[HandlerReport, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -227,6 +229,7 @@ class CollectionRunResult:
         object.__setattr__(self, "warnings", tuple(self.warnings))
         object.__setattr__(self, "errors", tuple(self.errors))
         object.__setattr__(self, "output_paths", tuple(self.output_paths))
+        object.__setattr__(self, "handler_reports", tuple(self.handler_reports))
 
     @property
     def succeeded(self) -> bool:

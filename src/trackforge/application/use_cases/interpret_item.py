@@ -31,6 +31,7 @@ from trackforge.application.dto.observations import (
     NormalizedTags,
     ObservationView,
     PathStructurePayload,
+    SourceIdentityPayload,
     SourceMetadataPayload,
 )
 from trackforge.application.dto.providers import (
@@ -53,12 +54,21 @@ from trackforge.application.ports.observations import (
     MUSICBRAINZ_ARTIFACT,
     PATH_STRUCTURE_ARTIFACT,
     PROBE_ARTIFACT,
+    SOURCE_IDENTITY_ARTIFACT,
     SOURCE_METADATA_ARTIFACT,
     STEMS_ARTIFACT,
 )
 from trackforge.application.ports.repositories import UnitOfWork
 from trackforge.application.ports.storage import ArtifactStore, StorageError
 from trackforge.application.services.canonical_json import canonical_json, sha256_hex
+from trackforge.application.services.derivative_credits import build_derivative_credits
+from trackforge.application.services.source_genres import normalize_source_genres
+from trackforge.application.services.source_identity import (
+    NormalizedSourceIdentity,
+    looks_like_mix,
+    normalize_source_identity,
+)
+from trackforge.application.services.source_lyrics import extract_description_lyrics
 from trackforge.application.use_cases.lyrics_merge import LyricsMerger
 from trackforge.domain.errors import (
     DomainValidationError,
@@ -87,6 +97,7 @@ from trackforge.domain.policies.derivative import (
     evaluate_derivative,
 )
 from trackforge.domain.policies.normalization import (
+    comparison_key,
     detect_source_noise,
     detect_transformations,
     is_vevo,
@@ -122,6 +133,8 @@ SOURCE_LRCLIB = "lrclib"
 SOURCE_ASR = "asr"
 SOURCE_LYRICS_MERGE = "lyrics_merge"
 SOURCE_STEMS = "demucs"
+SOURCE_TITLE_PARSER = "source_title_parser"
+SOURCE_DESCRIPTION = "source_description"
 
 METHOD_TAG_READER = "mutagen_tag_reader/v1"
 METHOD_PATH = "path_structure/v1"
@@ -129,6 +142,8 @@ METHOD_KIND = "kind_classifier/v1"
 METHOD_DERIVATIVE = "derivative_detector/v1"
 METHOD_IDENTITY = "identity_resolver/v1"
 METHOD_SOURCE_METADATA = "source_metadata/v1"
+METHOD_SOURCE_TITLE_PARSER = "source_title_parser/v1"
+METHOD_DESCRIPTION_LYRICS = "description_lyrics/v1"
 METHOD_MUSICBRAINZ = "musicbrainz/v1"
 METHOD_ACOUSTID = "acoustid/v1"
 METHOD_COVER = "cover_selection/v1"
@@ -616,6 +631,18 @@ class DerivativeDetector:
             else None
         )
         warnings: list[str] = []
+        duration = _probe_duration(inputs)
+        if looks_like_mix(
+            metadata.title if metadata is not None else tags.title,
+            duration,
+            uploader=metadata.uploader if metadata is not None else None,
+            description=metadata.description if metadata is not None else None,
+        ):
+            return InterpreterResult(
+                artifact_type=DERIVATIVE_HYPOTHESES_ARTIFACT,
+                payload=_derivative_payload(inputs.item_id, None),
+                warnings=("mix_track_detected",),
+            )
 
         text_sources = _derivative_text_sources(
             tags,
@@ -625,7 +652,6 @@ class DerivativeDetector:
             path_artifact=path_artifact,
             metadata_artifact=metadata_artifact,
         )
-        duration = _probe_duration(inputs)
         recording = _derivative_recording(
             inputs,
             mb_artifact,
@@ -717,6 +743,22 @@ class DerivativeDetector:
                     stems_artifact=stems_artifact,
                 )
             )
+            if not hypothesis.is_ambiguous:
+                credits_claims, credits_warnings = _derivative_credits_claims(
+                    inputs,
+                    hypothesis.transformations,
+                    tags,
+                    metadata,
+                    metadata_artifact or tags_artifact,
+                    recording_title=recording.title if recording is not None else None,
+                    recording_artist=(
+                        recording.artists[0].name
+                        if recording is not None and recording.artists
+                        else None
+                    ),
+                )
+                claims.extend(credits_claims)
+                warnings.extend(credits_warnings)
         payload = _derivative_payload(inputs.item_id, hypothesis)
         return InterpreterResult(
             artifact_type=DERIVATIVE_HYPOTHESES_ARTIFACT,
@@ -724,6 +766,173 @@ class DerivativeDetector:
             claims=tuple(claims),
             warnings=tuple(warnings),
         )
+
+
+def _source_identity(
+    inputs: InterpreterInput,
+    metadata: SourceMetadataPayload | None,
+    tags: NormalizedTags | None,
+) -> tuple[NormalizedSourceIdentity, str]:
+    """Prefer the LLM source identity artifact, then the heuristic parser."""
+
+    artifact = inputs.optional(str(SOURCE_IDENTITY_ARTIFACT))
+    if artifact is not None:
+        try:
+            payload = artifact.model(SourceIdentityPayload)
+        except ObservationFailed:
+            payload = None
+        if payload is not None:
+            source_title = (
+                payload.source_title
+                or (metadata.title if metadata is not None else None)
+                or (tags.title if tags is not None else None)
+            )
+            return (
+                NormalizedSourceIdentity(
+                    title=payload.title,
+                    artist=payload.artist or payload.originalartist,
+                    qualifier=payload.qualifier,
+                    source_title=source_title or "",
+                    confidence=payload.confidence,
+                    warnings=tuple(payload.warnings),
+                ),
+                payload.method,
+            )
+    return (
+        normalize_source_identity(
+            metadata.title if metadata is not None else (tags.title if tags is not None else None),
+            ((metadata.artist or metadata.uploader) if metadata is not None else None),
+            metadata.description if metadata is not None else None,
+        ),
+        "heuristic",
+    )
+
+
+def _derivative_credits_claims(
+    inputs: InterpreterInput,
+    transformations: Sequence[Transformation],
+    tags: NormalizedTags,
+    metadata: SourceMetadataPayload | None,
+    artifact: ArtifactPayload,
+    *,
+    recording_title: str | None,
+    recording_artist: str | None,
+) -> tuple[list[Claim], list[str]]:
+    identity, _identity_method = _source_identity(inputs, metadata, tags)
+    credits = build_derivative_credits(
+        transformations,
+        metadata.uploader if metadata is not None else None,
+        identity,
+        inputs.claims,
+        recording_artist=recording_artist,
+        recording_title=recording_title,
+    )
+    if credits.qualifier is None:
+        return [], list(credits.warnings)
+    claims: list[Claim] = []
+
+    def add(
+        field: str,
+        value: FieldValue,
+        confidence: float,
+        *,
+        role: str | None = None,
+        order: int | None = None,
+        notes: str | None = None,
+    ) -> None:
+        if value is None:
+            return
+        if field in {"title", "qualifier", "originalartist"} and isinstance(value, str):
+            for existing in (*inputs.claims, *claims):
+                if (
+                    existing.field == field
+                    and isinstance(existing.value, str)
+                    and comparison_key(existing.value) == comparison_key(value)
+                ):
+                    return
+        claims.append(
+            _make_claim(
+                inputs.item_id,
+                subject=Subject.ITEM,
+                field=field,
+                value=value,
+                confidence=confidence,
+                source="derivative_credits",
+                method="derivative_credits/v1",
+                evidence=artifact.artifact_id,
+                role=role,
+                order=order,
+                notes=notes,
+            )
+        )
+
+    add(
+        "title",
+        credits.title,
+        min(0.85, credits.confidence),
+        notes="clean original title; derivative qualifier kept separately",
+    )
+    add(
+        "qualifier",
+        credits.qualifier,
+        min(0.9, credits.confidence),
+        notes="derivative qualifier used by filename/tag policy",
+    )
+    add(
+        "remixer",
+        credits.remixer,
+        min(0.85, credits.confidence),
+        notes="uploader/channel that produced the derivative",
+    )
+    add(
+        "originalartist",
+        credits.original_artist,
+        min(0.8, credits.confidence),
+        notes="original performer retained as featured artist",
+    )
+    if credits.comment:
+        add(
+            "comment",
+            credits.comment,
+            min(0.8, credits.confidence),
+            notes="short derivative provenance comment",
+        )
+    if credits.remixer and credits.original_artist:
+        add(
+            "artist",
+            credits.remixer,
+            min(0.85, credits.confidence),
+            role="main",
+            order=0,
+            notes="D11: remixer is the main artist for derivative credits",
+        )
+        add(
+            "artist",
+            credits.original_artist,
+            min(0.75, credits.confidence),
+            role="featured",
+            order=1,
+            notes="D11: original artist is featured",
+        )
+    elif credits.remixer:
+        add(
+            "artist",
+            credits.remixer,
+            min(0.7, credits.confidence),
+            role="main",
+            order=0,
+            notes="original artist unknown; remixer remains main",
+        )
+    elif credits.original_artist:
+        add(
+            "artist",
+            credits.original_artist,
+            min(0.7, credits.confidence),
+            role="main",
+            order=0,
+            notes="remixer unknown; original artist is the safe main artist",
+        )
+    return claims, list(credits.warnings)
 
 
 def _derivative_text_sources(
@@ -1284,12 +1493,51 @@ class SourceMetadataInterpreter:
             )
         payload = artifact.model(SourceMetadataPayload)
         claims: list[Claim] = []
+        warnings: list[str] = []
+        identity, identity_method = _source_identity(
+            inputs,
+            payload,
+            None,
+        )
+        if identity_method != "mix" and looks_like_mix(
+            payload.title,
+            payload.duration_seconds or payload.duration,
+            uploader=payload.uploader,
+            description=payload.description,
+        ):
+            identity = NormalizedSourceIdentity(
+                title=payload.title,
+                artist=payload.uploader or payload.artist,
+                qualifier=None,
+                source_title=payload.title,
+                confidence=0.9,
+                warnings=("mix_track_detected",),
+            )
+            identity_method = "mix"
+        warnings.extend(identity.warnings)
+        is_mix = identity_method == "mix"
+        derivative = (
+            False
+            if is_mix
+            else bool(
+                identity.qualifier
+                or detect_transformations(payload.title or "")
+                or detect_transformations(payload.uploader or "")
+            )
+        )
+
+        identity_source = "llm" if identity_method == "llm" else SOURCE_TITLE_PARSER
+        identity_method_name = (
+            "source_identity/v1" if identity_method == "llm" else METHOD_SOURCE_TITLE_PARSER
+        )
 
         def add(
             field: str,
             value: FieldValue,
             confidence: float,
             *,
+            source: str = SOURCE_SITE_METADATA,
+            method: str = METHOD_SOURCE_METADATA,
             role: str | None = None,
             order: int | None = None,
             notes: str | None = None,
@@ -1303,8 +1551,8 @@ class SourceMetadataInterpreter:
                     field=field,
                     value=value,
                     confidence=confidence,
-                    source=SOURCE_SITE_METADATA,
-                    method=METHOD_SOURCE_METADATA,
+                    source=source,
+                    method=method,
                     evidence=artifact.artifact_id,
                     role=role,
                     order=order,
@@ -1312,7 +1560,45 @@ class SourceMetadataInterpreter:
                 )
             )
 
-        add("title", payload.title, 0.75)
+        # The raw upload title is provenance, never the display title.
+        add(
+            "originaltitle",
+            payload.title,
+            0.8,
+            notes="raw source title retained for sidecar provenance",
+        )
+        if is_mix:
+            add(
+                "is_mix",
+                True,
+                0.9,
+                notes="mix/compilation keeps its raw uploader title and channel name",
+            )
+        if identity.title and identity.confidence >= 0.7:
+            add(
+                "title",
+                identity.title,
+                0.8,
+                source=identity_source,
+                method=identity_method_name,
+                notes=(
+                    "normalized source title; "
+                    f"raw={payload.title!r}; confidence={identity.confidence:.2f}"
+                ),
+            )
+        elif identity.title is None:
+            warnings.append("source_title_unusable")
+        else:
+            warnings.append("source_title_low_confidence")
+        if identity.qualifier:
+            add(
+                "qualifier",
+                identity.qualifier,
+                0.75,
+                source=identity_source,
+                method=identity_method_name,
+                notes="derivative qualifier stored separately from the title",
+            )
         for marker in detect_source_noise(payload.title):
             add(
                 "source_noise",
@@ -1322,12 +1608,36 @@ class SourceMetadataInterpreter:
             )
 
         raw_artist = payload.artist or payload.uploader
-        derivative_title = bool(detect_transformations(payload.title or ""))
-        derivative_uploader = bool(detect_transformations(raw_artist or ""))
-        # A nightcore/slowed channel name is provenance, not the main artist.
-        # When the source supplies no artist field, keep looking in the
-        # description and leave the artist unknown rather than guessing.
-        if raw_artist and not (derivative_title and derivative_uploader):
+        if identity.artist:
+            add(
+                "artist",
+                identity.artist,
+                0.7,
+                source=identity_source,
+                method=identity_method_name,
+                role="featured" if derivative else "main",
+                order=1 if derivative else 0,
+                notes=(
+                    "original artist parsed from source title/description"
+                    if derivative
+                    else "artist parsed from source metadata"
+                ),
+            )
+            if derivative and not (
+                payload.uploader
+                and comparison_key(identity.artist) == comparison_key(payload.uploader)
+            ):
+                add(
+                    "originalartist",
+                    identity.artist,
+                    0.65,
+                    source=identity_source,
+                    method=identity_method_name,
+                    notes="original performer retained for derivative credits",
+                )
+        elif raw_artist and not derivative:
+            # A non-derivative channel name is a legitimate artist fallback.
+            # For nightcore/remix channels it is provenance, not the original.
             cleaned = strip_topic_suffix(raw_artist)
             if cleaned != raw_artist.strip():
                 add(
@@ -1347,12 +1657,13 @@ class SourceMetadataInterpreter:
         attribution = _description_attribution(payload.description, payload.title)
         if attribution is not None:
             parsed_artist, parsed_album = attribution
-            add(
-                "artist",
-                parsed_artist,
-                0.60,
-                notes="parsed from source description attribution",
-            )
+            if identity.artist is None:
+                add(
+                    "artist",
+                    parsed_artist,
+                    0.60,
+                    notes="parsed from source description attribution",
+                )
             if parsed_album:
                 add(
                     "album",
@@ -1366,7 +1677,9 @@ class SourceMetadataInterpreter:
         if date_value is None and payload.release_year is not None:
             date_value = str(payload.release_year)
         add("date", date_value, 0.5)
-        for index, genre in enumerate(dict.fromkeys(payload.tags)):
+        for index, genre in enumerate(
+            normalize_source_genres(payload.tags, payload.title, payload.uploader)
+        ):
             add("genre", genre, 0.35, order=index)
         add("language", payload.language, 0.4)
         if payload.track and payload.track.strip().isdigit():
@@ -1377,11 +1690,24 @@ class SourceMetadataInterpreter:
             0.3,
             notes="untrusted source description retained as LLM evidence",
         )
+        description_lyrics = extract_description_lyrics(payload.description)
+        if description_lyrics is not None:
+            warnings.extend(description_lyrics.warnings)
+            if description_lyrics.text:
+                add(
+                    "lyrics",
+                    description_lyrics.text,
+                    description_lyrics.confidence,
+                    source=SOURCE_DESCRIPTION,
+                    method=METHOD_DESCRIPTION_LYRICS,
+                    notes="plain lyrics from an explicit description section",
+                )
         add("source", payload.webpage_url, 0.8, notes="canonical source page")
         return InterpreterResult(
             artifact_type=CLAIMS_ARTIFACT,
             payload=_claims_payload(inputs.item_id, claims),
             claims=tuple(claims),
+            warnings=tuple(dict.fromkeys(warnings)),
         )
 
 

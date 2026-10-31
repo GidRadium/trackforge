@@ -224,14 +224,20 @@ class WhisperObserver:
                 )
             )
 
-        ctx.progress(0.05, "loading Whisper model")
+        ctx.note("loading Whisper model")
         started = time.perf_counter()
+        loop = asyncio.get_running_loop()
+
+        def report_progress(fraction: float, message: str | None = None) -> None:
+            loop.call_soon_threadsafe(ctx.progress, fraction, message)
+
         try:
             transcript = await asyncio.to_thread(
                 self._transcribe,
                 path,
                 model_path,
                 info,
+                report_progress,
             )
         except MemoryError:
             self._release_model()
@@ -261,6 +267,21 @@ class WhisperObserver:
             )
         elapsed = time.perf_counter() - started
         ctx.progress(1.0, "transcription complete")
+        realtime = (
+            transcript.duration_seconds / elapsed
+            if elapsed > 0.0 and transcript.duration_seconds > 0.0
+            else 0.0
+        )
+        summary = (
+            f"{transcript.language or 'und'}, {len(transcript.segments)} segment(s), "
+            f"{realtime:.1f}× realtime"
+        )
+        details = {
+            "language": transcript.language,
+            "segments": len(transcript.segments),
+            "duration_seconds": transcript.duration_seconds,
+            "realtime_factor": round(realtime, 3),
+        }
 
         warnings: list[StepWarning] = []
         if transcript.empty:
@@ -294,8 +315,15 @@ class WhisperObserver:
                 warnings=tuple(warnings),
                 actual_cost=actual,
                 status=StepResultStatus.DEGRADED,
+                summary=summary,
+                details=details,
             )
-        return StepResult(artifacts=(draft,), actual_cost=actual)
+        return StepResult(
+            artifacts=(draft,),
+            actual_cost=actual,
+            summary=summary,
+            details=details,
+        )
 
     def _status_warning(self, info: ModelInfo) -> StepWarning:
         if info.status is ModelStatus.MISSING:
@@ -349,6 +377,7 @@ class WhisperObserver:
         media_path: Path,
         model_path: Path,
         info: ModelInfo,
+        progress: Callable[[float, str | None], None] | None = None,
     ) -> AsrTranscript:
         model = self._get_model(model_path)
         segments, metadata = model.transcribe(
@@ -364,11 +393,28 @@ class WhisperObserver:
         logprobs: list[float] = []
         no_speech: list[float] = []
         last_end = 0.0
+        raw_duration = getattr(metadata, "duration", None)
+        try:
+            total_duration = float(raw_duration) if raw_duration is not None else None
+        except (TypeError, ValueError):
+            total_duration = None
+        if total_duration is not None and total_duration <= 0.0:
+            total_duration = None
+        last_report = 0.0
         for segment in segments:
             text = normalize_lyrics_text(str(getattr(segment, "text", "") or ""))
             start = max(0.0, float(getattr(segment, "start", 0.0) or 0.0))
             end = max(start, float(getattr(segment, "end", start) or start))
             last_end = max(last_end, end)
+            if progress is not None and total_duration:
+                now = time.monotonic()
+                if now - last_report >= 0.25:
+                    last_report = now
+                    fraction = max(0.0, min(1.0, end / total_duration))
+                    progress(
+                        fraction,
+                        f"{end:.0f}s / {total_duration:.0f}s",
+                    )
             logprob = getattr(segment, "avg_logprob", None)
             if isinstance(logprob, (int, float)):
                 logprobs.append(float(logprob))
@@ -402,11 +448,7 @@ class WhisperObserver:
                 continue
             decoded_segments.append(AsrSegment(start=start, end=end, text=text, words=words))
 
-        duration = getattr(metadata, "duration", None)
-        try:
-            duration_seconds = float(duration) if duration is not None else last_end
-        except (TypeError, ValueError):
-            duration_seconds = last_end
+        duration_seconds = total_duration if total_duration is not None else last_end
         language = valid_language(getattr(metadata, "language", None))
         return AsrTranscript(
             language=language,

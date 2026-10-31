@@ -115,7 +115,7 @@ async def test_policy_mode_adds_guarded_llm_extraction_claims(
     llm_claims = [claim for claim in claims if claim.source == "llm"]
     assert len(llm_claims) == 1
     assert llm_claims[0].method == "fake-model/extract/v1"
-    assert "added 1 claim" in " ".join(result.warnings)
+    assert "added 1 claim" not in " ".join(result.warnings)
     assert record.llm_model == "fake-model"
     assert record.prompt_version == "extract/v1"
 
