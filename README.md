@@ -9,6 +9,7 @@ The project uses [uv](https://docs.astral.sh/uv/) and Python 3.14.
 ```bash
 uv sync
 uv run tfg --help
+uv run pytest
 ```
 
 The `tfg` command is declared in `pyproject.toml` (`[project.scripts]`), so once
