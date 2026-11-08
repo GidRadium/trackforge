@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -56,3 +57,106 @@ def test_info_help() -> None:
 
     assert result.exit_code == 0
     assert "--json" in result.output
+
+
+def test_set_mp3(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "set.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+
+    result = runner.invoke(
+        app,
+        [
+            "set",
+            str(target),
+            "--title",
+            "CLI Title",
+            "--artist",
+            "CLI Artist",
+            "--album",
+            "CLI Album",
+            "--track",
+            "5/10",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    from trackforge.metadata import MediaFile
+
+    media = MediaFile.open(target)
+    assert media.title == "CLI Title"
+    assert media.artist == "CLI Artist"
+    assert media.audio.album == "CLI Album"
+    assert (media.audio.track_number, media.audio.track_total) == (5, 10)
+
+
+def test_set_id3v23(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "set-v23.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+
+    result = runner.invoke(
+        app,
+        ["set", str(target), "--title", "CLI v2.3", "--id3v23"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert target.read_bytes()[3] == 3
+    from trackforge.metadata import MediaFile
+
+    assert MediaFile.open(target).title == "CLI v2.3"
+
+
+def test_set_video(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "set.mp4"
+    shutil.copy2(media_dir / "sample.mp4", target)
+
+    result = runner.invoke(
+        app,
+        [
+            "set",
+            str(target),
+            "--show",
+            "CLI Show",
+            "--season",
+            "2",
+            "--episode",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    from trackforge.metadata import MediaFile
+
+    media = MediaFile.open(target)
+    assert media.video.show == "CLI Show"
+    assert (media.video.season, media.video.episode) == (2, 3)
+
+
+def test_set_strict_avi_rejects_composer(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "set.avi"
+    shutil.copy2(media_dir / "sample.avi", target)
+
+    result = runner.invoke(
+        app,
+        ["set", str(target), "--composer", "Unsupported", "--strict"],
+    )
+
+    assert result.exit_code == 1
+    assert "error:" in result.output
+
+
+def test_set_without_fields(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "set-empty.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+
+    result = runner.invoke(app, ["set", str(target)])
+
+    assert result.exit_code == 1
+    assert "no fields" in result.output
+
+
+def test_set_help() -> None:
+    result = runner.invoke(app, ["set", "--help"])
+
+    assert result.exit_code == 0
+    assert "--id3v23" in result.output
+    assert "--strict" in result.output
