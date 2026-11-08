@@ -1,5 +1,8 @@
 """Tests for the ``tfg info`` command."""
 
+# Test fixtures and JSON payloads are intentionally dynamic.
+# pyright: standard
+
 from __future__ import annotations
 
 import json
@@ -95,6 +98,7 @@ def test_set_mp3(tmp_path: Path, media_dir: Path) -> None:
     media = MediaFile.open(target)
     assert media.title == "CLI Title"
     assert media.artist == "CLI Artist"
+    assert media.audio is not None
     assert media.audio.album == "CLI Album"
     assert (media.audio.track_number, media.audio.track_total) == (5, 10)
     assert str(media.original_date) == "2010"
@@ -142,6 +146,7 @@ def test_set_video(tmp_path: Path, media_dir: Path) -> None:
     from trackforge.metadata import MediaFile
 
     media = MediaFile.open(target)
+    assert media.video is not None
     assert media.video.show == "CLI Show"
     assert (media.video.season, media.video.episode) == (2, 3)
 

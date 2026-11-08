@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from trackforge.metadata import MediaFile
 
 
-def to_dict(media) -> dict[str, object]:
+def to_dict(media: MediaFile) -> dict[str, object]:
     audio = media.audio
     video = media.video
     return {
@@ -38,7 +42,7 @@ def to_dict(media) -> dict[str, object]:
     }
 
 
-def container(media) -> str:
+def container(media: MediaFile) -> str:
     format_ = media.container
     if format_ is None:
         return "unknown"

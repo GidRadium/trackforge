@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
+from typing import override
 
 
 class MediaKind(StrEnum):
@@ -55,10 +56,11 @@ class PartialDate:
         if self.day is None:
             return
         try:
-            date(self.year, self.month, self.day)
+            _ = date(self.year, self.month, self.day)
         except ValueError as exc:
             raise ValueError(f"invalid date: {exc}") from exc
 
+    @override
     def __str__(self) -> str:
         if self.month is None:
             return f"{self.year:04d}"
@@ -96,7 +98,7 @@ class Artwork:
             raise ValueError("artwork data cannot be empty")
         if not self.mime:
             raise ValueError("artwork MIME type cannot be empty")
-        if isinstance(self.kind, str) and not isinstance(self.kind, ArtworkKind):
+        if not isinstance(self.kind, ArtworkKind):
             object.__setattr__(self, "kind", ArtworkKind(self.kind))
         if self.width is not None and self.width < 1:
             raise ValueError("artwork width must be positive")

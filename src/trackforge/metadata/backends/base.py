@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from ..capabilities import Capabilities, WritePolicy, WriteReport
 from ..formats import ContainerFormat, DetectedFormat
@@ -39,6 +39,7 @@ class MetadataBackend(Protocol):
         ...
 
 
+@runtime_checkable
 class WritableMetadataBackend(MetadataBackend, Protocol):
     """A backend that can write normalized metadata back to a file."""
 

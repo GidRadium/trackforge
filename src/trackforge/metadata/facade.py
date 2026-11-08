@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+from typing import override
 
-from .backends.base import MetadataBackend
+from .backends.base import MetadataBackend, WritableMetadataBackend
 from .capabilities import Capabilities, WritePolicy, WriteReport
 from .errors import (
     MetadataWriteError,
@@ -90,7 +91,7 @@ class MediaFile(MediaMetadata):
             for item in fields(MediaMetadata)
         }
         return cls(
-            **common_fields,
+            **common_fields,  # pyright: ignore[reportAny]
             path=source,
             detected=detected,
             artwork=ArtworkCollection(result.artwork),
@@ -134,10 +135,9 @@ class MediaFile(MediaMetadata):
         """
         if self.path is None or self.detected is None or self._backend is None:
             raise MetadataWriteError("<memory>", "no source file to write")
-        write = getattr(self._backend, "write", None)
-        if write is None:
+        if not isinstance(self._backend, WritableMetadataBackend):
             raise UnsupportedFormatError(str(self.path))
-        report = write(
+        report = self._backend.write(
             self.path,
             self.detected,
             self,
@@ -146,6 +146,7 @@ class MediaFile(MediaMetadata):
         self.warnings.extend(report.warnings)
         return report
 
+    @override
     def __repr__(self) -> str:
         title = self.title or "<untitled>"
         return f"MediaFile(path={self.path!r}, title={title!r}, kind={self.kind.value!r})"

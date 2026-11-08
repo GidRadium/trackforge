@@ -1,17 +1,25 @@
 """``tfg scan`` command."""
 
+# Typer uses call expressions in argument defaults by design.
+# pyright: standard
+
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 
 from ..render import or_dash
 
+if TYPE_CHECKING:
+    from trackforge.metadata import ScanResult
+
 
 def scan_command(
-    paths: list[Path] = typer.Argument(
+    paths: list[Path] = typer.Argument(  # noqa: B008
         ...,
         exists=True,
         readable=True,
@@ -30,10 +38,13 @@ def scan_command(
         typer.echo("error: no media files found", err=True)
         raise typer.Exit(code=1)
 
-    progress_callback = None
+    progress_callback: Callable[[int, int, ScanResult], None] | None = None
     if progress:
-        def progress_callback(done: int, total: int, _result) -> None:
+
+        def report_progress(done: int, total: int, _result: ScanResult) -> None:
             typer.echo(f"[{done}/{total}]", err=True)
+
+        progress_callback = report_progress
 
     results = scan(
         files,

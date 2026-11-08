@@ -5,6 +5,9 @@ ffmpeg is unavailable, the fixture is skipped; model/normalization tests still
 run.
 """
 
+# Test fixtures and JSON payloads are intentionally dynamic.
+# pyright: standard
+
 from __future__ import annotations
 
 import shutil
@@ -206,6 +209,8 @@ def test_write_mkv(tmp_path: Path, media_dir: Path) -> None:
     assert updated.artists == ["MKV Artist A", "MKV Artist B"]
     assert updated.genre == ["Rock", "Pop"]
     assert updated.require_audio().album == "MKV Album"
+    assert updated.audio is not None
+    assert updated.video is not None
     assert (updated.audio.track_number, updated.audio.track_total) == (3, 12)
     assert updated.require_video().show == "MKV Show"
     assert (updated.video.season, updated.video.episode) == (2, 3)
@@ -605,6 +610,7 @@ def test_write_mp3(tmp_path: Path, media_dir: Path) -> None:
     assert updated.release_status == "official"
     assert updated.release_type == "album"
     assert updated.require_audio().album == "Written Album"
+    assert updated.audio is not None
     assert (updated.audio.track_number, updated.audio.track_total) == (9, 9)
     assert updated.audio.movement_name == "I. Allegro"
     assert (updated.audio.movement_number, updated.audio.movement_total) == (1, 4)
@@ -702,6 +708,7 @@ def test_write_m4a(tmp_path: Path, media_dir: Path) -> None:
     assert updated.require_audio().album == "Written M4A Album"
     assert updated.require_audio().bpm == 99
     assert updated.require_audio().compilation is False
+    assert updated.audio is not None
     assert updated.audio.movement_name == "II. Andante"
     assert (updated.audio.movement_number, updated.audio.movement_total) == (2, 4)
     assert updated.audio.rating == 3
@@ -721,6 +728,7 @@ def test_write_mp4_video(tmp_path: Path, media_dir: Path) -> None:
     assert "video.show" in report.written
     updated = MediaFile.open(target)
     assert updated.require_video().show == "Written Show"
+    assert updated.video is not None
     assert (updated.video.season, updated.video.episode) == (4, 5)
     assert updated.video.director == ["New Director"]
 

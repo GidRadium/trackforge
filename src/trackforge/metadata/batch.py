@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable, Iterable, Sequence
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -83,18 +83,18 @@ def scan(
             return ScanResult(path=path, error=exc)
 
     if workers == 1 or len(files) < 2:
-        results: list[ScanResult] = []
+        serial_results: list[ScanResult] = []
         completed = 0
         for path in files:
             if cancel is not None and cancel.is_set():
-                results.append(ScanResult(path=path, cancelled=True))
+                serial_results.append(ScanResult(path=path, cancelled=True))
                 continue
             result = one(path)
-            results.append(result)
+            serial_results.append(result)
             completed += 1
             if on_progress is not None:
                 on_progress(completed, len(files), result)
-        return results
+        return serial_results
 
     results: list[ScanResult | None] = [None] * len(files)
     next_index = 0
@@ -102,7 +102,7 @@ def scan(
     window = max(workers * 2, 1)
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        pending: dict = {}
+        pending: dict[Future[ScanResult], int] = {}
 
         def submit_more() -> None:
             nonlocal next_index
@@ -125,10 +125,12 @@ def scan(
                     on_progress(completed, len(files), result)
             submit_more()
 
+    final_results: list[ScanResult] = []
     for index, result in enumerate(results):
         if result is None:
-            results[index] = ScanResult(path=files[index], cancelled=True)
-    return [result for result in results if result is not None]
+            result = ScanResult(path=files[index], cancelled=True)
+        final_results.append(result)
+    return final_results
 
 
 def read_many(

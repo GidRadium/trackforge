@@ -43,11 +43,11 @@ class TestPartialDate:
     )
     def test_invalid_values(self, year: int, month: int | None, day: int | None) -> None:
         with pytest.raises(ValueError):
-            PartialDate(year, month, day)
+            _ = PartialDate(year, month, day)
 
     def test_day_requires_month(self) -> None:
         with pytest.raises(ValueError, match="day cannot be set without month"):
-            PartialDate(2024, day=17)
+            _ = PartialDate(2024, day=17)
 
 
 class TestArtwork:
@@ -71,11 +71,11 @@ class TestArtwork:
     )
     def test_invalid_values(self, kwargs: dict[str, object]) -> None:
         with pytest.raises(ValueError):
-            Artwork(**kwargs)  # type: ignore[arg-type]
+            _ = Artwork(**kwargs)  # pyright: ignore[reportArgumentType]
 
     def test_invalid_kind(self) -> None:
         with pytest.raises(ValueError):
-            Artwork(data=b"x", mime="image/jpeg", kind="poster")
+            _ = Artwork(data=b"x", mime="image/jpeg", kind="poster")
 
 
 class TestArtworkCollection:

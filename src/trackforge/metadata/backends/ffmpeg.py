@@ -5,6 +5,9 @@ AVI, FLV and MPEG-TS/PS.  It shells out to ``ffprobe`` and ``ffmpeg``; the
 library itself never requires them until one of these formats is opened.
 """
 
+# ffprobe JSON is dynamically shaped; values are narrowed where they are used.
+# pyright: standard
+
 from __future__ import annotations
 
 import json
@@ -12,6 +15,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -124,8 +128,8 @@ _MB_READ_ALIASES = {value: key for key, value in _MB_KEYS.items()}
 class FfmpegBackend:
     """Read/write metadata for containers handled best by ffmpeg."""
 
-    name = "ffmpeg"
-    containers = frozenset(
+    name: str = "ffmpeg"
+    containers: frozenset[ContainerFormat] = frozenset(
         {
             ContainerFormat.MATROSKA,
             ContainerFormat.AVI,
@@ -142,9 +146,13 @@ class FfmpegBackend:
         ffmpeg: str | None = None,
         timeout: float = 30.0,
     ) -> None:
-        self.ffprobe = ffprobe if ffprobe is not None else shutil.which("ffprobe")
-        self.ffmpeg = ffmpeg if ffmpeg is not None else shutil.which("ffmpeg")
-        self.timeout = timeout
+        self.ffprobe: str | None = (
+            ffprobe if ffprobe is not None else shutil.which("ffprobe")
+        )
+        self.ffmpeg: str | None = (
+            ffmpeg if ffmpeg is not None else shutil.which("ffmpeg")
+        )
+        self.timeout: float = timeout
 
     @property
     def available(self) -> bool:
@@ -359,7 +367,7 @@ class FfmpegBackend:
         self,
         path: Path,
         detected: DetectedFormat,
-        artwork,
+        artwork: Iterable[Artwork],
         policy: WritePolicy,
         report: WriteReport,
     ) -> tuple[list[str], list[Path]]:
@@ -401,7 +409,7 @@ class FfmpegBackend:
         attachment_index = 0
         for image, suffix in valid_images:
             with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
-                handle.write(image.data)
+                _ = handle.write(image.data)
                 temp_path = Path(handle.name)
             temp_files.append(temp_path)
             filename = f"cover{attachment_index}{suffix}"
@@ -566,7 +574,7 @@ class FfmpegBackend:
             "movement_total", "movementtotal", "rating",
             "show", "tvshow", "season_number", "season", "episode_sort", "episode",
             "episode_id", "network", "director", "writer", "screenplay_by", "synopsis",
-            "summary", "description", "rating", "law_rating", "keywords", "location",
+            "summary", "description", "law_rating", "keywords", "location",
             "encoder", "duration", "creation_time", "handler_name", "vendor_id",
             "major_brand", "minor_version", "compatible_brands", "media_type",
             *_MB_READ_ALIASES,
@@ -713,9 +721,14 @@ class FfmpegBackend:
             if field == "lyrics" or field.endswith(".lyrics"):
                 expected_value = expected_value.text if expected_value else None
                 actual_value = actual_value.text if actual_value else None
-            if field.startswith("extra.") and isinstance(expected_value, list) and isinstance(actual_value, list):
-                if len(actual_value) == 1 and "; ".join(expected_value) == actual_value[0]:
-                    continue
+            if (
+                field.startswith("extra.")
+                and isinstance(expected_value, list)
+                and isinstance(actual_value, list)
+                and len(actual_value) == 1
+                and "; ".join(expected_value) == actual_value[0]
+            ):
+                continue
             if expected_value != actual_value:
                 mismatches.append(f"{field}: {expected_value!r} != {actual_value!r}")
         if mismatches:
@@ -763,7 +776,7 @@ def _number_pair(number: int | None, total: int | None) -> str | None:
     return f"{number}/{total}"
 
 
-def _field_value(metadata: MediaMetadata, field: str):
+def _field_value(metadata: MediaMetadata, field: str) -> Any:
     if field == "audio.track":
         return (
             (metadata.audio.track_number, metadata.audio.track_total)

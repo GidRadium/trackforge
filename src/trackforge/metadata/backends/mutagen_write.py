@@ -10,6 +10,9 @@ fields.  Unknown frames are preserved because mutagen edits the existing tag
 object in place.
 """
 
+# mutagen's tag objects are dynamically shaped and only partially annotated.
+# pyright: standard
+
 from __future__ import annotations
 
 import base64
@@ -17,14 +20,26 @@ import os
 import shutil
 import struct
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-import mutagen
 from mutagen import MutagenError
-from mutagen.asf import ASF, ASFByteArrayAttribute
+from mutagen.asf import ASF
 from mutagen.flac import FLAC, Picture
-from mutagen.id3 import APIC, COMM, POPM, TDRC, TDAT, TIPL, TXXX, TYER, USLT, Encoding, ID3
+from mutagen.id3 import (
+    APIC,
+    COMM,
+    ID3,
+    POPM,
+    TDAT,
+    TIPL,
+    TXXX,
+    TYER,
+    USLT,
+    Encoding,
+    Frames,
+)
 from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm, MP4Tags
 
 from ..capabilities import WritePolicy, WriteReport
@@ -36,7 +51,14 @@ from ..errors import (
 from ..formats import ContainerFormat, DetectedFormat
 from ..model import Artwork, ArtworkKind, Lyrics, MediaMetadata
 from ..normalize import ID3_GENRES
-from .mutagen import WRITABLE_CONTAINERS, open_audio_file
+from .mutagen_common import WRITABLE_CONTAINERS, VCommentDict, open_audio_file
+
+
+class _DeletableTags(Protocol):
+    def __contains__(self, key: str) -> bool: ...
+
+    def __delitem__(self, key: str) -> None: ...
+
 
 _ID3_PICTURE_TYPE = {
     ArtworkKind.FRONT: 3,
@@ -156,7 +178,7 @@ def write_file(
         os.close(descriptor)
         temp_path = Path(temp_name)
         try:
-            shutil.copy2(path, temp_path)
+            _ = shutil.copy2(path, temp_path)
             _write_in_place(temp_path, detected, metadata, policy, report)
             if policy.verify:
                 _verify(backend, temp_path, detected, metadata, report)
@@ -238,7 +260,8 @@ def _write_id3(
     if audio_file.tags is None:
         audio_file.add_tags()
     tags = audio_file.tags
-    assert isinstance(tags, ID3)
+    if not isinstance(tags, ID3):
+        raise UnsupportedFormatError("ID3 tag could not be created")
 
     _id3_text(tags, "TIT2", metadata.title, "title", policy, report)
     _id3_text(tags, "TSOT", metadata.title_sort, "title_sort", policy, report)
@@ -415,7 +438,7 @@ def _id3_texts(
 ) -> None:
     if values:
         tags.delall(frame_id)
-        frame_class = mutagen.id3.Frames[frame_id]
+        frame_class = Frames[frame_id]
         tags.add(frame_class(encoding=3, text=list(values)))
         report.written.append(field)
     elif policy.remove_missing:
@@ -582,7 +605,7 @@ def _id3_txxx(tags: ID3, description: str, value: str, field: str, report: Write
 
 def _id3_artwork(
     tags: ID3,
-    artwork,
+    artwork: Iterable[Artwork],
     policy: WritePolicy,
     report: WriteReport,
 ) -> None:
@@ -607,15 +630,15 @@ def _write_id3v1(path: Path, metadata: MediaMetadata, report: WriteReport) -> No
     """Append a lossy ID3v1 compatibility block."""
     block = _id3v1_block(metadata)
     with path.open("r+b") as handle:
-        handle.seek(0, 2)
+        _ = handle.seek(0, 2)
         size = handle.tell()
         if size >= 128:
-            handle.seek(-128, 2)
+            _ = handle.seek(-128, 2)
             tail = handle.read(128)
             if tail[:3] == b"TAG":
-                handle.truncate(size - 128)
-        handle.seek(0, 2)
-        handle.write(block)
+                _ = handle.truncate(size - 128)
+        _ = handle.seek(0, 2)
+        _ = handle.write(block)
     report.coerced.append(("legacy.id3v1", "30-byte fields; lossy"))
 
 
@@ -662,6 +685,8 @@ def _write_flac(
     if tags is None:
         audio_file.add_tags()
         tags = audio_file.tags
+    if not isinstance(tags, VCommentDict):
+        raise UnsupportedFormatError("Vorbis comment block could not be created")
     _write_vorbis_common(tags, metadata, policy, report)
     _write_vorbis_audio(tags, metadata, policy, report)
 
@@ -682,6 +707,8 @@ def _write_ogg(
     if tags is None:
         audio_file.add_tags()
         tags = audio_file.tags
+    if not isinstance(tags, VCommentDict):
+        raise UnsupportedFormatError("Vorbis comment block could not be created")
     _write_vorbis_common(tags, metadata, policy, report)
     _write_vorbis_audio(tags, metadata, policy, report)
 
@@ -696,7 +723,7 @@ def _write_ogg(
 
 
 def _write_vorbis_common(
-    tags,
+    tags: VCommentDict,
     metadata: MediaMetadata,
     policy: WritePolicy,
     report: WriteReport,
@@ -762,7 +789,7 @@ def _write_vorbis_common(
 
 
 def _write_vorbis_audio(
-    tags,
+    tags: VCommentDict,
     metadata: MediaMetadata,
     policy: WritePolicy,
     report: WriteReport,
@@ -891,13 +918,13 @@ def _write_vorbis_audio(
         )
 
 
-def _delete_tag(tags, key: str) -> None:
+def _delete_tag(tags: _DeletableTags, key: str) -> None:
     if key in tags:
         del tags[key]
 
 
 def _vorbis_text(
-    tags,
+    tags: VCommentDict,
     key: str,
     value: str | None,
     field: str,
@@ -913,7 +940,7 @@ def _vorbis_text(
 
 
 def _vorbis_values(
-    tags,
+    tags: VCommentDict,
     key: str,
     values: list[str],
     field: str,
@@ -942,7 +969,8 @@ def _write_mp4(
     if audio_file.tags is None:
         audio_file.add_tags()
     tags = audio_file.tags
-    assert isinstance(tags, MP4Tags)
+    if not isinstance(tags, MP4Tags):
+        raise UnsupportedFormatError("MP4 tag could not be created")
 
     _mp4_text(tags, "©nam", metadata.title, "title", policy, report)
     _mp4_text(tags, "sonm", metadata.title_sort, "title_sort", policy, report)
@@ -1161,7 +1189,12 @@ def _mp4_freeform(
 # ----------------------------------------------------------------------
 
 
-def _write_ape(audio_file, metadata: MediaMetadata, policy: WritePolicy, report: WriteReport) -> None:
+def _write_ape(
+    audio_file: Any,
+    metadata: MediaMetadata,
+    policy: WritePolicy,
+    report: WriteReport,
+) -> None:
     if audio_file.tags is None:
         audio_file.add_tags()
     tags = audio_file.tags
@@ -1238,7 +1271,7 @@ def _write_ape(audio_file, metadata: MediaMetadata, policy: WritePolicy, report:
         if image is not None:
             suffix = ".png" if image.mime == "image/png" else ".jpg"
             tags["Cover Art (Front)"] = (
-                f"cover{suffix}".encode("utf-8") + b"\x00" + image.data
+                f"cover{suffix}".encode() + b"\x00" + image.data
             )
         report.written.append("artwork")
 
@@ -1252,8 +1285,6 @@ def _write_asf(audio_file: ASF, metadata: MediaMetadata, policy: WritePolicy, re
     if audio_file.tags is None:
         audio_file.add_tags()
     tags = audio_file.tags
-    if tags is None:
-        raise UnsupportedFormatError("ASF tag could not be created")
 
     def add(key: str, value: str | None, field: str) -> None:
         if value is not None:
@@ -1311,7 +1342,7 @@ def _write_asf(audio_file: ASF, metadata: MediaMetadata, policy: WritePolicy, re
         _delete_tag(tags, "WM/Picture")
         image = next(iter(_artwork(metadata)), None)
         if image is not None:
-            tags["WM/Picture"] = ASFByteArrayAttribute(_asf_picture_bytes(image))
+            tags["WM/Picture"] = _asf_picture_bytes(image)
         report.written.append("artwork")
 
 
@@ -1372,12 +1403,11 @@ def _flac_picture(image: Artwork) -> Picture:
 
 
 def _picture_type(kind: ArtworkKind | str) -> int:
-    if isinstance(kind, str):
-        try:
-            kind = ArtworkKind(kind)
-        except ValueError:
-            return 0
-    return _ID3_PICTURE_TYPE.get(kind, 0)
+    try:
+        artwork_kind = ArtworkKind(kind)
+    except ValueError:
+        return 0
+    return _ID3_PICTURE_TYPE.get(artwork_kind, 0)
 
 
 def _number_pair(number: int | None, total: int | None) -> str | None:
@@ -1420,7 +1450,7 @@ def _verify(
         )
 
 
-def _field_value(metadata: MediaMetadata, field: str):
+def _field_value(metadata: MediaMetadata, field: str) -> Any:
     if field == "audio.track":
         return (
             (metadata.audio.track_number, metadata.audio.track_total)
@@ -1454,11 +1484,11 @@ def _field_value(metadata: MediaMetadata, field: str):
     return target
 
 
-def _artwork(metadata: MediaMetadata):
+def _artwork(metadata: MediaMetadata) -> Iterable[Artwork]:
     return getattr(metadata, "artwork", ())
 
 
-def _artwork_signature(artwork) -> list[tuple[str, str, bytes]]:
+def _artwork_signature(artwork: Iterable[Artwork]) -> list[tuple[str, str, bytes]]:
     return sorted(
         (str(item.kind), item.mime, item.data)
         for item in artwork

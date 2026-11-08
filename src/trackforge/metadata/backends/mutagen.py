@@ -5,6 +5,9 @@ MPEG-TS are deliberately absent: they need the ffmpeg backend and should not
 be faked here.
 """
 
+# mutagen's tag objects are dynamically shaped and only partially annotated.
+# pyright: standard
+
 from __future__ import annotations
 
 import base64
@@ -15,26 +18,10 @@ from typing import Any
 
 from mutagen import MutagenError
 from mutagen._vorbis import VCommentDict
-from mutagen.aac import AAC
-from mutagen.aiff import AIFF
 from mutagen.apev2 import APEv2
-from mutagen.asf import ASF, ASFTags
-from mutagen.dsdiff import DSDIFF
-from mutagen.dsf import DSF
-from mutagen.flac import FLAC
+from mutagen.asf import ASFTags
 from mutagen.id3 import ID3
-from mutagen.monkeysaudio import MonkeysAudio
-from mutagen.mp3 import MP3
-from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm, MP4Tags
-from mutagen.musepack import Musepack
-from mutagen.oggflac import OggFLAC
-from mutagen.oggopus import OggOpus
-from mutagen.oggspeex import OggSpeex
-from mutagen.oggtheora import OggTheora
-from mutagen.oggvorbis import OggVorbis
-from mutagen.trueaudio import TrueAudio
-from mutagen.wave import WAVE
-from mutagen.wavpack import WavPack
+from mutagen.mp4 import MP4Cover, MP4FreeForm, MP4Tags
 
 from ..capabilities import (
     Capabilities,
@@ -42,7 +29,6 @@ from ..capabilities import (
     WriteReport,
     standard_capabilities,
 )
-from ..errors import MetadataReadError, UnsupportedFormatError
 from ..formats import ContainerFormat, DetectedFormat, TagSystem
 from ..model import (
     Artwork,
@@ -66,48 +52,10 @@ from ..normalize import (
     split_values,
 )
 from .base import ReadResult
-
-_FILE_CLASSES: dict[ContainerFormat, type[Any]] = {
-    ContainerFormat.MP3: MP3,
-    ContainerFormat.AAC: AAC,
-    ContainerFormat.FLAC: FLAC,
-    ContainerFormat.MP4: MP4,
-    ContainerFormat.WAV: WAVE,
-    ContainerFormat.AIFF: AIFF,
-    ContainerFormat.ASF: ASF,
-    ContainerFormat.APE: MonkeysAudio,
-    ContainerFormat.WAVPACK: WavPack,
-    ContainerFormat.MUSEPACK: Musepack,
-    ContainerFormat.TTA: TrueAudio,
-    ContainerFormat.DSF: DSF,
-    ContainerFormat.DFF: DSDIFF,
-}
-
-_OGG_CLASSES: dict[str, type[Any]] = {
-    "vorbis": OggVorbis,
-    "opus": OggOpus,
-    "flac": OggFLAC,
-    "speex": OggSpeex,
-    "theora": OggTheora,
-}
-
-WRITABLE_CONTAINERS = frozenset(
-    {
-        ContainerFormat.MP3,
-        ContainerFormat.AAC,
-        ContainerFormat.FLAC,
-        ContainerFormat.OGG,
-        ContainerFormat.MP4,
-        ContainerFormat.WAV,
-        ContainerFormat.AIFF,
-        ContainerFormat.DSF,
-        ContainerFormat.DFF,
-        ContainerFormat.ASF,
-        ContainerFormat.APE,
-        ContainerFormat.WAVPACK,
-        ContainerFormat.MUSEPACK,
-        ContainerFormat.TTA,
-    }
+from .mutagen_common import (
+    FILE_CLASSES,
+    WRITABLE_CONTAINERS,
+    open_audio_file,
 )
 
 _TAG_SYSTEMS: dict[ContainerFormat, TagSystem] = {
@@ -171,28 +119,13 @@ _RG_VORBIS = {
 }
 
 
-def open_audio_file(path: Path, detected: DetectedFormat) -> Any:
-    """Open ``path`` with the mutagen class selected by ``detected``."""
-    if detected.container == ContainerFormat.OGG:
-        file_class = _OGG_CLASSES.get(detected.codec or "")
-        if file_class is None:
-            raise UnsupportedFormatError(str(path))
-    else:
-        file_class = _FILE_CLASSES.get(detected.container)
-        if file_class is None:
-            raise UnsupportedFormatError(str(path))
-
-    try:
-        return file_class(path)
-    except (MutagenError, OSError, ValueError) as exc:
-        raise MetadataReadError(str(path), str(exc)) from exc
-
-
 class MutagenBackend:
     """Read tags from audio containers supported by mutagen."""
 
-    name = "mutagen"
-    containers = frozenset({*_FILE_CLASSES, ContainerFormat.OGG})
+    name: str = "mutagen"
+    containers: frozenset[ContainerFormat] = frozenset(
+        {*FILE_CLASSES, ContainerFormat.OGG}
+    )
 
     def read(self, path: Path, detected: DetectedFormat) -> ReadResult:
         audio_file = self._open(path, detected)
@@ -631,7 +564,7 @@ class MutagenBackend:
                 )
             )
 
-        for key in tags.keys():
+        for key in tags:
             if not key.startswith("----:"):
                 continue
             parts = key.split(":", 2)
@@ -788,7 +721,7 @@ class MutagenBackend:
             "movementtotal", "rating", "cover art (front)",
         }
         for key, value in items.items():
-            if key in known or key.startswith("musicbrainz") or key.startswith("replaygain"):
+            if key in known or key.startswith(("musicbrainz", "replaygain")):
                 continue
             raw = getattr(value, "value", value)
             if not isinstance(raw, bytes):
@@ -923,13 +856,13 @@ def _merge_missing(target: MediaMetadata, source: MediaMetadata) -> None:
             if getattr(target.audio, name) is None and getattr(source.audio, name) is not None:
                 setattr(target.audio, name, getattr(source.audio, name))
         for key, value in source.audio.replaygain.items():
-            target.audio.replaygain.setdefault(key, value)
+            _ = target.audio.replaygain.setdefault(key, value)
 
 
 def _read_id3v1(path: Path) -> MediaMetadata | None:
     try:
         with path.open("rb") as handle:
-            handle.seek(-128, 2)
+            _ = handle.seek(-128, 2)
             data = handle.read(128)
     except (OSError, ValueError):
         return None

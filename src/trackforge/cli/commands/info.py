@@ -1,5 +1,8 @@
 """``tfg info`` command."""
 
+# Typer uses call expressions in argument defaults by design.
+# pyright: standard
+
 from __future__ import annotations
 
 import json
@@ -11,7 +14,7 @@ from ..render import container, number, or_dash, to_dict
 
 
 def info(
-    path: Path = typer.Argument(
+    path: Path = typer.Argument(  # noqa: B008
         ...,
         exists=True,
         dir_okay=False,

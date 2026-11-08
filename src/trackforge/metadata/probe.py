@@ -13,6 +13,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,18 +57,32 @@ def probe_streams(path: str | Path, *, timeout: float = 10.0) -> StreamProbe | N
     if completed.returncode != 0:
         return None
     try:
-        data = json.loads(completed.stdout)
+        parsed: object = json.loads(completed.stdout)  # pyright: ignore[reportAny]
     except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    data = cast("dict[str, object]", parsed)
+    streams = data.get("streams")
+    if not isinstance(streams, list):
         return None
 
     audio = 0
     video = 0
-    for stream in data.get("streams", []):
+    for raw_stream in cast("list[object]", streams):
+        if not isinstance(raw_stream, dict):
+            continue
+        stream = cast("dict[str, object]", raw_stream)
         codec_type = stream.get("codec_type")
         if codec_type == "audio":
             audio += 1
         elif codec_type == "video":
-            disposition = stream.get("disposition") or {}
+            raw_disposition = stream.get("disposition")
+            disposition = (
+                cast("dict[str, object]", raw_disposition)
+                if isinstance(raw_disposition, dict)
+                else {}
+            )
             if not disposition.get("attached_pic"):
                 video += 1
     return StreamProbe(audio_streams=audio, video_streams=video)

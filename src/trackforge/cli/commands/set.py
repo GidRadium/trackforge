@@ -1,5 +1,8 @@
 """``tfg set`` command."""
 
+# Typer uses call expressions in argument defaults by design.
+# pyright: standard
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,7 +13,7 @@ from ..values import clear_field, image_mime
 
 
 def set_metadata(
-    path: Path = typer.Argument(
+    path: Path = typer.Argument(  # noqa: B008
         ...,
         exists=True,
         dir_okay=False,
@@ -35,7 +38,7 @@ def set_metadata(
     comment: str | None = typer.Option(None, "--comment"),
     composer: str | None = typer.Option(None, "--composer", help="Separate multiple names with ';'."),
     lyrics: str | None = typer.Option(None, "--lyrics"),
-    cover: Path | None = typer.Option(
+    cover: Path | None = typer.Option(  # noqa: B008
         None,
         "--cover",
         exists=True,
@@ -44,7 +47,7 @@ def set_metadata(
         help="JPEG or PNG file to use as the front cover.",
     ),
     remove_cover: bool = typer.Option(False, "--remove-cover"),
-    clear: list[str] | None = typer.Option(
+    clear: list[str] | None = typer.Option(  # noqa: B008
         None,
         "--clear",
         help="Remove a field; repeat for multiple fields.",

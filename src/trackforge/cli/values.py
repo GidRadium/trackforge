@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from trackforge.metadata import MediaFile
 
 CLEARABLE = {
     "title", "artist", "album", "album_artist", "date", "original_date",
@@ -14,7 +18,7 @@ CLEARABLE = {
 }
 
 
-def clear_field(media, field: str) -> None:
+def clear_field(media: MediaFile, field: str) -> None:
     if field not in CLEARABLE:
         raise ValueError(f"field cannot be cleared: {field!r}")
     if field == "artist":

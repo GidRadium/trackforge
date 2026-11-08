@@ -28,7 +28,9 @@ def test_standard_capabilities_include_selected_groups() -> None:
     assert capabilities.supports("title")
     assert capabilities.supports("album")
     assert capabilities.supports("show")
-    assert capabilities.field("title").native_key == "©nam"  # type: ignore[union-attr]
+    title = capabilities.field("title")
+    assert title is not None
+    assert title.native_key == "©nam"
     assert capabilities.writable is False
 
 
@@ -79,4 +81,4 @@ def test_write_report_lossy() -> None:
 
 def test_write_policy_rejects_unknown_id3_version() -> None:
     with pytest.raises(ValueError):
-        WritePolicy(id3_version=5)
+        _ = WritePolicy(id3_version=5)

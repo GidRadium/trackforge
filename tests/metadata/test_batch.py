@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from trackforge.metadata import discover_media_files, read_many, scan
+from trackforge.metadata import ScanResult, discover_media_files, read_many, scan
 
 
 def test_scan_preserves_order_and_errors(tmp_path: Path, media_dir: Path) -> None:
@@ -19,6 +19,7 @@ def test_scan_preserves_order_and_errors(tmp_path: Path, media_dir: Path) -> Non
         missing,
     ]
     assert results[0].ok
+    assert results[0].media is not None
     assert results[0].media.title == "MP3 Title"
     assert not results[1].ok
     assert results[1].error is not None
@@ -29,7 +30,7 @@ def test_read_many_raise_and_skip(tmp_path: Path, media_dir: Path) -> None:
     assert len(read_many(paths, workers=2)) == 2
 
     with pytest.raises(OSError):
-        read_many([media_dir / "sample.mp3", tmp_path / "missing.mp3"])
+        _ = read_many([media_dir / "sample.mp3", tmp_path / "missing.mp3"])
 
     assert len(read_many([media_dir / "sample.mp3", tmp_path / "missing.mp3"], on_error="skip")) == 1
 
@@ -57,7 +58,7 @@ def test_scan_limit(media_dir: Path) -> None:
     assert results[0].path == media_dir / "sample.mp3"
 
     with pytest.raises(ValueError):
-        scan([], limit=-1)
+        _ = scan([], limit=-1)
 
 
 def test_scan_cancelled_before_start(media_dir: Path) -> None:
@@ -79,7 +80,7 @@ def test_scan_cancel_after_first(media_dir: Path) -> None:
     cancel = threading.Event()
     paths = [media_dir / "sample.mp3", media_dir / "sample.flac", media_dir / "sample.ogg"]
 
-    def on_progress(done: int, total: int, result) -> None:
+    def on_progress(done: int, _total: int, _result: ScanResult) -> None:
         if done == 1:
             cancel.set()
 

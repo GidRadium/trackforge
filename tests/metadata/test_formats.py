@@ -184,7 +184,7 @@ def test_detected_format_keeps_explicit_tag_systems() -> None:
 
 def test_sniff_reads_file_and_keeps_extension(tmp_path: Path) -> None:
     path = tmp_path / "track.bin"
-    path.write_bytes(b"\xff\xfb\x90\x64")
+    _ = path.write_bytes(b"\xff\xfb\x90\x64")
 
     detected = sniff(path)
 
@@ -194,7 +194,7 @@ def test_sniff_reads_file_and_keeps_extension(tmp_path: Path) -> None:
 
 def test_sniff_m4a_extension(tmp_path: Path) -> None:
     path = tmp_path / "song.m4a"
-    path.write_bytes(_ftyp(b"M4A "))
+    _ = path.write_bytes(_ftyp(b"M4A "))
 
     detected = sniff(path)
 
@@ -205,7 +205,7 @@ def test_sniff_m4a_extension(tmp_path: Path) -> None:
 
 def test_sniff_generic_m4a_extension_sets_audio_mime(tmp_path: Path) -> None:
     path = tmp_path / "song.m4a"
-    path.write_bytes(_ftyp(b"isom"))
+    _ = path.write_bytes(_ftyp(b"isom"))
 
     detected = sniff(path)
 
@@ -216,4 +216,4 @@ def test_sniff_generic_m4a_extension_sets_audio_mime(tmp_path: Path) -> None:
 
 def test_sniff_missing_file(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
-        sniff(tmp_path / "missing.mp3")
+        _ = sniff(tmp_path / "missing.mp3")

@@ -104,7 +104,9 @@ class Capabilities:
 
     container: ContainerFormat
     tag_system: TagSystem
-    fields: Mapping[str, FieldCapability] = field(default_factory=dict)
+    fields: Mapping[str, FieldCapability] = field(
+        default_factory=dict[str, FieldCapability]
+    )
     arbitrary_keys: bool = False
     artwork: bool = False
     writable: bool = False

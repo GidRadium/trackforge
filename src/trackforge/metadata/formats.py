@@ -303,8 +303,6 @@ def _find_ftyp(data: bytes) -> bytes | None:
             header_size = 16
             if size < 16:
                 return None
-        elif size == 0:
-            return None
         elif size < 8:
             return None
         if box_type == b"ftyp":
@@ -317,7 +315,7 @@ def _find_ftyp(data: bytes) -> bytes | None:
 def _mp4(brand: bytes) -> DetectedFormat:
     brand_text = brand.decode("latin-1").strip() or None
     if brand in (b"M4A ", b"M4B ", b"M4P "):
-        variant = brand_text.lower()
+        variant = brand_text.lower() if brand_text else None
         return DetectedFormat(
             ContainerFormat.MP4,
             "audio/mp4",
@@ -342,7 +340,7 @@ def _mp4(brand: bytes) -> DetectedFormat:
         return DetectedFormat(
             ContainerFormat.MP4,
             "video/3gpp",
-            variant=brand_text.lower(),
+            variant=brand_text.lower() if brand_text else None,
             brand=brand_text,
         )
     return DetectedFormat(
@@ -357,9 +355,7 @@ def _is_mpeg_ts(data: bytes) -> bool:
     """Detect 188-byte TS and 192-byte M2TS packets."""
     if len(data) >= 189 and data[0] == 0x47 and data[188] == 0x47:
         return True
-    if len(data) >= 197 and data[4] == 0x47 and data[196] == 0x47:
-        return True
-    return False
+    return len(data) >= 197 and data[4] == 0x47 and data[196] == 0x47
 
 
 _TAG_SYSTEMS: dict[ContainerFormat, tuple[TagSystem, ...]] = {

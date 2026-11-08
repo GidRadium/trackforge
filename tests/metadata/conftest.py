@@ -4,6 +4,9 @@ The library itself does not depend on ffmpeg.  These fixtures skip when the
 binary is unavailable; the unit tests for model/normalization still run.
 """
 
+# Test fixtures and JSON payloads are intentionally dynamic.
+# pyright: standard
+
 from __future__ import annotations
 
 import shutil
@@ -15,31 +18,31 @@ from mutagen.flac import FLAC, Picture
 from mutagen.id3 import (
     APIC,
     COMM,
+    GRP1,
+    ID3,
     TALB,
     TBPM,
     TCMP,
     TCOM,
     TCON,
     TCOP,
+    TDRC,
     TEXT,
+    TIPL,
     TIT2,
     TKEY,
     TLAN,
     TPE1,
     TPE2,
     TPE3,
-    TIPL,
     TPOS,
     TPUB,
     TRCK,
-    TDRC,
-    TSRC,
     TSO2,
     TSOT,
+    TSRC,
     TXXX,
     USLT,
-    GRP1,
-    ID3,
 )
 from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm

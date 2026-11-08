@@ -314,8 +314,10 @@ def parse_flac_picture(data: bytes) -> Artwork | None:
 
 def picture_kind(picture_type: object) -> ArtworkKind:
     """Map an ID3/FLAC picture type number to :class:`ArtworkKind`."""
+    if not isinstance(picture_type, (int, str)):
+        return ArtworkKind.OTHER
     try:
-        number = int(picture_type)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+        number = int(picture_type)
+    except ValueError:
         return ArtworkKind.OTHER
     return _PICTURE_KINDS.get(number, ArtworkKind.OTHER)

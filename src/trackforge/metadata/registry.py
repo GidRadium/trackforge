@@ -13,7 +13,7 @@ class BackendRegistry:
     """Pick the first registered backend that supports a container."""
 
     def __init__(self, backends: Iterable[MetadataBackend] = ()) -> None:
-        self._backends = list(backends)
+        self._backends: list[MetadataBackend] = list(backends)
 
     def register(self, backend: MetadataBackend) -> None:
         self._backends.append(backend)
@@ -45,7 +45,7 @@ def default_registry() -> BackendRegistry:
     from .backends.ffmpeg import FfmpegBackend
     from .backends.mutagen import MutagenBackend
 
-    backends = [MutagenBackend()]
+    backends: list[MetadataBackend] = [MutagenBackend()]
     ffmpeg = FfmpegBackend()
     if ffmpeg.available:
         backends.append(ffmpeg)

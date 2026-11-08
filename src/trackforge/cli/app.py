@@ -1,5 +1,8 @@
 """Typer application wiring."""
 
+# Typer uses call expressions in argument defaults by design.
+# pyright: standard
+
 from __future__ import annotations
 
 import typer
