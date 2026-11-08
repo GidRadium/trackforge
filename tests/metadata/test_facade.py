@@ -579,6 +579,9 @@ def test_write_mp3(tmp_path: Path, media_dir: Path) -> None:
     media.require_audio().album = "Written Album"
     media.require_audio().track_number = 9
     media.require_audio().track_total = 9
+    media.require_audio().movement_name = "I. Allegro"
+    media.require_audio().movement_number = 1
+    media.require_audio().movement_total = 4
 
     report = media.save()
 
@@ -602,6 +605,8 @@ def test_write_mp3(tmp_path: Path, media_dir: Path) -> None:
     assert updated.release_type == "album"
     assert updated.require_audio().album == "Written Album"
     assert (updated.audio.track_number, updated.audio.track_total) == (9, 9)
+    assert updated.audio.movement_name == "I. Allegro"
+    assert (updated.audio.movement_number, updated.audio.movement_total) == (1, 4)
     assert updated.artwork.front is not None
 
 
@@ -673,6 +678,9 @@ def test_write_m4a(tmp_path: Path, media_dir: Path) -> None:
     media.require_audio().album = "Written M4A Album"
     media.require_audio().bpm = 99
     media.require_audio().compilation = False
+    media.require_audio().movement_name = "II. Andante"
+    media.require_audio().movement_number = 2
+    media.require_audio().movement_total = 4
 
     report = media.save()
 
@@ -691,6 +699,8 @@ def test_write_m4a(tmp_path: Path, media_dir: Path) -> None:
     assert updated.require_audio().album == "Written M4A Album"
     assert updated.require_audio().bpm == 99
     assert updated.require_audio().compilation is False
+    assert updated.audio.movement_name == "II. Andante"
+    assert (updated.audio.movement_number, updated.audio.movement_total) == (2, 4)
 
 
 def test_write_mp4_video(tmp_path: Path, media_dir: Path) -> None:

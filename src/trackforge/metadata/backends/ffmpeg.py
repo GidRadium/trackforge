@@ -525,6 +525,9 @@ class FfmpegBackend:
             audio.isrc = first("isrc")
             audio.bpm = parse_int(first("bpm", "beatsperminute"))
             audio.key = first("initial_key", "initialkey", "key")
+            audio.movement_name = first("movement_name", "movementname")
+            audio.movement_number = parse_int(first("movement_number", "movement"))
+            audio.movement_total = parse_int(first("movement_total", "movementtotal"))
             for name, key in _RG_KEYS.items():
                 value = first(key)
                 if value is not None:
@@ -558,6 +561,8 @@ class FfmpegBackend:
             "albumartistsort", "album_artist_sort", "track", "tracknumber",
             "part_number", "disc", "discnumber", "compilation", "label", "publisher",
             "isrc", "bpm", "beatsperminute", "initial_key", "initialkey", "key",
+            "movement_name", "movementname", "movement_number", "movement",
+            "movement_total", "movementtotal",
             "show", "tvshow", "season_number", "season", "episode_sort", "episode",
             "episode_id", "network", "director", "writer", "screenplay_by", "synopsis",
             "summary", "description", "rating", "law_rating", "keywords", "location",
@@ -639,6 +644,17 @@ class FfmpegBackend:
             add("isrc", audio.isrc, "audio.isrc")
             add("bpm", str(audio.bpm) if audio.bpm is not None else None, "audio.bpm")
             add("initial_key", audio.key, "audio.key")
+            add("movement_name", audio.movement_name, "audio.movement_name")
+            add(
+                "movement_number",
+                str(audio.movement_number) if audio.movement_number is not None else None,
+                "audio.movement_number",
+            )
+            add(
+                "movement_total",
+                str(audio.movement_total) if audio.movement_total is not None else None,
+                "audio.movement_total",
+            )
             for name, key in _RG_KEYS.items():
                 value = audio.replaygain.get(name)
                 add(key, f"{value:.2f} dB" if value is not None else None, f"audio.replaygain.{name}")

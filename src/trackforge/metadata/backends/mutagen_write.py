@@ -350,6 +350,32 @@ def _write_id3(
                 report,
             )
         _id3_text(tags, "TKEY", audio.key, "audio.key", policy, report)
+        _id3_text(
+            tags,
+            "MVNM",
+            audio.movement_name,
+            "audio.movement_name",
+            policy,
+            report,
+        )
+        _id3_text(
+            tags,
+            "MVIN",
+            str(audio.movement_number) if audio.movement_number is not None else None,
+            "audio.movement_number",
+            policy,
+            report,
+        )
+        if audio.movement_total is not None:
+            _id3_txxx(
+                tags,
+                "MOVEMENTTOTAL",
+                str(audio.movement_total),
+                "audio.movement_total",
+                report,
+            )
+        elif policy.remove_missing:
+            tags.delall("TXXX:MOVEMENTTOTAL")
 
 
 def _id3_text(
@@ -808,6 +834,30 @@ def _write_vorbis_audio(
     if audio.bpm is not None:
         _vorbis_text(tags, "BPM", str(audio.bpm), "audio.bpm", policy, report)
     _vorbis_text(tags, "INITIALKEY", audio.key, "audio.key", policy, report)
+    _vorbis_text(
+        tags,
+        "MOVEMENTNAME",
+        audio.movement_name,
+        "audio.movement_name",
+        policy,
+        report,
+    )
+    _vorbis_text(
+        tags,
+        "MOVEMENT",
+        str(audio.movement_number) if audio.movement_number is not None else None,
+        "audio.movement_number",
+        policy,
+        report,
+    )
+    _vorbis_text(
+        tags,
+        "MOVEMENTTOTAL",
+        str(audio.movement_total) if audio.movement_total is not None else None,
+        "audio.movement_total",
+        policy,
+        report,
+    )
 
     for name, key in _RG_VORBIS_KEYS.items():
         value = audio.replaygain.get(name)
@@ -963,6 +1013,13 @@ def _write_mp4(
             report.written.append("audio.bpm")
         _mp4_freeform(tags, "ISRC", audio.isrc, "audio.isrc", policy, report)
         _mp4_freeform(tags, "LABEL", audio.label, "audio.label", policy, report)
+        _mp4_text(tags, "©mvn", audio.movement_name, "audio.movement_name", policy, report)
+        if audio.movement_number is not None:
+            tags["©mvi"] = [audio.movement_number]
+            report.written.append("audio.movement_number")
+        if audio.movement_total is not None:
+            tags["©mvc"] = [audio.movement_total]
+            report.written.append("audio.movement_total")
         _mp4_freeform(tags, "CONDUCTOR", _join(metadata.conductor), "conductor", policy, report)
         _mp4_freeform(tags, "LYRICIST", _join(metadata.lyricist), "lyricist", policy, report)
         for name, value in audio.replaygain.items():
@@ -1121,6 +1178,9 @@ def _write_ape(audio_file, metadata: MediaMetadata, policy: WritePolicy, report:
     add("ISRC", metadata.audio.isrc if metadata.audio else None, "audio.isrc")
     add("BPM", str(metadata.audio.bpm) if metadata.audio and metadata.audio.bpm is not None else None, "audio.bpm")
     add("Initial Key", metadata.audio.key if metadata.audio else None, "audio.key")
+    add("Movement Name", metadata.audio.movement_name if metadata.audio else None, "audio.movement_name")
+    add("Movement", str(metadata.audio.movement_number) if metadata.audio and metadata.audio.movement_number is not None else None, "audio.movement_number")
+    add("Movement Total", str(metadata.audio.movement_total) if metadata.audio and metadata.audio.movement_total is not None else None, "audio.movement_total")
     if metadata.audio:
         add(
             "Compilation",

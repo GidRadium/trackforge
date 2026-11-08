@@ -119,6 +119,9 @@ def set_metadata(
     disc: str | None = typer.Option(None, "--disc", help="N or N/TOTAL."),
     isrc: str | None = typer.Option(None, "--isrc"),
     bpm: int | None = typer.Option(None, "--bpm"),
+    movement_name: str | None = typer.Option(None, "--movement-name"),
+    movement: int | None = typer.Option(None, "--movement"),
+    movement_total: int | None = typer.Option(None, "--movement-total"),
     show: str | None = typer.Option(None, "--show"),
     season: int | None = typer.Option(None, "--season"),
     episode: int | None = typer.Option(None, "--episode"),
@@ -205,7 +208,17 @@ def set_metadata(
         audio = media.audio
         needs_audio = any(
             value is not None
-            for value in (album, album_artist, track, disc, isrc, bpm)
+            for value in (
+                album,
+                album_artist,
+                track,
+                disc,
+                isrc,
+                bpm,
+                movement_name,
+                movement,
+                movement_total,
+            )
         )
         if needs_audio and audio is None:
             raise ValueError("file has no audio stream")
@@ -235,6 +248,15 @@ def set_metadata(
                 changes += 1
             if bpm is not None:
                 audio.bpm = bpm
+                changes += 1
+            if movement_name is not None:
+                audio.movement_name = movement_name
+                changes += 1
+            if movement is not None:
+                audio.movement_number = movement
+                changes += 1
+            if movement_total is not None:
+                audio.movement_total = movement_total
                 changes += 1
 
         video = media.video
