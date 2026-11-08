@@ -234,3 +234,13 @@ def test_set_cover_rejects_unknown_format(tmp_path: Path, media_dir: Path) -> No
 
     assert result.exit_code == 1
     assert "unsupported cover format" in result.output
+
+
+def test_scan_progress(media_dir: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["scan", str(media_dir), "--workers", "1", "--progress"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "[1/" in result.output

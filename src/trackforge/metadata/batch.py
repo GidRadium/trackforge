@@ -7,7 +7,7 @@ needs without hiding failures.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +57,7 @@ def scan(
     paths: Sequence[str | Path],
     *,
     workers: int = 4,
+    on_progress: Callable[[int, int, ScanResult], None] | None = None,
 ) -> list[ScanResult]:
     """Open every path, collecting per-file errors in input order."""
     if workers < 1:
@@ -70,7 +71,13 @@ def scan(
             return ScanResult(path=path, error=exc)
 
     if workers == 1 or len(files) < 2:
-        return [one(path) for path in files]
+        results = []
+        for index, path in enumerate(files):
+            result = one(path)
+            results.append(result)
+            if on_progress is not None:
+                on_progress(index + 1, len(files), result)
+        return results
 
     results: list[ScanResult | None] = [None] * len(files)
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -78,8 +85,13 @@ def scan(
             executor.submit(one, path): index
             for index, path in enumerate(files)
         }
+        completed = 0
         for future, index in futures.items():
-            results[index] = future.result()
+            result = future.result()
+            results[index] = result
+            completed += 1
+            if on_progress is not None:
+                on_progress(completed, len(files), result)
     return [result for result in results if result is not None]
 
 
@@ -88,6 +100,7 @@ def read_many(
     *,
     workers: int = 4,
     on_error: str = "raise",
+    on_progress: Callable[[int, int, ScanResult], None] | None = None,
 ) -> list[MediaFile]:
     """Like :func:`scan`, but returns only successful reads.
 
@@ -95,7 +108,7 @@ def read_many(
     """
     if on_error not in {"raise", "skip"}:
         raise ValueError("on_error must be 'raise' or 'skip'")
-    results = scan(paths, workers=workers)
+    results = scan(paths, workers=workers, on_progress=on_progress)
     if on_error == "raise":
         for result in results:
             if result.error is not None:

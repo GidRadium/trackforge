@@ -337,6 +337,7 @@ def scan_command(
         help="Files or directories to scan.",
     ),
     workers: int = typer.Option(4, "--workers", min=1),
+    progress: bool = typer.Option(False, "--progress"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Scan files or directories and report per-file results."""
@@ -347,7 +348,12 @@ def scan_command(
         typer.echo("error: no media files found", err=True)
         raise typer.Exit(code=1)
 
-    results = scan(files, workers=workers)
+    progress_callback = None
+    if progress:
+        def progress_callback(done: int, total: int, _result) -> None:
+            typer.echo(f"[{done}/{total}]", err=True)
+
+    results = scan(files, workers=workers, on_progress=progress_callback)
     if json_output:
         payload = [
             {
