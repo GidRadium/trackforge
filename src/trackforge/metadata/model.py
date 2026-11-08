@@ -156,6 +156,9 @@ class CommonMetadata:
     original_date: PartialDate | None = None
     release_date: PartialDate | None = None
     mood: str | None = None
+    work: str | None = None
+    subtitle: str | None = None
+    media: str | None = None
     genre: list[str] = field(default_factory=list)
     comment: str | None = None
     composer: list[str] = field(default_factory=list)

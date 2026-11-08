@@ -570,6 +570,9 @@ def test_write_mp3(tmp_path: Path, media_dir: Path) -> None:
     media.original_date = PartialDate(2010)
     media.release_date = PartialDate(2011, 2)
     media.mood = "Energetic"
+    media.work = "Work Title"
+    media.subtitle = "Subtitle"
+    media.media = "CD"
     media.require_audio().album = "Written Album"
     media.require_audio().track_number = 9
     media.require_audio().track_total = 9
@@ -588,6 +591,9 @@ def test_write_mp3(tmp_path: Path, media_dir: Path) -> None:
     assert updated.original_date == PartialDate(2010)
     assert updated.release_date == PartialDate(2011, 2)
     assert updated.mood == "Energetic"
+    assert updated.work == "Work Title"
+    assert updated.subtitle == "Subtitle"
+    assert updated.media == "CD"
     assert updated.require_audio().album == "Written Album"
     assert (updated.audio.track_number, updated.audio.track_total) == (9, 9)
     assert updated.artwork.front is not None
@@ -652,6 +658,9 @@ def test_write_m4a(tmp_path: Path, media_dir: Path) -> None:
     media.title = "Written M4A"
     media.original_date = PartialDate(2019, 3)
     media.mood = "Calm"
+    media.work = "M4A Work"
+    media.subtitle = "M4A Subtitle"
+    media.media = "Digital Media"
     media.require_audio().album = "Written M4A Album"
     media.require_audio().bpm = 99
     media.require_audio().compilation = False
@@ -664,6 +673,9 @@ def test_write_m4a(tmp_path: Path, media_dir: Path) -> None:
     assert updated.title == "Written M4A"
     assert updated.original_date == PartialDate(2019, 3)
     assert updated.mood == "Calm"
+    assert updated.work == "M4A Work"
+    assert updated.subtitle == "M4A Subtitle"
+    assert updated.media == "Digital Media"
     assert updated.require_audio().album == "Written M4A Album"
     assert updated.require_audio().bpm == 99
     assert updated.require_audio().compilation is False

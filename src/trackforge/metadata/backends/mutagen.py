@@ -336,6 +336,9 @@ class MutagenBackend:
         metadata.original_date = parse_partial_date(_id3_text(tags, "TDOR"))
         metadata.release_date = parse_partial_date(_id3_text(tags, "TDRL"))
         metadata.mood = _id3_text(tags, "TMOO")
+        metadata.work = _id3_text(tags, "TIT1")
+        metadata.subtitle = _id3_text(tags, "TIT3")
+        metadata.media = _id3_text(tags, "TMED")
 
         metadata.genre = parse_genres(_id3_texts(tags, "TCON"))
         metadata.comment = _id3_comment(tags)
@@ -436,6 +439,9 @@ class MutagenBackend:
             text("releasedate") or text("release_date")
         )
         metadata.mood = text("mood")
+        metadata.work = text("work")
+        metadata.subtitle = text("subtitle")
+        metadata.media = text("media")
         metadata.genre = parse_genres(texts("genre"))
         metadata.comment = text("comment")
         metadata.composer = texts("composer")
@@ -509,6 +515,7 @@ class MutagenBackend:
         known = {
             "title", "titlesort", "artist", "artists", "artistsort", "date", "year",
             "genre", "comment", "composer", "lyricist", "conductor", "lyrics", "unsyncedlyrics",
+            "work", "subtitle", "media",
             "producer", "copyright", "language", "grouping", "album", "albumsort",
             "albumartist", "albumartistsort", "tracknumber", "tracktotal",
             "totaltracks", "discnumber", "disctotal", "totaldiscs", "compilation",
@@ -540,6 +547,9 @@ class MutagenBackend:
             _mp4_freeform_text(tags, "RELEASEDATE")
         )
         metadata.mood = _mp4_freeform_text(tags, "MOOD")
+        metadata.work = _mp4_text(tags, "©wrk")
+        metadata.subtitle = _mp4_freeform_text(tags, "SUBTITLE")
+        metadata.media = _mp4_freeform_text(tags, "MEDIA")
         metadata.genre = parse_genres(_mp4_texts(tags, "©gen"))
         metadata.comment = _mp4_text(tags, "©cmt")
         metadata.composer = _mp4_texts(tags, "©wrt")
@@ -609,6 +619,10 @@ class MutagenBackend:
                 metadata.conductor.extend(values)
             elif lower == "lyricist":
                 metadata.lyricist.extend(values)
+            elif lower == "subtitle":
+                metadata.subtitle = values[0] if values else None
+            elif lower == "media":
+                metadata.media = values[0] if values else None
             elif lower == "producer":
                 metadata.producer.extend(values)
             elif lower in {"isrc", "label", "language"}:
@@ -666,6 +680,9 @@ class MutagenBackend:
             text("release date") or text("releasedate")
         )
         metadata.mood = text("mood")
+        metadata.work = text("work")
+        metadata.subtitle = text("subtitle")
+        metadata.media = text("media")
         metadata.genre = parse_genres(texts("genre"))
         metadata.comment = text("comment")
         metadata.composer = texts("composer")
@@ -717,6 +734,7 @@ class MutagenBackend:
         known = {
             "title", "artist", "titlesort", "artistsort", "year", "date", "genre",
             "comment", "composer", "lyricist", "conductor", "lyrics", "copyright", "language",
+            "work", "subtitle", "media",
             "album", "albumsort", "album artist", "albumartist", "albumartistsort",
             "track", "disc", "compilation", "label", "isrc", "bpm", "initial key",
             "key", "cover art (front)",
@@ -762,6 +780,9 @@ class MutagenBackend:
         metadata.original_date = parse_partial_date(text("wm/originalreleaseyear"))
         metadata.release_date = parse_partial_date(text("wm/originalreleasedate"))
         metadata.mood = text("wm/mood")
+        metadata.work = text("wm/contentgroupdescription")
+        metadata.subtitle = text("wm/subtitle")
+        metadata.media = text("wm/media")
         metadata.genre = parse_genres(values("wm/genre"))
         metadata.comment = text("description")
         metadata.composer = values("wm/composer")
@@ -815,7 +836,7 @@ def _merge_missing(target: MediaMetadata, source: MediaMetadata) -> None:
     """Fill only empty fields of ``target`` from a lower-priority tag system."""
     common_scalars = (
         "title", "title_sort", "artist", "artist_sort", "date",
-        "original_date", "release_date", "mood", "comment",
+        "original_date", "release_date", "mood", "work", "subtitle", "media", "comment",
         "copyright", "language", "grouping",
     )
     for name in common_scalars:

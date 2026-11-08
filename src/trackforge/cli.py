@@ -105,6 +105,9 @@ def set_metadata(
     original_date_value: str | None = typer.Option(None, "--original-date"),
     release_date_value: str | None = typer.Option(None, "--release-date"),
     mood: str | None = typer.Option(None, "--mood"),
+    work: str | None = typer.Option(None, "--work"),
+    subtitle: str | None = typer.Option(None, "--subtitle"),
+    media_value: str | None = typer.Option(None, "--media"),
     genre: str | None = typer.Option(None, "--genre", help="Separate multiple genres with ';'."),
     comment: str | None = typer.Option(None, "--comment"),
     composer: str | None = typer.Option(None, "--composer", help="Separate multiple names with ';'."),
@@ -163,6 +166,15 @@ def set_metadata(
             changes += 1
         if mood is not None:
             media.mood = mood
+            changes += 1
+        if work is not None:
+            media.work = work
+            changes += 1
+        if subtitle is not None:
+            media.subtitle = subtitle
+            changes += 1
+        if media_value is not None:
+            media.media = media_value
             changes += 1
         if genre is not None:
             media.genre = [part.strip() for part in genre.split(";") if part.strip()]

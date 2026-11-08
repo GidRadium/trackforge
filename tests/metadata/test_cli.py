@@ -80,6 +80,8 @@ def test_set_mp3(tmp_path: Path, media_dir: Path) -> None:
             "2010",
             "--mood",
             "Energetic",
+            "--work",
+            "CLI Work",
         ],
     )
 
@@ -93,6 +95,7 @@ def test_set_mp3(tmp_path: Path, media_dir: Path) -> None:
     assert (media.audio.track_number, media.audio.track_total) == (5, 10)
     assert str(media.original_date) == "2010"
     assert media.mood == "Energetic"
+    assert media.work == "CLI Work"
 
 
 def test_set_id3v23(tmp_path: Path, media_dir: Path) -> None:
