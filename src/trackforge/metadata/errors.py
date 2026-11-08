@@ -11,6 +11,15 @@ class MetadataError(TrackForgeError):
     """Base class for metadata read/write errors."""
 
 
+class MetadataReadError(MetadataError):
+    """A container was recognized but its tags could not be read."""
+
+    def __init__(self, path: str, reason: str) -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(f"cannot read metadata from {path}: {reason}")
+
+
 class UnsupportedFormatError(MetadataError):
     """The file's container is not supported by any registered backend."""
 

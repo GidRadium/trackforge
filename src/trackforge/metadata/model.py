@@ -157,6 +157,7 @@ class CommonMetadata:
     comment: str | None = None
     composer: list[str] = field(default_factory=list)
     lyricist: list[str] = field(default_factory=list)
+    conductor: list[str] = field(default_factory=list)
     lyrics: Lyrics | None = None
     producer: list[str] = field(default_factory=list)
     copyright: str | None = None

@@ -1,6 +1,6 @@
 """Normalized metadata model, container detection and public facade.
 
-Public entry point (once the facade lands)::
+Public entry point::
 
     from trackforge.metadata import MediaFile
 
@@ -8,9 +8,17 @@ Public entry point (once the facade lands)::
     print(media.title, media.audio.album)
 """
 
+from .capabilities import (
+    Capabilities,
+    FieldCapability,
+    UnsupportedPolicy,
+    WritePolicy,
+    WriteReport,
+)
 from .errors import (
     InvalidMetadataError,
     MetadataError,
+    MetadataReadError,
     NoAudioStreamError,
     NoVideoStreamError,
     TrackForgeError,
@@ -18,6 +26,7 @@ from .errors import (
     UnsupportedFormatError,
     WriteVerificationError,
 )
+from .facade import MediaFile
 from .formats import (
     ContainerFormat,
     DetectedFormat,
@@ -44,14 +53,18 @@ __all__ = [
     "ArtworkCollection",
     "ArtworkKind",
     "AudioMetadata",
+    "Capabilities",
     "CommonMetadata",
     "ContainerFormat",
     "DetectedFormat",
+    "FieldCapability",
     "InvalidMetadataError",
     "Lyrics",
+    "MediaFile",
     "MediaKind",
     "MediaMetadata",
     "MetadataError",
+    "MetadataReadError",
     "NoAudioStreamError",
     "NoVideoStreamError",
     "PartialDate",
@@ -59,7 +72,10 @@ __all__ = [
     "TrackForgeError",
     "UnsupportedFieldError",
     "UnsupportedFormatError",
+    "UnsupportedPolicy",
     "VideoMetadata",
+    "WritePolicy",
+    "WriteReport",
     "WriteVerificationError",
     "expected_tag_systems",
     "sniff",

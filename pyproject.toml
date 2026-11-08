@@ -10,6 +10,7 @@ authors = [
     { name = "GidRadium", email = "73718589+GidRadium@users.noreply.github.com" },
 ]
 dependencies = [
+    "mutagen>=1.47",
     "typer>=0.15",
 ]
 
