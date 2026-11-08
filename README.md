@@ -9,6 +9,8 @@ The project uses [uv](https://docs.astral.sh/uv/) and Python 3.14.
 ```bash
 uv sync
 uv run tfg --help
+uv run tfg info track.mp3
+uv run tfg info --json track.mp3
 uv run pytest
 ```
 
