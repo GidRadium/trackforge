@@ -286,6 +286,7 @@ def _write_id3(
 
     _id3_producer(tags, metadata, policy, report)
     _id3_musicbrainz(tags, metadata, policy, report)
+    _id3_release_meta(tags, metadata, policy, report)
     _id3_replaygain(tags, metadata, policy, report)
     if policy.write_extra:
         for key, values in _extra_items(metadata):
@@ -413,6 +414,24 @@ def _extra_items(metadata: MediaMetadata):
         for key, values in metadata.extra.items()
         if values and key.lower() not in _SKIP_EXTRA
     )
+
+
+def _id3_release_meta(
+    tags: ID3,
+    metadata: MediaMetadata,
+    policy: WritePolicy,
+    report: WriteReport,
+) -> None:
+    for name, description in (
+        ("release_country", "MusicBrainz Album Release Country"),
+        ("release_status", "MusicBrainz Album Status"),
+        ("release_type", "MusicBrainz Album Type"),
+    ):
+        value = getattr(metadata, name)
+        if value is not None:
+            _id3_txxx(tags, description, value, name, report)
+        elif policy.remove_missing:
+            tags.delall(f"TXXX:{description}")
 
 
 def _id3_txxx_values(
@@ -670,6 +689,9 @@ def _write_vorbis_common(
     _vorbis_text(tags, "WORK", metadata.work, "work", policy, report)
     _vorbis_text(tags, "SUBTITLE", metadata.subtitle, "subtitle", policy, report)
     _vorbis_text(tags, "MEDIA", metadata.media, "media", policy, report)
+    _vorbis_text(tags, "RELEASECOUNTRY", metadata.release_country, "release_country", policy, report)
+    _vorbis_text(tags, "RELEASESTATUS", metadata.release_status, "release_status", policy, report)
+    _vorbis_text(tags, "RELEASETYPE", metadata.release_type, "release_type", policy, report)
     _vorbis_values(tags, "GENRE", metadata.genre, "genre", policy, report)
     _vorbis_text(tags, "COMMENT", metadata.comment, "comment", policy, report)
     _vorbis_values(tags, "COMPOSER", metadata.composer, "composer", policy, report)
@@ -878,6 +900,30 @@ def _write_mp4(
     _mp4_text(tags, "©wrk", metadata.work, "work", policy, report)
     _mp4_freeform(tags, "SUBTITLE", metadata.subtitle, "subtitle", policy, report)
     _mp4_freeform(tags, "MEDIA", metadata.media, "media", policy, report)
+    _mp4_freeform(
+        tags,
+        "MusicBrainz Album Release Country",
+        metadata.release_country,
+        "release_country",
+        policy,
+        report,
+    )
+    _mp4_freeform(
+        tags,
+        "MusicBrainz Album Status",
+        metadata.release_status,
+        "release_status",
+        policy,
+        report,
+    )
+    _mp4_freeform(
+        tags,
+        "MusicBrainz Album Type",
+        metadata.release_type,
+        "release_type",
+        policy,
+        report,
+    )
     _mp4_values(tags, "©gen", metadata.genre, "genre", policy, report)
     _mp4_text(tags, "©cmt", metadata.comment, "comment", policy, report)
     _mp4_values(tags, "©wrt", metadata.composer, "composer", policy, report)
@@ -1058,6 +1104,9 @@ def _write_ape(audio_file, metadata: MediaMetadata, policy: WritePolicy, report:
     add("Work", metadata.work, "work")
     add("Subtitle", metadata.subtitle, "subtitle")
     add("Media", metadata.media, "media")
+    add("RELEASECOUNTRY", metadata.release_country, "release_country")
+    add("RELEASESTATUS", metadata.release_status, "release_status")
+    add("RELEASETYPE", metadata.release_type, "release_type")
     add("Genre", _join(metadata.genre), "genre")
     add("Comment", metadata.comment, "comment")
     add("Composer", _join(metadata.composer), "composer")
@@ -1139,6 +1188,9 @@ def _write_asf(audio_file: ASF, metadata: MediaMetadata, policy: WritePolicy, re
     add("WM/ContentGroupDescription", metadata.work, "work")
     add("WM/SubTitle", metadata.subtitle, "subtitle")
     add("WM/Media", metadata.media, "media")
+    add("MusicBrainz/Album Release Country", metadata.release_country, "release_country")
+    add("MusicBrainz/Album Status", metadata.release_status, "release_status")
+    add("MusicBrainz/Album Type", metadata.release_type, "release_type")
     add("WM/Genre", _join(metadata.genre), "genre")
     add("WM/Composer", _join(metadata.composer), "composer")
     add("WM/Conductor", _join(metadata.conductor), "conductor")

@@ -383,6 +383,12 @@ class MutagenBackend:
                 gain = parse_gain(values[0])
                 if gain is not None:
                     audio.replaygain[_RG_TXXX[key.replace(" ", "_")]] = gain
+            elif key == "musicbrainz album release country":
+                metadata.release_country = values[0]
+            elif key == "musicbrainz album status":
+                metadata.release_status = values[0]
+            elif key == "musicbrainz album type":
+                metadata.release_type = values[0]
             elif key in {"isrc", "label", "language", "conductor", "lyricist", "producer"}:
                 _apply_txxx(metadata, audio, key, values)
             else:
@@ -442,6 +448,9 @@ class MutagenBackend:
         metadata.work = text("work")
         metadata.subtitle = text("subtitle")
         metadata.media = text("media")
+        metadata.release_country = text("releasecountry")
+        metadata.release_status = text("releasestatus")
+        metadata.release_type = text("releasetype")
         metadata.genre = parse_genres(texts("genre"))
         metadata.comment = text("comment")
         metadata.composer = texts("composer")
@@ -515,7 +524,7 @@ class MutagenBackend:
         known = {
             "title", "titlesort", "artist", "artists", "artistsort", "date", "year",
             "genre", "comment", "composer", "lyricist", "conductor", "lyrics", "unsyncedlyrics",
-            "work", "subtitle", "media",
+            "work", "subtitle", "media", "releasecountry", "releasestatus", "releasetype",
             "producer", "copyright", "language", "grouping", "album", "albumsort",
             "albumartist", "albumartistsort", "tracknumber", "tracktotal",
             "totaltracks", "discnumber", "disctotal", "totaldiscs", "compilation",
@@ -550,6 +559,15 @@ class MutagenBackend:
         metadata.work = _mp4_text(tags, "©wrk")
         metadata.subtitle = _mp4_freeform_text(tags, "SUBTITLE")
         metadata.media = _mp4_freeform_text(tags, "MEDIA")
+        metadata.release_country = _mp4_freeform_text(
+            tags, "MusicBrainz Album Release Country"
+        )
+        metadata.release_status = _mp4_freeform_text(
+            tags, "MusicBrainz Album Status"
+        )
+        metadata.release_type = _mp4_freeform_text(
+            tags, "MusicBrainz Album Type"
+        )
         metadata.genre = parse_genres(_mp4_texts(tags, "©gen"))
         metadata.comment = _mp4_text(tags, "©cmt")
         metadata.composer = _mp4_texts(tags, "©wrt")
@@ -623,6 +641,12 @@ class MutagenBackend:
                 metadata.subtitle = values[0] if values else None
             elif lower == "media":
                 metadata.media = values[0] if values else None
+            elif lower == "musicbrainz album release country":
+                metadata.release_country = values[0] if values else None
+            elif lower == "musicbrainz album status":
+                metadata.release_status = values[0] if values else None
+            elif lower == "musicbrainz album type":
+                metadata.release_type = values[0] if values else None
             elif lower == "producer":
                 metadata.producer.extend(values)
             elif lower in {"isrc", "label", "language"}:
@@ -683,6 +707,9 @@ class MutagenBackend:
         metadata.work = text("work")
         metadata.subtitle = text("subtitle")
         metadata.media = text("media")
+        metadata.release_country = text("releasecountry")
+        metadata.release_status = text("releasestatus")
+        metadata.release_type = text("releasetype")
         metadata.genre = parse_genres(texts("genre"))
         metadata.comment = text("comment")
         metadata.composer = texts("composer")
@@ -734,7 +761,7 @@ class MutagenBackend:
         known = {
             "title", "artist", "titlesort", "artistsort", "year", "date", "genre",
             "comment", "composer", "lyricist", "conductor", "lyrics", "copyright", "language",
-            "work", "subtitle", "media",
+            "work", "subtitle", "media", "releasecountry", "releasestatus", "releasetype",
             "album", "albumsort", "album artist", "albumartist", "albumartistsort",
             "track", "disc", "compilation", "label", "isrc", "bpm", "initial key",
             "key", "cover art (front)",
@@ -783,6 +810,9 @@ class MutagenBackend:
         metadata.work = text("wm/contentgroupdescription")
         metadata.subtitle = text("wm/subtitle")
         metadata.media = text("wm/media")
+        metadata.release_country = text("musicbrainz/album release country")
+        metadata.release_status = text("musicbrainz/album status")
+        metadata.release_type = text("musicbrainz/album type")
         metadata.genre = parse_genres(values("wm/genre"))
         metadata.comment = text("description")
         metadata.composer = values("wm/composer")
@@ -836,7 +866,8 @@ def _merge_missing(target: MediaMetadata, source: MediaMetadata) -> None:
     """Fill only empty fields of ``target`` from a lower-priority tag system."""
     common_scalars = (
         "title", "title_sort", "artist", "artist_sort", "date",
-        "original_date", "release_date", "mood", "work", "subtitle", "media", "comment",
+        "original_date", "release_date", "mood", "work", "subtitle", "media",
+        "release_country", "release_status", "release_type", "comment",
         "copyright", "language", "grouping",
     )
     for name in common_scalars:

@@ -159,6 +159,9 @@ class CommonMetadata:
     work: str | None = None
     subtitle: str | None = None
     media: str | None = None
+    release_country: str | None = None
+    release_status: str | None = None
+    release_type: str | None = None
     genre: list[str] = field(default_factory=list)
     comment: str | None = None
     composer: list[str] = field(default_factory=list)

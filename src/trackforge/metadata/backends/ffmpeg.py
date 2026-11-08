@@ -487,6 +487,9 @@ class FfmpegBackend:
         metadata.work = first("work")
         metadata.subtitle = first("subtitle")
         metadata.media = first("media")
+        metadata.release_country = first("release_country", "releasecountry")
+        metadata.release_status = first("release_status", "releasestatus")
+        metadata.release_type = first("release_type", "releasetype")
         metadata.genre = parse_genres(values("genre"))
         metadata.comment = first("comment")
         metadata.composer = _semicolon_values(tags, "composer")
@@ -547,7 +550,8 @@ class FfmpegBackend:
             "title", "titlesort", "title_sort", "artist", "artists", "artistsort",
             "artist_sort", "date", "year", "date_released", "original_date",
             "originaldate", "release_date", "releasedate", "mood", "work", "subtitle",
-            "media", "genre", "comment",
+            "media", "release_country", "releasecountry", "release_status",
+            "releasestatus", "release_type", "releasetype", "genre", "comment",
             "composer", "lyricist", "conductor", "lyrics", "unsyncedlyrics",
             "producer", "copyright", "language", "grouping", "album", "product",
             "albumsort", "album_sort", "album_artist", "albumartist",
@@ -603,6 +607,9 @@ class FfmpegBackend:
         add("work", metadata.work, "work")
         add("subtitle", metadata.subtitle, "subtitle")
         add("media", metadata.media, "media")
+        add("release_country", metadata.release_country, "release_country")
+        add("release_status", metadata.release_status, "release_status")
+        add("release_type", metadata.release_type, "release_type")
         add("genre", _join(metadata.genre), "genre")
         add("comment", metadata.comment, "comment")
         add("composer", _join(metadata.composer), "composer")
