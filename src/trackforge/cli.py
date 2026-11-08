@@ -347,6 +347,7 @@ def scan_command(
     ),
     workers: int = typer.Option(4, "--workers", min=1),
     progress: bool = typer.Option(False, "--progress"),
+    limit: int | None = typer.Option(None, "--limit", min=0),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Scan files or directories and report per-file results."""
@@ -362,7 +363,12 @@ def scan_command(
         def progress_callback(done: int, total: int, _result) -> None:
             typer.echo(f"[{done}/{total}]", err=True)
 
-    results = scan(files, workers=workers, on_progress=progress_callback)
+    results = scan(
+        files,
+        workers=workers,
+        on_progress=progress_callback,
+        limit=limit,
+    )
     if json_output:
         payload = [
             {

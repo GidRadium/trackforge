@@ -286,3 +286,14 @@ def test_set_clear_unknown_field(tmp_path: Path, media_dir: Path) -> None:
 
     assert result.exit_code == 1
     assert "cannot be cleared" in result.output
+
+
+def test_scan_limit(media_dir: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["scan", str(media_dir), "--json", "--limit", "2"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert len(payload) == 2

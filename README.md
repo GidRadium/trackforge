@@ -16,6 +16,7 @@ uv run tfg set track.mp3 --cover cover.jpg
 uv run tfg set track.mp3 --clear comment --clear genre
 uv run tfg scan music/ --json
 uv run tfg scan music/ --progress
+uv run tfg scan music/ --limit 100
 uv run pytest
 ```
 

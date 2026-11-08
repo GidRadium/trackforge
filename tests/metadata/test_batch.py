@@ -46,6 +46,19 @@ def test_scan_progress_callback(media_dir: Path) -> None:
     assert seen == [(1, 2), (2, 2)]
 
 
+def test_scan_limit(media_dir: Path) -> None:
+    results = scan(
+        [media_dir / "sample.mp3", media_dir / "sample.flac"],
+        workers=1,
+        limit=1,
+    )
+    assert len(results) == 1
+    assert results[0].path == media_dir / "sample.mp3"
+
+    with pytest.raises(ValueError):
+        scan([], limit=-1)
+
+
 def test_discover_media_files(media_dir: Path) -> None:
     files = discover_media_files([media_dir])
 

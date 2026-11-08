@@ -58,11 +58,16 @@ def scan(
     *,
     workers: int = 4,
     on_progress: Callable[[int, int, ScanResult], None] | None = None,
+    limit: int | None = None,
 ) -> list[ScanResult]:
     """Open every path, collecting per-file errors in input order."""
     if workers < 1:
         raise ValueError("workers must be positive")
+    if limit is not None and limit < 0:
+        raise ValueError("limit must be non-negative")
     files = [Path(path) for path in paths]
+    if limit is not None:
+        files = files[:limit]
 
     def one(path: Path) -> ScanResult:
         try:
@@ -101,6 +106,7 @@ def read_many(
     workers: int = 4,
     on_error: str = "raise",
     on_progress: Callable[[int, int, ScanResult], None] | None = None,
+    limit: int | None = None,
 ) -> list[MediaFile]:
     """Like :func:`scan`, but returns only successful reads.
 
@@ -108,7 +114,12 @@ def read_many(
     """
     if on_error not in {"raise", "skip"}:
         raise ValueError("on_error must be 'raise' or 'skip'")
-    results = scan(paths, workers=workers, on_progress=on_progress)
+    results = scan(
+        paths,
+        workers=workers,
+        on_progress=on_progress,
+        limit=limit,
+    )
     if on_error == "raise":
         for result in results:
             if result.error is not None:
