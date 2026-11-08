@@ -98,10 +98,15 @@ WRITABLE_CONTAINERS = frozenset(
         ContainerFormat.FLAC,
         ContainerFormat.OGG,
         ContainerFormat.MP4,
+        ContainerFormat.WAV,
+        ContainerFormat.AIFF,
+        ContainerFormat.DSF,
+        ContainerFormat.DFF,
     }
 )
 
-_TAG_SYSTEMS: dict[ContainerFormat, TagSystem] = {    ContainerFormat.MP3: TagSystem.ID3V2,
+_TAG_SYSTEMS: dict[ContainerFormat, TagSystem] = {
+    ContainerFormat.MP3: TagSystem.ID3V2,
     ContainerFormat.AAC: TagSystem.ID3V2,
     ContainerFormat.FLAC: TagSystem.VORBIS_COMMENT,
     ContainerFormat.OGG: TagSystem.VORBIS_COMMENT,

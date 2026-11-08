@@ -34,6 +34,7 @@ from ..errors import (
 )
 from ..formats import ContainerFormat, DetectedFormat
 from ..model import Artwork, ArtworkKind, Lyrics, MediaMetadata
+from ..normalize import ID3_GENRES
 from .mutagen import WRITABLE_CONTAINERS, open_audio_file
 
 _ID3_PICTURE_TYPE = {
@@ -42,6 +43,15 @@ _ID3_PICTURE_TYPE = {
     ArtworkKind.ARTIST: 8,
     ArtworkKind.LOGO: 19,
     ArtworkKind.OTHER: 0,
+}
+
+_ID3_CONTAINERS = {
+    ContainerFormat.MP3,
+    ContainerFormat.AAC,
+    ContainerFormat.WAV,
+    ContainerFormat.AIFF,
+    ContainerFormat.DSF,
+    ContainerFormat.DFF,
 }
 
 _MB_ID3_DESCRIPTIONS = {
@@ -147,9 +157,17 @@ def _write_in_place(
     report: WriteReport,
 ) -> None:
     audio_file = open_audio_file(path, detected)
-    if detected.container in {ContainerFormat.MP3, ContainerFormat.AAC}:
+    if detected.container in _ID3_CONTAINERS:
         _write_id3(audio_file, metadata, policy, report)
-        audio_file.save(v2_version=4)
+        try:
+            audio_file.save(v2_version=4)
+        except TypeError:
+            audio_file.save()
+        if policy.write_legacy and detected.container in {
+            ContainerFormat.MP3,
+            ContainerFormat.AAC,
+        }:
+            _write_id3v1(path, metadata, report)
     elif detected.container == ContainerFormat.FLAC:
         _write_flac(audio_file, metadata, policy, report)
         audio_file.save()
@@ -417,6 +435,50 @@ def _id3_artwork(
             )
         )
     report.written.append("artwork")
+
+
+def _write_id3v1(path: Path, metadata: MediaMetadata, report: WriteReport) -> None:
+    """Append a lossy ID3v1 compatibility block."""
+    block = _id3v1_block(metadata)
+    with path.open("r+b") as handle:
+        handle.seek(0, 2)
+        size = handle.tell()
+        if size >= 128:
+            handle.seek(-128, 2)
+            tail = handle.read(128)
+            if tail[:3] == b"TAG":
+                handle.truncate(size - 128)
+        handle.seek(0, 2)
+        handle.write(block)
+    report.coerced.append(("legacy.id3v1", "30-byte fields; lossy"))
+
+
+def _id3v1_block(metadata: MediaMetadata) -> bytes:
+    def field(value: str | None, length: int) -> bytes:
+        raw = (value or "").encode("latin-1", "replace")
+        return raw[:length].ljust(length, b"\x00")
+
+    year = str(metadata.date.year) if metadata.date is not None else ""
+    comment = field(metadata.comment, 28)
+    track = metadata.audio.track_number if metadata.audio is not None else None
+    track_byte = bytes([track]) if track is not None and 0 < track < 256 else b"\x00"
+    genre = 255
+    if metadata.genre:
+        try:
+            genre = ID3_GENRES.index(metadata.genre[0])
+        except ValueError:
+            genre = 255
+    return (
+        b"TAG"
+        + field(metadata.title, 30)
+        + field(metadata.artist or (metadata.artists[0] if metadata.artists else None), 30)
+        + field(metadata.audio.album if metadata.audio is not None else None, 30)
+        + field(year, 4)
+        + comment
+        + b"\x00"
+        + track_byte
+        + bytes([genre])
+    )
 
 
 # ----------------------------------------------------------------------

@@ -405,6 +405,21 @@ def test_write_preserves_other_id3_languages(tmp_path: Path, media_dir: Path) ->
     assert lyrics[("eng", "")] == "New English Lyrics"
 
 
+def test_write_legacy_id3v1(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "legacy.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+    media = MediaFile.open(target)
+    media.title = "Legacy Title"
+
+    report = media.save(policy=WritePolicy(write_legacy=True))
+
+    assert report.lossy is True
+    assert any(field == "legacy.id3v1" for field, _reason in report.coerced)
+    tail = target.read_bytes()[-128:]
+    assert tail[:3] == b"TAG"
+    assert tail[3:33].rstrip(b"\x00") == b"Legacy Title"
+
+
 def test_capabilities(media_dir: Path) -> None:
     media = MediaFile.open(media_dir / "sample.mp3")
     capabilities = media.capabilities
@@ -617,15 +632,44 @@ def test_save_without_source() -> None:
         media.save()
 
 
-def test_read_only_wav_cannot_save(tmp_path: Path) -> None:
-    path = tmp_path / "silence.wav"
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(8000)
-        handle.writeframes(b"\x00\x00" * 8)
+def test_write_wav(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy.wav"
+    shutil.copy2(media_dir / "sample.wav", target)
+    media = MediaFile.open(target)
+    media.title = "Written WAV"
+    media.artists = ["WAV Artist"]
+    media.require_audio().album = "WAV Album"
+    media.require_audio().track_number = 2
 
-    media = MediaFile.open(path)
+    report = media.save()
+
+    assert "title" in report.written
+    updated = MediaFile.open(target)
+    assert updated.title == "Written WAV"
+    assert updated.artists == ["WAV Artist"]
+    assert updated.require_audio().album == "WAV Album"
+    assert updated.require_audio().track_number == 2
+
+
+def test_write_aiff(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy.aiff"
+    shutil.copy2(media_dir / "sample.aiff", target)
+    media = MediaFile.open(target)
+    media.title = "Written AIFF"
+    media.require_audio().album = "AIFF Album"
+
+    report = media.save()
+
+    assert "title" in report.written
+    updated = MediaFile.open(target)
+    assert updated.title == "Written AIFF"
+    assert updated.require_audio().album == "AIFF Album"
+
+
+def test_read_only_wma_cannot_save(media_dir: Path) -> None:
+    media = MediaFile.open(media_dir / "sample.wma")
+
+    assert media.kind is MediaKind.AUDIO
     with pytest.raises(UnsupportedFormatError):
         media.save()
 
