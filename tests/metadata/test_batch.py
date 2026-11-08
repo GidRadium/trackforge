@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,46 @@ def test_scan_limit(media_dir: Path) -> None:
 
     with pytest.raises(ValueError):
         scan([], limit=-1)
+
+
+def test_scan_cancelled_before_start(media_dir: Path) -> None:
+    cancel = threading.Event()
+    cancel.set()
+
+    results = scan(
+        [media_dir / "sample.mp3", media_dir / "sample.flac"],
+        workers=2,
+        cancel=cancel,
+    )
+
+    assert len(results) == 2
+    assert all(result.cancelled for result in results)
+    assert all(not result.ok for result in results)
+
+
+def test_scan_cancel_after_first(media_dir: Path) -> None:
+    cancel = threading.Event()
+    paths = [media_dir / "sample.mp3", media_dir / "sample.flac", media_dir / "sample.ogg"]
+
+    def on_progress(done: int, total: int, result) -> None:
+        if done == 1:
+            cancel.set()
+
+    results = scan(paths, workers=1, cancel=cancel, on_progress=on_progress)
+
+    assert results[0].ok
+    assert all(result.cancelled for result in results[1:])
+
+
+def test_read_many_skips_cancelled(media_dir: Path) -> None:
+    cancel = threading.Event()
+    cancel.set()
+
+    assert read_many(
+        [media_dir / "sample.mp3"],
+        cancel=cancel,
+        on_error="raise",
+    ) == []
 
 
 def test_discover_media_files(media_dir: Path) -> None:

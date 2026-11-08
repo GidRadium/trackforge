@@ -7,8 +7,9 @@ needs without hiding failures.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Iterable, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,10 +32,11 @@ class ScanResult:
     path: Path
     media: MediaFile | None = None
     error: Exception | None = None
+    cancelled: bool = False
 
     @property
     def ok(self) -> bool:
-        return self.error is None and self.media is not None
+        return not self.cancelled and self.error is None and self.media is not None
 
 
 def discover_media_files(paths: Iterable[str | Path]) -> list[Path]:
@@ -59,8 +61,13 @@ def scan(
     workers: int = 4,
     on_progress: Callable[[int, int, ScanResult], None] | None = None,
     limit: int | None = None,
+    cancel: threading.Event | None = None,
 ) -> list[ScanResult]:
-    """Open every path, collecting per-file errors in input order."""
+    """Open every path, collecting per-file errors in input order.
+
+    ``cancel`` is cooperative: running files finish, queued files are not
+    opened, and untouched entries are returned with ``cancelled=True``.
+    """
     if workers < 1:
         raise ValueError("workers must be positive")
     if limit is not None and limit < 0:
@@ -76,27 +83,51 @@ def scan(
             return ScanResult(path=path, error=exc)
 
     if workers == 1 or len(files) < 2:
-        results = []
-        for index, path in enumerate(files):
+        results: list[ScanResult] = []
+        completed = 0
+        for path in files:
+            if cancel is not None and cancel.is_set():
+                results.append(ScanResult(path=path, cancelled=True))
+                continue
             result = one(path)
             results.append(result)
-            if on_progress is not None:
-                on_progress(index + 1, len(files), result)
-        return results
-
-    results: list[ScanResult | None] = [None] * len(files)
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(one, path): index
-            for index, path in enumerate(files)
-        }
-        completed = 0
-        for future, index in futures.items():
-            result = future.result()
-            results[index] = result
             completed += 1
             if on_progress is not None:
                 on_progress(completed, len(files), result)
+        return results
+
+    results: list[ScanResult | None] = [None] * len(files)
+    next_index = 0
+    completed = 0
+    window = max(workers * 2, 1)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        pending: dict = {}
+
+        def submit_more() -> None:
+            nonlocal next_index
+            while next_index < len(files) and len(pending) < window:
+                if cancel is not None and cancel.is_set():
+                    return
+                path = files[next_index]
+                pending[executor.submit(one, path)] = next_index
+                next_index += 1
+
+        submit_more()
+        while pending:
+            done, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
+            for future in done:
+                index = pending.pop(future)
+                result = future.result()
+                results[index] = result
+                completed += 1
+                if on_progress is not None:
+                    on_progress(completed, len(files), result)
+            submit_more()
+
+    for index, result in enumerate(results):
+        if result is None:
+            results[index] = ScanResult(path=files[index], cancelled=True)
     return [result for result in results if result is not None]
 
 
@@ -107,6 +138,7 @@ def read_many(
     on_error: str = "raise",
     on_progress: Callable[[int, int, ScanResult], None] | None = None,
     limit: int | None = None,
+    cancel: threading.Event | None = None,
 ) -> list[MediaFile]:
     """Like :func:`scan`, but returns only successful reads.
 
@@ -119,6 +151,7 @@ def read_many(
         workers=workers,
         on_progress=on_progress,
         limit=limit,
+        cancel=cancel,
     )
     if on_error == "raise":
         for result in results:
