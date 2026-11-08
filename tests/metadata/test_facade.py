@@ -405,6 +405,24 @@ def test_write_preserves_other_id3_languages(tmp_path: Path, media_dir: Path) ->
     assert lyrics[("eng", "")] == "New English Lyrics"
 
 
+def test_write_id3v23(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "v23.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+    media = MediaFile.open(target)
+    media.title = "Привет v2.3"
+    media.artists = ["Artist A", "Artist B"]
+    media.date = PartialDate(2024, 5, 17)
+
+    report = media.save(policy=WritePolicy(id3_version=3))
+
+    assert "title" in report.written
+    assert target.read_bytes()[3] == 3
+    updated = MediaFile.open(target)
+    assert updated.title == "Привет v2.3"
+    assert updated.artists == ["Artist A", "Artist B"]
+    assert updated.date == PartialDate(2024, 5, 17)
+
+
 def test_write_legacy_id3v1(tmp_path: Path, media_dir: Path) -> None:
     target = tmp_path / "legacy.mp3"
     shutil.copy2(media_dir / "sample.mp3", target)

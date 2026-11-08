@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from trackforge.metadata import (
     Capabilities,
     ContainerFormat,
@@ -61,6 +63,7 @@ def test_write_policy_defaults() -> None:
     assert policy.verify is True
     assert policy.remove_missing is False
     assert policy.atomic is True
+    assert policy.id3_version == 4
 
 
 def test_write_report_lossy() -> None:
@@ -70,3 +73,8 @@ def test_write_report_lossy() -> None:
 
     report.skipped.append(("lyrics", "not supported"))
     assert report.lossy is True
+
+
+def test_write_policy_rejects_unknown_id3_version() -> None:
+    with pytest.raises(ValueError):
+        WritePolicy(id3_version=5)

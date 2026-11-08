@@ -870,7 +870,17 @@ def _id3_texts(tags: ID3, frame_id: str) -> list[str]:
     frame = tags.get(frame_id)
     if frame is None:
         return []
-    return split_values(getattr(frame, "text", None))
+    values = split_values(getattr(frame, "text", None))
+    # ID3v2.3 has no NUL-separated multi-values; tools use "/" for a handful
+    # of people/genre frames.  Split only those, never titles or albums.
+    if tags.version[1] < 4 and frame_id in {"TPE1", "TCOM", "TEXT", "TPE3"}:
+        values = [
+            part.strip()
+            for value in values
+            for part in value.split("/")
+            if part.strip()
+        ]
+    return values
 
 
 def _id3_fallback_date(tags: ID3) -> str | None:

@@ -120,6 +120,11 @@ class WritePolicy:
     verify: bool = True
     remove_missing: bool = False
     atomic: bool = True
+    id3_version: int = 4
+
+    def __post_init__(self) -> None:
+        if self.id3_version not in (3, 4):
+            raise ValueError("id3_version must be 3 or 4")
 
 
 @dataclass(slots=True)

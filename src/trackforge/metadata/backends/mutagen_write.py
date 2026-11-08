@@ -24,7 +24,7 @@ import mutagen
 from mutagen import MutagenError
 from mutagen.asf import ASF, ASFByteArrayAttribute
 from mutagen.flac import FLAC, Picture
-from mutagen.id3 import APIC, COMM, TIPL, TXXX, USLT, ID3
+from mutagen.id3 import APIC, COMM, TDRC, TDAT, TIPL, TXXX, TYER, USLT, Encoding, ID3
 from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm, MP4Tags
 
 from ..capabilities import WritePolicy, WriteReport
@@ -177,8 +177,10 @@ def _write_in_place(
     audio_file = open_audio_file(path, detected)
     if detected.container in _ID3_CONTAINERS:
         _write_id3(audio_file, metadata, policy, report)
+        if policy.id3_version == 3:
+            _downgrade_id3(audio_file.tags, metadata)
         try:
-            audio_file.save(v2_version=4)
+            audio_file.save(v2_version=policy.id3_version)
         except TypeError:
             audio_file.save()
         if policy.write_legacy and detected.container in {
@@ -340,6 +342,29 @@ def _id3_texts(
     elif policy.remove_missing:
         tags.delall(frame_id)
         report.written.append(field)
+
+
+def _downgrade_id3(tags: ID3 | None, metadata: MediaMetadata) -> None:
+    """Make ID3 frames safe for a v2.3 writer.
+
+    ID3v2.3 has no UTF-8 text encoding and no TDRC frame, so UTF-8 frames are
+    converted to UTF-16 and the date is moved to TYER/TDAT.
+    """
+    if tags is None:
+        return
+    for frame in tags.values():
+        if getattr(frame, "encoding", None) == Encoding.UTF8:
+            frame.encoding = Encoding.UTF16
+
+    tags.delall("TDRC")
+    tags.delall("TYER")
+    tags.delall("TDAT")
+    if metadata.date is None:
+        return
+    date = metadata.date
+    tags.add(TYER(encoding=Encoding.UTF16, text=[f"{date.year:04d}"]))
+    if date.month is not None and date.day is not None:
+        tags.add(TDAT(encoding=Encoding.UTF16, text=[f"{date.day:02d}{date.month:02d}"]))
 
 
 def _replace_id3_comment(tags: ID3, value: str | None, report: WriteReport) -> None:

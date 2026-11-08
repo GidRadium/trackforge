@@ -43,8 +43,9 @@ DSF/DFF, ASF/WMA/WMV, APE/WavPack/Musepack/TTA, MKV, AVI and FLV. Writes are
 atomic by default: tags are applied to a temporary copy, verified by
 re-reading, and only then replace the original. Pass
 `WritePolicy(remove_missing=True)` to delete fields instead of leaving them
-untouched, or `WritePolicy(write_legacy=True)` to also write an ID3v1
-compatibility block for MP3/AAC.
+untouched, `WritePolicy(write_legacy=True)` to also write an ID3v1
+compatibility block for MP3/AAC, or `WritePolicy(id3_version=3)` for older
+players that only understand ID3v2.3.
 
 Matroska/WebM, AVI, FLV and MPEG-TS/PS are read through `ffprobe` when it is
 installed; MKV/AVI/FLV writes additionally use `ffmpeg`. MPEG-TS/PS are
