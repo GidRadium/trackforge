@@ -244,3 +244,45 @@ def test_scan_progress(media_dir: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "[1/" in result.output
+
+
+def test_set_clear_fields(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "clear.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+
+    result = runner.invoke(
+        app,
+        ["set", str(target), "--clear", "title", "--clear", "comment"],
+    )
+
+    assert result.exit_code == 0, result.output
+    from trackforge.metadata import MediaFile
+
+    media = MediaFile.open(target)
+    assert media.title is None
+    assert media.comment is None
+
+
+def test_set_clear_track(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "clear-track.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+
+    result = runner.invoke(app, ["set", str(target), "--clear", "track"])
+
+    assert result.exit_code == 0, result.output
+    from trackforge.metadata import MediaFile
+
+    audio = MediaFile.open(target).audio
+    assert audio is not None
+    assert audio.track_number is None
+    assert audio.track_total is None
+
+
+def test_set_clear_unknown_field(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "clear-unknown.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+
+    result = runner.invoke(app, ["set", str(target), "--clear", "nope"])
+
+    assert result.exit_code == 1
+    assert "cannot be cleared" in result.output

@@ -124,6 +124,11 @@ def set_metadata(
         help="JPEG or PNG file to use as the front cover.",
     ),
     remove_cover: bool = typer.Option(False, "--remove-cover"),
+    clear: list[str] | None = typer.Option(
+        None,
+        "--clear",
+        help="Remove a field; repeat for multiple fields.",
+    ),
     track: str | None = typer.Option(None, "--track", help="N or N/TOTAL."),
     disc: str | None = typer.Option(None, "--disc", help="N or N/TOTAL."),
     isrc: str | None = typer.Option(None, "--isrc"),
@@ -225,6 +230,9 @@ def set_metadata(
             if not media.artwork.remove_front():
                 raise ValueError("no front cover to remove")
             changes += 1
+        for field in clear or []:
+            _clear_field(media, field)
+            changes += 1
 
         audio = media.audio
         needs_audio = any(
@@ -312,6 +320,7 @@ def set_metadata(
             write_legacy=legacy,
             id3_version=3 if id3v23 else 4,
             remove_artwork=remove_cover,
+            remove_missing=bool(clear),
         )
         report = media.save(policy=policy)
     except (TrackForgeError, OSError, ValueError) as exc:
@@ -378,6 +387,63 @@ def scan_command(
 
     if any(result.error is not None for result in results):
         raise typer.Exit(code=1)
+
+
+_CLEARABLE = {
+    "title", "artist", "album", "album_artist", "date", "original_date",
+    "release_date", "genre", "comment", "composer", "lyricist", "lyrics",
+    "track", "disc", "isrc", "bpm", "show", "season", "episode", "director",
+    "synopsis", "mood", "work", "subtitle", "media", "release_country",
+    "release_status", "release_type", "movement_name", "movement",
+    "movement_total",
+}
+
+
+def _clear_field(media, field: str) -> None:
+    if field not in _CLEARABLE:
+        raise ValueError(f"field cannot be cleared: {field!r}")
+    if field == "artist":
+        media.artist = None
+        media.artists = []
+    elif field == "genre":
+        media.genre = []
+    elif field == "lyrics":
+        media.lyrics = None
+    elif field == "track":
+        if media.audio is None:
+            raise ValueError("file has no audio stream")
+        media.audio.track_number = None
+        media.audio.track_total = None
+    elif field == "disc":
+        if media.audio is None:
+            raise ValueError("file has no audio stream")
+        media.audio.disc_number = None
+        media.audio.disc_total = None
+    elif field in {"album", "album_artist", "isrc", "bpm", "movement", "movement_total"}:
+        if media.audio is None:
+            raise ValueError("file has no audio stream")
+        attr = {
+            "album": "album",
+            "album_artist": "album_artist",
+            "isrc": "isrc",
+            "bpm": "bpm",
+            "movement": "movement_number",
+            "movement_total": "movement_total",
+        }[field]
+        setattr(media.audio, attr, None)
+    elif field == "movement_name":
+        if media.audio is None:
+            raise ValueError("file has no audio stream")
+        media.audio.movement_name = None
+    elif field in {"show", "season", "episode", "director", "synopsis"}:
+        if media.video is None:
+            raise ValueError("file has no video stream")
+        attr = "episode" if field == "episode" else field
+        setattr(media.video, attr, None)
+        if field == "director":
+            media.video.director = []
+    else:
+        setattr(media, field, None)
 
 
 def _image_mime(path: Path) -> str:
