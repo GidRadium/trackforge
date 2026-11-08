@@ -80,6 +80,36 @@ def media_dir(ffmpeg: str, tmp_path_factory: pytest.TempPathFactory) -> Path:
         "-f", "lavfi", "-i", audio,
         "-c:v", "mpeg4", "-c:a", "aac", "-shortest",
     )
+    make(
+        "sample.mkv",
+        "-f", "lavfi", "-i", video,
+        "-f", "lavfi", "-i", audio,
+        "-c:v", "mpeg4", "-c:a", "aac", "-shortest",
+    )
+    make(
+        "sample.avi",
+        "-f", "lavfi", "-i", video,
+        "-f", "lavfi", "-i", audio,
+        "-c:v", "mpeg4", "-c:a", "libmp3lame", "-shortest",
+    )
+    make(
+        "sample.flv",
+        "-f", "lavfi", "-i", video,
+        "-f", "lavfi", "-i", audio,
+        "-c:v", "flv", "-c:a", "libmp3lame", "-shortest",
+    )
+    make(
+        "sample.ts",
+        "-f", "lavfi", "-i", video,
+        "-f", "lavfi", "-i", audio,
+        "-c:v", "mpeg2video", "-c:a", "mp2", "-shortest", "-f", "mpegts",
+    )
+    make(
+        "sample.mpg",
+        "-f", "lavfi", "-i", video,
+        "-f", "lavfi", "-i", audio,
+        "-c:v", "mpeg2video", "-c:a", "mp2", "-shortest", "-f", "vob",
+    )
 
     _tag_mp3(directory / "sample.mp3")
     _tag_flac(directory / "sample.flac")

@@ -22,7 +22,9 @@ from trackforge.metadata import (
     NoAudioStreamError,
     NoVideoStreamError,
     PartialDate,
+    UnsupportedFieldError,
     UnsupportedFormatError,
+    UnsupportedPolicy,
     VideoMetadata,
     WritePolicy,
 )
@@ -165,6 +167,106 @@ def test_mp4_video(media_dir: Path) -> None:
     assert media.audio is not None
 
 
+def test_mkv_read(media_dir: Path) -> None:
+    media = MediaFile.open(media_dir / "sample.mkv")
+
+    assert media.kind is MediaKind.AUDIO_VIDEO
+    assert media.audio is not None
+    assert media.video is not None
+    assert media.capabilities is not None
+    assert media.capabilities.writable is True
+
+
+def test_write_mkv(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy.mkv"
+    shutil.copy2(media_dir / "sample.mkv", target)
+    media = MediaFile.open(target)
+    media.title = "Written MKV"
+    media.artists = ["MKV Artist A", "MKV Artist B"]
+    media.genre = ["Rock", "Pop"]
+    media.comment = "MKV Comment"
+    media.require_audio().album = "MKV Album"
+    media.require_audio().track_number = 3
+    media.require_audio().track_total = 12
+    media.require_video().show = "MKV Show"
+    media.require_video().season = 2
+    media.require_video().episode = 3
+    media.require_video().director = ["MKV Director"]
+
+    report = media.save()
+
+    assert "video.show" in report.written
+    updated = MediaFile.open(target)
+    assert updated.title == "Written MKV"
+    assert updated.artists == ["MKV Artist A", "MKV Artist B"]
+    assert updated.genre == ["Rock", "Pop"]
+    assert updated.require_audio().album == "MKV Album"
+    assert (updated.audio.track_number, updated.audio.track_total) == (3, 12)
+    assert updated.require_video().show == "MKV Show"
+    assert (updated.video.season, updated.video.episode) == (2, 3)
+    assert updated.video.director == ["MKV Director"]
+
+
+def test_write_avi_skips_unsupported(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy.avi"
+    shutil.copy2(media_dir / "sample.avi", target)
+    media = MediaFile.open(target)
+    media.title = "Written AVI"
+    media.artists = ["AVI Artist"]
+    media.require_audio().album = "AVI Album"
+    media.require_audio().track_number = 4
+    media.composer = ["AVI Composer"]
+
+    report = media.save()
+
+    assert "title" in report.written
+    assert any(field == "composer" for field, _reason in report.skipped)
+    assert "composer" not in report.written
+    updated = MediaFile.open(target)
+    assert updated.title == "Written AVI"
+    assert updated.artists == ["AVI Artist"]
+    assert updated.require_audio().album == "AVI Album"
+    assert updated.require_audio().track_number == 4
+
+
+def test_avi_strict_write_rejects_unsupported(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy-strict.avi"
+    shutil.copy2(media_dir / "sample.avi", target)
+    media = MediaFile.open(target)
+    media.title = "Should Not Be Written"
+    media.composer = ["Unsupported"]
+
+    with pytest.raises(UnsupportedFieldError):
+        media.save(policy=WritePolicy(on_unsupported=UnsupportedPolicy.ERROR))
+
+    assert MediaFile.open(target).title != "Should Not Be Written"
+
+
+def test_write_flv(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy.flv"
+    shutil.copy2(media_dir / "sample.flv", target)
+    media = MediaFile.open(target)
+    media.title = "Written FLV"
+    media.require_audio().album = "FLV Album"
+    media.comment = "FLV Comment"
+
+    report = media.save()
+
+    assert "title" in report.written
+    updated = MediaFile.open(target)
+    assert updated.title == "Written FLV"
+    assert updated.require_audio().album == "FLV Album"
+    assert updated.comment == "FLV Comment"
+
+
+def test_mpeg_ts_is_read_only(media_dir: Path) -> None:
+    media = MediaFile.open(media_dir / "sample.ts")
+
+    assert media.kind is MediaKind.AUDIO_VIDEO
+    with pytest.raises(UnsupportedFormatError):
+        media.save()
+
+
 def test_capabilities(media_dir: Path) -> None:
     media = MediaFile.open(media_dir / "sample.mp3")
     capabilities = media.capabilities
@@ -203,10 +305,18 @@ def test_require_streams() -> None:
 
 
 def test_unsupported_container(tmp_path: Path) -> None:
+    path = tmp_path / "video.xyz"
+    path.write_bytes(b"this is not a media file")
+
+    with pytest.raises(UnsupportedFormatError):
+        MediaFile.open(path)
+
+
+def test_corrupt_matroska_is_a_read_error(tmp_path: Path) -> None:
     path = tmp_path / "video.mkv"
     path.write_bytes(b"\x1aE\xdf\xa3" + b"matroska")
 
-    with pytest.raises(UnsupportedFormatError):
+    with pytest.raises(MetadataReadError):
         MediaFile.open(path)
 
 

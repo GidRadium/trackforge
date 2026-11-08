@@ -38,7 +38,12 @@ report = media.save()
 print(report.written, report.skipped)
 ```
 
-Writing is currently supported for MP3/AAC, FLAC, OGG and MP4/M4A. Writes are
-atomic by default: tags are applied to a temporary copy, verified by re-reading,
-and only then replace the original. Pass `WritePolicy(remove_missing=True)` to
-delete fields instead of leaving them untouched.
+Writing is currently supported for MP3/AAC, FLAC, OGG, MP4/M4A, MKV and AVI
+and FLV. Writes are atomic by default: tags are applied to a temporary copy,
+verified by re-reading, and only then replace the original. Pass
+`WritePolicy(remove_missing=True)` to delete fields instead of leaving them
+untouched.
+
+Matroska/WebM, AVI, FLV and MPEG-TS/PS are read through `ffprobe` when it is
+installed; MKV/AVI/FLV writes additionally use `ffmpeg`. MPEG-TS/PS are
+read-only. These are optional external tools, not Python dependencies.

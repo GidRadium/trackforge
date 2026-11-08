@@ -29,6 +29,8 @@ class BackendRegistry:
         path: str | None = None,
     ) -> MetadataBackend:
         for backend in self._backends:
+            if not getattr(backend, "available", True):
+                continue
             if detected.container in backend.containers:
                 return backend
         raise UnsupportedFormatError(path or detected.container.value)
@@ -40,6 +42,11 @@ def default_registry() -> BackendRegistry:
     Imported lazily so importing the metadata model does not pull in mutagen
     when the caller only needs container sniffing.
     """
+    from .backends.ffmpeg import FfmpegBackend
     from .backends.mutagen import MutagenBackend
 
-    return BackendRegistry([MutagenBackend()])
+    backends = [MutagenBackend()]
+    ffmpeg = FfmpegBackend()
+    if ffmpeg.available:
+        backends.append(ffmpeg)
+    return BackendRegistry(backends)

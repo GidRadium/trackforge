@@ -1,6 +1,13 @@
 """Metadata backends."""
 
 from .base import MetadataBackend, ReadResult, WritableMetadataBackend
+from .ffmpeg import FfmpegBackend
 from .mutagen import MutagenBackend
 
-__all__ = ["MetadataBackend", "MutagenBackend", "ReadResult", "WritableMetadataBackend"]
+__all__ = [
+    "FfmpegBackend",
+    "MetadataBackend",
+    "MutagenBackend",
+    "ReadResult",
+    "WritableMetadataBackend",
+]
