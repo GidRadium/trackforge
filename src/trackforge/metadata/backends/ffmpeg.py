@@ -159,7 +159,8 @@ class FfmpegBackend:
                 (audio_streams[0].get("tags") or {}).get("language")
             )
 
-        return ReadResult(metadata=metadata, artwork=[], warnings=[])
+        artwork = self._read_artwork(path, detected, streams)
+        return ReadResult(metadata=metadata, artwork=artwork, warnings=[])
 
     def capabilities(self, container: ContainerFormat) -> Capabilities:
         tag_system = (
@@ -175,7 +176,7 @@ class FfmpegBackend:
             audio=True,
             video=True,
             arbitrary_keys=container is ContainerFormat.MATROSKA,
-            artwork=False,
+            artwork=container is ContainerFormat.MATROSKA,
             writable=container in _WRITABLE,
         )
         if container is ContainerFormat.AVI:
@@ -205,6 +206,13 @@ class FfmpegBackend:
                 "ffmpeg backend always writes through a temporary file"
             )
         args = self._metadata_args(metadata, detected.container, policy, report)
+        artwork_args, artwork_files = self._artwork_args(
+            path,
+            detected,
+            getattr(metadata, "artwork", ()),
+            policy,
+            report,
+        )
         if policy.remove_missing:
             report.warnings.append("ffmpeg backend cannot delete metadata fields")
 
@@ -230,6 +238,7 @@ class FfmpegBackend:
                 str(path),
                 "-map",
                 "0",
+                *artwork_args,
                 "-c",
                 "copy",
                 "-map_metadata",
@@ -264,10 +273,137 @@ class FfmpegBackend:
             raise MetadataWriteError(str(path), str(exc)) from exc
         finally:
             temp_path.unlink(missing_ok=True)
+            for artwork_path in artwork_files:
+                artwork_path.unlink(missing_ok=True)
 
         report.bytes_before = before
         report.bytes_after = path.stat().st_size
         return report
+
+    def _read_artwork(
+        self,
+        path: Path,
+        detected: DetectedFormat,
+        streams: list[dict[str, Any]],
+    ) -> list[Artwork]:
+        if detected.container is not ContainerFormat.MATROSKA or self.ffmpeg is None:
+            return []
+        result: list[Artwork] = []
+        for stream in streams:
+            disposition = stream.get("disposition") or {}
+            if stream.get("codec_type") != "video" or not disposition.get("attached_pic"):
+                continue
+            tags = _lower_tags(stream.get("tags"))
+            mime = tags.get("mimetype") or "application/octet-stream"
+            suffix = _image_suffix(mime)
+            if suffix is None:
+                continue
+            index = stream.get("index")
+            if index is None:
+                continue
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
+                temp_path = Path(handle.name)
+            try:
+                completed = subprocess.run(
+                    [
+                        self.ffmpeg,
+                        "-v",
+                        "error",
+                        "-y",
+                        "-i",
+                        str(path),
+                        "-map",
+                        f"0:{index}",
+                        "-c",
+                        "copy",
+                        str(temp_path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=self.timeout,
+                )
+                if completed.returncode != 0 or temp_path.stat().st_size == 0:
+                    continue
+                filename = tags.get("filename") or temp_path.name
+                result.append(
+                    Artwork(
+                        data=temp_path.read_bytes(),
+                        mime=mime,
+                        kind=_artwork_kind(filename),
+                        description=filename,
+                    )
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            finally:
+                temp_path.unlink(missing_ok=True)
+        return result
+
+    def _artwork_args(
+        self,
+        path: Path,
+        detected: DetectedFormat,
+        artwork,
+        policy: WritePolicy,
+        report: WriteReport,
+    ) -> tuple[list[str], list[Path]]:
+        images = list(artwork)
+        if detected.container is not ContainerFormat.MATROSKA:
+            if images:
+                report.skipped.append(
+                    ("artwork", "ffmpeg artwork is implemented for Matroska only")
+                )
+            return [], []
+        if not images and not policy.remove_missing:
+            return [], []
+
+        valid_images: list[tuple[Artwork, str]] = []
+        for image in images:
+            suffix = _image_suffix(image.mime)
+            if suffix is None:
+                report.skipped.append(
+                    ("artwork", f"unsupported artwork MIME type: {image.mime}")
+                )
+                continue
+            valid_images.append((image, suffix))
+        if not valid_images and not policy.remove_missing:
+            return [], []
+
+        args: list[str] = []
+        try:
+            streams = self._probe(path).get("streams", [])
+        except MetadataReadError:
+            streams = []
+        for stream in streams:
+            disposition = stream.get("disposition") or {}
+            if stream.get("codec_type") == "video" and disposition.get("attached_pic"):
+                index = stream.get("index")
+                if index is not None:
+                    args.extend(["-map", f"-0:{index}"])
+
+        temp_files: list[Path] = []
+        attachment_index = 0
+        for image, suffix in valid_images:
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
+                handle.write(image.data)
+                temp_path = Path(handle.name)
+            temp_files.append(temp_path)
+            filename = f"cover{attachment_index}{suffix}"
+            args.extend(
+                [
+                    "-attach",
+                    str(temp_path),
+                    f"-metadata:s:t:{attachment_index}",
+                    f"mimetype={image.mime}",
+                    f"-metadata:s:t:{attachment_index}",
+                    f"filename={filename}",
+                ]
+            )
+            attachment_index += 1
+        if attachment_index or policy.remove_missing:
+            report.written.append("artwork")
+        return args, temp_files
 
     def _probe(self, path: Path) -> dict[str, Any]:
         if self.ffprobe is None:
@@ -476,9 +612,6 @@ class FfmpegBackend:
         for name, key in _MB_KEYS.items():
             add(key, metadata.musicbrainz_ids.get(name), f"musicbrainz_ids.{name}")
 
-        if getattr(metadata, "artwork", None):
-            report.skipped.append(("artwork", "ffmpeg backend does not write artwork yet"))
-
         return args
 
     def _verify(
@@ -492,6 +625,14 @@ class FfmpegBackend:
         actual = result.metadata
         mismatches: list[str] = []
         for field in report.written:
+            if field == "artwork":
+                expected_art = sorted(
+                    (item.mime, item.data) for item in getattr(expected, "artwork", ())
+                )
+                actual_art = sorted((item.mime, item.data) for item in result.artwork)
+                if expected_art != actual_art:
+                    mismatches.append("artwork")
+                continue
             expected_value = _field_value(expected, field)
             actual_value = _field_value(actual, field)
             if field == "lyrics" or field.endswith(".lyrics"):
@@ -595,3 +736,24 @@ def _fsync_dir(path: Path) -> None:
         pass
     finally:
         os.close(descriptor)
+
+
+def _image_suffix(mime: str) -> str | None:
+    if mime in {"image/jpeg", "image/jpg"}:
+        return ".jpg"
+    if mime == "image/png":
+        return ".png"
+    return None
+
+
+def _artwork_kind(filename: str) -> str:
+    lower = filename.lower()
+    if "back" in lower:
+        return "back"
+    if "artist" in lower:
+        return "artist"
+    if "logo" in lower:
+        return "logo"
+    if "cover" in lower or "front" in lower:
+        return "front"
+    return "other"

@@ -50,4 +50,5 @@ players that only understand ID3v2.3.
 
 Matroska/WebM, AVI, FLV and MPEG-TS/PS are read through `ffprobe` when it is
 installed; MKV/AVI/FLV writes additionally use `ffmpeg`. MPEG-TS/PS are
-read-only. These are optional external tools, not Python dependencies.
+read-only. Matroska cover art is stored as an attachment; AVI/FLV artwork is
+not implemented. These are optional external tools, not Python dependencies.

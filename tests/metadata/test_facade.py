@@ -179,6 +179,7 @@ def test_mkv_read(media_dir: Path) -> None:
     assert media.video is not None
     assert media.capabilities is not None
     assert media.capabilities.writable is True
+    assert media.capabilities.artwork is True
 
 
 def test_write_mkv(tmp_path: Path, media_dir: Path) -> None:
@@ -211,6 +212,21 @@ def test_write_mkv(tmp_path: Path, media_dir: Path) -> None:
     assert updated.video.director == ["MKV Director"]
 
 
+def test_write_mkv_artwork(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy-art.mkv"
+    shutil.copy2(media_dir / "sample.mkv", target)
+    media = MediaFile.open(target)
+    media.artwork.add(Artwork(data=b"pngdata", mime="image/png", width=1, height=1))
+
+    report = media.save()
+
+    assert "artwork" in report.written
+    updated = MediaFile.open(target)
+    assert updated.artwork.front is not None
+    assert updated.artwork.front.mime == "image/png"
+    assert updated.artwork.front.data == b"pngdata"
+
+
 def test_write_avi_skips_unsupported(tmp_path: Path, media_dir: Path) -> None:
     target = tmp_path / "copy.avi"
     shutil.copy2(media_dir / "sample.avi", target)
@@ -239,6 +255,7 @@ def test_avi_capabilities_are_truthful(media_dir: Path) -> None:
 
     assert capabilities is not None
     assert capabilities.writable is True
+    assert capabilities.artwork is False
     assert capabilities.supports("title")
     assert capabilities.supports("album")
     assert not capabilities.supports("composer")
