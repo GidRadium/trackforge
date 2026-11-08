@@ -145,7 +145,9 @@ def write_file(
             _write_in_place(temp_path, detected, metadata, policy, report)
             if policy.verify:
                 _verify(backend, temp_path, detected, metadata, report)
+            _fsync_file(temp_path)
             os.replace(temp_path, path)
+            _fsync_dir(path.parent)
         except WriteVerificationError:
             raise
         except (MutagenError, OSError, ValueError) as exc:
@@ -1181,3 +1183,24 @@ def _artwork_signature(artwork) -> list[tuple[str, str, bytes]]:
         (str(item.kind), item.mime, item.data)
         for item in artwork
     )
+
+
+def _fsync_file(path: Path) -> None:
+    try:
+        with path.open("rb") as handle:
+            os.fsync(handle.fileno())
+    except OSError:
+        pass
+
+
+def _fsync_dir(path: Path) -> None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)

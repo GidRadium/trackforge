@@ -125,9 +125,11 @@ class FfmpegBackend:
         *,
         ffprobe: str | None = None,
         ffmpeg: str | None = None,
+        timeout: float = 30.0,
     ) -> None:
         self.ffprobe = ffprobe if ffprobe is not None else shutil.which("ffprobe")
         self.ffmpeg = ffmpeg if ffmpeg is not None else shutil.which("ffmpeg")
+        self.timeout = timeout
 
     @property
     def available(self) -> bool:
@@ -198,6 +200,10 @@ class FfmpegBackend:
             raise UnsupportedFormatError(str(path))
 
         report = WriteReport(backend=self.name, container=detected.container)
+        if not policy.atomic:
+            report.warnings.append(
+                "ffmpeg backend always writes through a temporary file"
+            )
         args = self._metadata_args(metadata, detected.container, policy, report)
         if policy.remove_missing:
             report.warnings.append("ffmpeg backend cannot delete metadata fields")
@@ -238,6 +244,7 @@ class FfmpegBackend:
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=self.timeout,
             )
             if completed.returncode != 0:
                 raise MetadataWriteError(
@@ -246,9 +253,13 @@ class FfmpegBackend:
                 )
             if policy.verify:
                 self._verify(temp_path, detected, metadata, report)
+            _fsync_file(temp_path)
             os.replace(temp_path, path)
+            _fsync_dir(path.parent)
         except WriteVerificationError:
             raise
+        except subprocess.TimeoutExpired as exc:
+            raise MetadataWriteError(str(path), "ffmpeg timed out") from exc
         except (OSError, ValueError) as exc:
             raise MetadataWriteError(str(path), str(exc)) from exc
         finally:
@@ -277,7 +288,10 @@ class FfmpegBackend:
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=self.timeout,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise MetadataReadError(str(path), "ffprobe timed out") from exc
         except OSError as exc:
             raise MetadataReadError(str(path), str(exc)) from exc
         if completed.returncode != 0:
@@ -560,3 +574,24 @@ def _field_value(metadata: MediaMetadata, field: str):
         else:
             target = getattr(target, part)
     return target
+
+
+def _fsync_file(path: Path) -> None:
+    try:
+        with path.open("rb") as handle:
+            os.fsync(handle.fileno())
+    except OSError:
+        pass
+
+
+def _fsync_dir(path: Path) -> None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
