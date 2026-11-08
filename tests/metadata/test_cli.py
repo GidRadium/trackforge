@@ -76,6 +76,10 @@ def test_set_mp3(tmp_path: Path, media_dir: Path) -> None:
             "CLI Album",
             "--track",
             "5/10",
+            "--original-date",
+            "2010",
+            "--mood",
+            "Energetic",
         ],
     )
 
@@ -87,6 +91,8 @@ def test_set_mp3(tmp_path: Path, media_dir: Path) -> None:
     assert media.artist == "CLI Artist"
     assert media.audio.album == "CLI Album"
     assert (media.audio.track_number, media.audio.track_total) == (5, 10)
+    assert str(media.original_date) == "2010"
+    assert media.mood == "Energetic"
 
 
 def test_set_id3v23(tmp_path: Path, media_dir: Path) -> None:

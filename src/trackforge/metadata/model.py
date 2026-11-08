@@ -153,6 +153,9 @@ class CommonMetadata:
     artists: list[str] = field(default_factory=list)
     artist_sort: str | None = None
     date: PartialDate | None = None
+    original_date: PartialDate | None = None
+    release_date: PartialDate | None = None
+    mood: str | None = None
     genre: list[str] = field(default_factory=list)
     comment: str | None = None
     composer: list[str] = field(default_factory=list)

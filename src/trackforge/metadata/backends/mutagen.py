@@ -333,6 +333,9 @@ class MutagenBackend:
         if date_text is None:
             date_text = _id3_fallback_date(tags)
         metadata.date = parse_partial_date(date_text)
+        metadata.original_date = parse_partial_date(_id3_text(tags, "TDOR"))
+        metadata.release_date = parse_partial_date(_id3_text(tags, "TDRL"))
+        metadata.mood = _id3_text(tags, "TMOO")
 
         metadata.genre = parse_genres(_id3_texts(tags, "TCON"))
         metadata.comment = _id3_comment(tags)
@@ -426,6 +429,13 @@ class MutagenBackend:
         metadata.artist_sort = text("artistsort")
         date_text = text("date") or text("year")
         metadata.date = parse_partial_date(date_text)
+        metadata.original_date = parse_partial_date(
+            text("originaldate") or text("original_date")
+        )
+        metadata.release_date = parse_partial_date(
+            text("releasedate") or text("release_date")
+        )
+        metadata.mood = text("mood")
         metadata.genre = parse_genres(texts("genre"))
         metadata.comment = text("comment")
         metadata.composer = texts("composer")
@@ -523,6 +533,13 @@ class MutagenBackend:
         metadata.artist = metadata.artists[0] if metadata.artists else None
         metadata.artist_sort = _mp4_text(tags, "soar")
         metadata.date = parse_partial_date(_mp4_text(tags, "©day"))
+        metadata.original_date = parse_partial_date(
+            _mp4_freeform_text(tags, "ORIGINALDATE")
+        )
+        metadata.release_date = parse_partial_date(
+            _mp4_freeform_text(tags, "RELEASEDATE")
+        )
+        metadata.mood = _mp4_freeform_text(tags, "MOOD")
         metadata.genre = parse_genres(_mp4_texts(tags, "©gen"))
         metadata.comment = _mp4_text(tags, "©cmt")
         metadata.composer = _mp4_texts(tags, "©wrt")
@@ -642,6 +659,13 @@ class MutagenBackend:
         metadata.title_sort = text("titlesort")
         metadata.artist_sort = text("artistsort")
         metadata.date = parse_partial_date(text("year") or text("date"))
+        metadata.original_date = parse_partial_date(
+            text("original date") or text("originaldate")
+        )
+        metadata.release_date = parse_partial_date(
+            text("release date") or text("releasedate")
+        )
+        metadata.mood = text("mood")
         metadata.genre = parse_genres(texts("genre"))
         metadata.comment = text("comment")
         metadata.composer = texts("composer")
@@ -735,6 +759,9 @@ class MutagenBackend:
         metadata.artist = text("author")
         metadata.artists = [metadata.artist] if metadata.artist else []
         metadata.date = parse_partial_date(text("wm/year"))
+        metadata.original_date = parse_partial_date(text("wm/originalreleaseyear"))
+        metadata.release_date = parse_partial_date(text("wm/originalreleasedate"))
+        metadata.mood = text("wm/mood")
         metadata.genre = parse_genres(values("wm/genre"))
         metadata.comment = text("description")
         metadata.composer = values("wm/composer")
@@ -787,7 +814,8 @@ class MutagenBackend:
 def _merge_missing(target: MediaMetadata, source: MediaMetadata) -> None:
     """Fill only empty fields of ``target`` from a lower-priority tag system."""
     common_scalars = (
-        "title", "title_sort", "artist", "artist_sort", "date", "comment",
+        "title", "title_sort", "artist", "artist_sort", "date",
+        "original_date", "release_date", "mood", "comment",
         "copyright", "language", "grouping",
     )
     for name in common_scalars:

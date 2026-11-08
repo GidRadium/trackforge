@@ -235,6 +235,23 @@ def _write_id3(
     elif policy.remove_missing:
         tags.delall("TDRC")
         report.written.append("date")
+    _id3_text(
+        tags,
+        "TDOR",
+        str(metadata.original_date) if metadata.original_date else None,
+        "original_date",
+        policy,
+        report,
+    )
+    _id3_text(
+        tags,
+        "TDRL",
+        str(metadata.release_date) if metadata.release_date else None,
+        "release_date",
+        policy,
+        report,
+    )
+    _id3_text(tags, "TMOO", metadata.mood, "mood", policy, report)
     _id3_texts(tags, "TCON", metadata.genre, "genre", policy, report)
     _id3_texts(tags, "TCOM", metadata.composer, "composer", policy, report)
     _id3_texts(tags, "TEXT", metadata.lyricist, "lyricist", policy, report)
@@ -592,6 +609,23 @@ def _write_vorbis_common(
     _vorbis_values(tags, "ARTIST", artists, "artists", policy, report)
     _vorbis_text(tags, "ARTISTSORT", metadata.artist_sort, "artist_sort", policy, report)
     _vorbis_text(tags, "DATE", str(metadata.date) if metadata.date else None, "date", policy, report)
+    _vorbis_text(
+        tags,
+        "ORIGINALDATE",
+        str(metadata.original_date) if metadata.original_date else None,
+        "original_date",
+        policy,
+        report,
+    )
+    _vorbis_text(
+        tags,
+        "RELEASEDATE",
+        str(metadata.release_date) if metadata.release_date else None,
+        "release_date",
+        policy,
+        report,
+    )
+    _vorbis_text(tags, "MOOD", metadata.mood, "mood", policy, report)
     _vorbis_values(tags, "GENRE", metadata.genre, "genre", policy, report)
     _vorbis_text(tags, "COMMENT", metadata.comment, "comment", policy, report)
     _vorbis_values(tags, "COMPOSER", metadata.composer, "composer", policy, report)
@@ -775,6 +809,23 @@ def _write_mp4(
     _mp4_values(tags, "©ART", artists, "artists", policy, report)
     _mp4_text(tags, "soar", metadata.artist_sort, "artist_sort", policy, report)
     _mp4_text(tags, "©day", str(metadata.date) if metadata.date else None, "date", policy, report)
+    _mp4_freeform(
+        tags,
+        "ORIGINALDATE",
+        str(metadata.original_date) if metadata.original_date else None,
+        "original_date",
+        policy,
+        report,
+    )
+    _mp4_freeform(
+        tags,
+        "RELEASEDATE",
+        str(metadata.release_date) if metadata.release_date else None,
+        "release_date",
+        policy,
+        report,
+    )
+    _mp4_freeform(tags, "MOOD", metadata.mood, "mood", policy, report)
     _mp4_values(tags, "©gen", metadata.genre, "genre", policy, report)
     _mp4_text(tags, "©cmt", metadata.comment, "comment", policy, report)
     _mp4_values(tags, "©wrt", metadata.composer, "composer", policy, report)
@@ -942,6 +993,9 @@ def _write_ape(audio_file, metadata: MediaMetadata, policy: WritePolicy, report:
     add("Track", _number_pair(metadata.audio.track_number, metadata.audio.track_total) if metadata.audio else None, "audio.track")
     add("Disc", _number_pair(metadata.audio.disc_number, metadata.audio.disc_total) if metadata.audio else None, "audio.disc")
     add("Year", str(metadata.date) if metadata.date else None, "date")
+    add("Original Date", str(metadata.original_date) if metadata.original_date else None, "original_date")
+    add("Release Date", str(metadata.release_date) if metadata.release_date else None, "release_date")
+    add("Mood", metadata.mood, "mood")
     add("Genre", _join(metadata.genre), "genre")
     add("Comment", metadata.comment, "comment")
     add("Composer", _join(metadata.composer), "composer")
@@ -1010,6 +1064,9 @@ def _write_asf(audio_file: ASF, metadata: MediaMetadata, policy: WritePolicy, re
     add("WM/TrackNumber", _number_pair(metadata.audio.track_number, metadata.audio.track_total) if metadata.audio else None, "audio.track")
     add("WM/PartOfSet", _number_pair(metadata.audio.disc_number, metadata.audio.disc_total) if metadata.audio else None, "audio.disc")
     add("WM/Year", str(metadata.date) if metadata.date else None, "date")
+    add("WM/OriginalReleaseYear", str(metadata.original_date) if metadata.original_date else None, "original_date")
+    add("WM/ReleaseDate", str(metadata.release_date) if metadata.release_date else None, "release_date")
+    add("WM/Mood", metadata.mood, "mood")
     add("WM/Genre", _join(metadata.genre), "genre")
     add("WM/Composer", _join(metadata.composer), "composer")
     add("WM/Conductor", _join(metadata.conductor), "conductor")

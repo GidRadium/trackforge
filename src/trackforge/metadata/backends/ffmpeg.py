@@ -462,6 +462,13 @@ class FfmpegBackend:
         metadata.artist = metadata.artists[0] if metadata.artists else None
         metadata.artist_sort = first("artistsort", "artist_sort")
         metadata.date = parse_partial_date(first("date", "year", "date_released"))
+        metadata.original_date = parse_partial_date(
+            first("original_date", "originaldate")
+        )
+        metadata.release_date = parse_partial_date(
+            first("release_date", "releasedate")
+        )
+        metadata.mood = first("mood")
         metadata.genre = parse_genres(values("genre"))
         metadata.comment = first("comment")
         metadata.composer = _semicolon_values(tags, "composer")
@@ -520,7 +527,8 @@ class FfmpegBackend:
 
         known = {
             "title", "titlesort", "title_sort", "artist", "artists", "artistsort",
-            "artist_sort", "date", "year", "date_released", "genre", "comment",
+            "artist_sort", "date", "year", "date_released", "original_date",
+            "originaldate", "release_date", "releasedate", "mood", "genre", "comment",
             "composer", "lyricist", "conductor", "lyrics", "unsyncedlyrics",
             "producer", "copyright", "language", "grouping", "album", "product",
             "albumsort", "album_sort", "album_artist", "albumartist",
@@ -562,6 +570,17 @@ class FfmpegBackend:
         add("artist", _join(metadata.artists) or metadata.artist, "artists")
         add("artistsort", metadata.artist_sort, "artist_sort")
         add("date", str(metadata.date) if metadata.date else None, "date")
+        add(
+            "original_date",
+            str(metadata.original_date) if metadata.original_date else None,
+            "original_date",
+        )
+        add(
+            "release_date",
+            str(metadata.release_date) if metadata.release_date else None,
+            "release_date",
+        )
+        add("mood", metadata.mood, "mood")
         add("genre", _join(metadata.genre), "genre")
         add("comment", metadata.comment, "comment")
         add("composer", _join(metadata.composer), "composer")
