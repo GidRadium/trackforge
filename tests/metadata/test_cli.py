@@ -193,3 +193,44 @@ def test_scan_empty_directory(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "no media files" in result.output
+
+
+def test_set_cover(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "cover.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+    cover = tmp_path / "cover.png"
+    cover.write_bytes(b"pngdata")
+
+    result = runner.invoke(app, ["set", str(target), "--cover", str(cover)])
+
+    assert result.exit_code == 0, result.output
+    from trackforge.metadata import MediaFile
+
+    media = MediaFile.open(target)
+    assert media.artwork.front is not None
+    assert media.artwork.front.mime == "image/png"
+    assert media.artwork.front.data == b"pngdata"
+
+
+def test_set_remove_cover(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "remove-cover.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+
+    result = runner.invoke(app, ["set", str(target), "--remove-cover"])
+
+    assert result.exit_code == 0, result.output
+    from trackforge.metadata import MediaFile
+
+    assert MediaFile.open(target).artwork.front is None
+
+
+def test_set_cover_rejects_unknown_format(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "cover.gif.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+    cover = tmp_path / "cover.gif"
+    cover.write_bytes(b"gif")
+
+    result = runner.invoke(app, ["set", str(target), "--cover", str(cover)])
+
+    assert result.exit_code == 1
+    assert "unsupported cover format" in result.output

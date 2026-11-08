@@ -139,6 +139,21 @@ class ArtworkCollection:
             None,
         )
 
+    def replace_front(self, artwork: Artwork) -> None:
+        """Replace all front covers while preserving other image roles."""
+        self._items = [
+            item for item in self._items if item.kind is not ArtworkKind.FRONT
+        ]
+        self._items.append(artwork)
+
+    def remove_front(self) -> bool:
+        """Remove all front covers; return whether anything was removed."""
+        before = len(self._items)
+        self._items = [
+            item for item in self._items if item.kind is not ArtworkKind.FRONT
+        ]
+        return len(self._items) != before
+
     def to_list(self) -> list[Artwork]:
         return list(self._items)
 

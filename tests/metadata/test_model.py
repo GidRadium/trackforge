@@ -98,6 +98,24 @@ class TestArtworkCollection:
         assert collection.front is None
         assert collection.to_list() == []
 
+    def test_replace_and_remove_front(self) -> None:
+        collection = ArtworkCollection()
+        back = Artwork(data=b"back", mime="image/jpeg", kind="back")
+        old_front = Artwork(data=b"old", mime="image/jpeg")
+        new_front = Artwork(data=b"new", mime="image/png")
+        collection.extend([back, old_front])
+
+        collection.replace_front(new_front)
+
+        assert collection.front == new_front
+        assert len(collection) == 2
+        assert collection[0] == back
+
+        assert collection.remove_front() is True
+        assert collection.front is None
+        assert collection.to_list() == [back]
+        assert collection.remove_front() is False
+
 
 class TestMetadata:
     def test_defaults_are_not_shared(self) -> None:

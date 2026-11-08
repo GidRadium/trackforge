@@ -65,6 +65,7 @@ def test_write_policy_defaults() -> None:
     assert policy.atomic is True
     assert policy.id3_version == 4
     assert policy.write_extra is False
+    assert policy.remove_artwork is False
 
 
 def test_write_report_lossy() -> None:

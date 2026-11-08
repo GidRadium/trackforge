@@ -575,7 +575,7 @@ def _id3_artwork(
     report: WriteReport,
 ) -> None:
     images = list(artwork)
-    if not images and not policy.remove_missing:
+    if not images and not (policy.remove_missing or policy.remove_artwork):
         return
     tags.delall("APIC")
     for image in images:
@@ -653,7 +653,7 @@ def _write_flac(
     _write_vorbis_common(tags, metadata, policy, report)
     _write_vorbis_audio(tags, metadata, policy, report)
 
-    if _artwork(metadata) or policy.remove_missing:
+    if _artwork(metadata) or policy.remove_missing or policy.remove_artwork:
         audio_file.clear_pictures()
         for image in _artwork(metadata):
             audio_file.add_picture(_flac_picture(image))
@@ -673,7 +673,7 @@ def _write_ogg(
     _write_vorbis_common(tags, metadata, policy, report)
     _write_vorbis_audio(tags, metadata, policy, report)
 
-    if _artwork(metadata) or policy.remove_missing:
+    if _artwork(metadata) or policy.remove_missing or policy.remove_artwork:
         _delete_tag(tags, "METADATA_BLOCK_PICTURE")
         if _artwork(metadata):
             tags["METADATA_BLOCK_PICTURE"] = [
@@ -1062,7 +1062,7 @@ def _write_mp4(
             ]
             report.written.append(f"extra.{key}")
 
-    if _artwork(metadata) or policy.remove_missing:
+    if _artwork(metadata) or policy.remove_missing or policy.remove_artwork:
         tags.pop("covr", None)
         if _artwork(metadata):
             tags["covr"] = [
@@ -1202,7 +1202,7 @@ def _write_ape(audio_file, metadata: MediaMetadata, policy: WritePolicy, report:
                     (f"extra.{key}", "joined multiple values with '; '")
                 )
 
-    if _artwork(metadata) or policy.remove_missing:
+    if _artwork(metadata) or policy.remove_missing or policy.remove_artwork:
         _delete_tag(tags, "Cover Art (Front)")
         image = next(iter(_artwork(metadata)), None)
         if image is not None:
@@ -1275,7 +1275,7 @@ def _write_asf(audio_file: ASF, metadata: MediaMetadata, policy: WritePolicy, re
                     (f"extra.{key}", "joined multiple values with '; '")
                 )
 
-    if _artwork(metadata) or policy.remove_missing:
+    if _artwork(metadata) or policy.remove_missing or policy.remove_artwork:
         _delete_tag(tags, "WM/Picture")
         image = next(iter(_artwork(metadata)), None)
         if image is not None:

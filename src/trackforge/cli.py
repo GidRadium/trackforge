@@ -115,6 +115,15 @@ def set_metadata(
     comment: str | None = typer.Option(None, "--comment"),
     composer: str | None = typer.Option(None, "--composer", help="Separate multiple names with ';'."),
     lyrics: str | None = typer.Option(None, "--lyrics"),
+    cover: Path | None = typer.Option(
+        None,
+        "--cover",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="JPEG or PNG file to use as the front cover.",
+    ),
+    remove_cover: bool = typer.Option(False, "--remove-cover"),
     track: str | None = typer.Option(None, "--track", help="N or N/TOTAL."),
     disc: str | None = typer.Option(None, "--disc", help="N or N/TOTAL."),
     isrc: str | None = typer.Option(None, "--isrc"),
@@ -133,6 +142,7 @@ def set_metadata(
 ) -> None:
     """Update metadata fields and save the file."""
     from trackforge.metadata import (
+        Artwork,
         Lyrics,
         MediaFile,
         TrackForgeError,
@@ -203,6 +213,17 @@ def set_metadata(
         if lyrics is not None:
             language = media.lyrics.language if media.lyrics is not None else "eng"
             media.lyrics = Lyrics(text=lyrics, language=language)
+            changes += 1
+        if cover is not None:
+            mime = _image_mime(cover)
+            data = cover.read_bytes()
+            if not data:
+                raise ValueError(f"cover file is empty: {cover}")
+            media.artwork.replace_front(Artwork(data=data, mime=mime))
+            changes += 1
+        if remove_cover:
+            if not media.artwork.remove_front():
+                raise ValueError("no front cover to remove")
             changes += 1
 
         audio = media.audio
@@ -290,6 +311,7 @@ def set_metadata(
             on_unsupported=UnsupportedPolicy.ERROR if strict else UnsupportedPolicy.SKIP,
             write_legacy=legacy,
             id3_version=3 if id3v23 else 4,
+            remove_artwork=remove_cover,
         )
         report = media.save(policy=policy)
     except (TrackForgeError, OSError, ValueError) as exc:
@@ -350,6 +372,15 @@ def scan_command(
 
     if any(result.error is not None for result in results):
         raise typer.Exit(code=1)
+
+
+def _image_mime(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if suffix == ".png":
+        return "image/png"
+    raise ValueError(f"unsupported cover format: {suffix or '<none>'}")
 
 
 def _to_dict(media) -> dict[str, object]:

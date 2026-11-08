@@ -370,7 +370,7 @@ class FfmpegBackend:
                     ("artwork", "ffmpeg artwork is implemented for Matroska only")
                 )
             return [], []
-        if not images and not policy.remove_missing:
+        if not images and not (policy.remove_missing or policy.remove_artwork):
             return [], []
 
         valid_images: list[tuple[Artwork, str]] = []
@@ -382,7 +382,7 @@ class FfmpegBackend:
                 )
                 continue
             valid_images.append((image, suffix))
-        if not valid_images and not policy.remove_missing:
+        if not valid_images and not (policy.remove_missing or policy.remove_artwork):
             return [], []
 
         args: list[str] = []
@@ -416,7 +416,7 @@ class FfmpegBackend:
                 ]
             )
             attachment_index += 1
-        if attachment_index or policy.remove_missing:
+        if attachment_index or policy.remove_missing or policy.remove_artwork:
             report.written.append("artwork")
         return args, temp_files
 
