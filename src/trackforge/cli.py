@@ -136,6 +136,7 @@ def set_metadata(
     movement_name: str | None = typer.Option(None, "--movement-name"),
     movement: int | None = typer.Option(None, "--movement"),
     movement_total: int | None = typer.Option(None, "--movement-total"),
+    rating: int | None = typer.Option(None, "--rating", min=0, max=5),
     show: str | None = typer.Option(None, "--show"),
     season: int | None = typer.Option(None, "--season"),
     episode: int | None = typer.Option(None, "--episode"),
@@ -247,6 +248,7 @@ def set_metadata(
                 movement_name,
                 movement,
                 movement_total,
+                rating,
             )
         )
         if needs_audio and audio is None:
@@ -286,6 +288,9 @@ def set_metadata(
                 changes += 1
             if movement_total is not None:
                 audio.movement_total = movement_total
+                changes += 1
+            if rating is not None:
+                audio.rating = rating
                 changes += 1
 
         video = media.video

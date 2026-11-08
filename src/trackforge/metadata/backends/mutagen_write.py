@@ -24,7 +24,7 @@ import mutagen
 from mutagen import MutagenError
 from mutagen.asf import ASF, ASFByteArrayAttribute
 from mutagen.flac import FLAC, Picture
-from mutagen.id3 import APIC, COMM, TDRC, TDAT, TIPL, TXXX, TYER, USLT, Encoding, ID3
+from mutagen.id3 import APIC, COMM, POPM, TDRC, TDAT, TIPL, TXXX, TYER, USLT, Encoding, ID3
 from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm, MP4Tags
 
 from ..capabilities import WritePolicy, WriteReport
@@ -376,6 +376,18 @@ def _write_id3(
             )
         elif policy.remove_missing:
             tags.delall("TXXX:MOVEMENTTOTAL")
+        if audio.rating is not None:
+            tags.delall("POPM")
+            tags.add(
+                POPM(
+                    email="",
+                    rating=max(0, min(5, audio.rating)) * 51,
+                    count=0,
+                )
+            )
+            report.written.append("audio.rating")
+        elif policy.remove_missing:
+            tags.delall("POPM")
 
 
 def _id3_text(
@@ -858,6 +870,14 @@ def _write_vorbis_audio(
         policy,
         report,
     )
+    _vorbis_text(
+        tags,
+        "RATING",
+        str(audio.rating) if audio.rating is not None else None,
+        "audio.rating",
+        policy,
+        report,
+    )
 
     for name, key in _RG_VORBIS_KEYS.items():
         value = audio.replaygain.get(name)
@@ -1020,6 +1040,14 @@ def _write_mp4(
         if audio.movement_total is not None:
             tags["©mvc"] = [audio.movement_total]
             report.written.append("audio.movement_total")
+        _mp4_freeform(
+            tags,
+            "RATING",
+            str(audio.rating) if audio.rating is not None else None,
+            "audio.rating",
+            policy,
+            report,
+        )
         _mp4_freeform(tags, "CONDUCTOR", _join(metadata.conductor), "conductor", policy, report)
         _mp4_freeform(tags, "LYRICIST", _join(metadata.lyricist), "lyricist", policy, report)
         for name, value in audio.replaygain.items():
@@ -1181,6 +1209,8 @@ def _write_ape(audio_file, metadata: MediaMetadata, policy: WritePolicy, report:
     add("Movement Name", metadata.audio.movement_name if metadata.audio else None, "audio.movement_name")
     add("Movement", str(metadata.audio.movement_number) if metadata.audio and metadata.audio.movement_number is not None else None, "audio.movement_number")
     add("Movement Total", str(metadata.audio.movement_total) if metadata.audio and metadata.audio.movement_total is not None else None, "audio.movement_total")
+    if metadata.audio and metadata.audio.rating is not None:
+        add("Rating", str(metadata.audio.rating), "audio.rating")
     if metadata.audio:
         add(
             "Compilation",
@@ -1259,6 +1289,8 @@ def _write_asf(audio_file: ASF, metadata: MediaMetadata, policy: WritePolicy, re
     add("WM/Publisher", metadata.audio.label if metadata.audio else None, "audio.label")
     add("WM/ISRC", metadata.audio.isrc if metadata.audio else None, "audio.isrc")
     add("WM/BeatsPerMinute", str(metadata.audio.bpm) if metadata.audio and metadata.audio.bpm is not None else None, "audio.bpm")
+    if metadata.audio and metadata.audio.rating is not None:
+        add("WM/SharedUserRating", str(metadata.audio.rating * 20), "audio.rating")
     add("WM/Language", metadata.language, "language")
     if metadata.audio and metadata.audio.compilation is not None:
         add("WM/IsCompilation", "1" if metadata.audio.compilation else "0", "audio.compilation")

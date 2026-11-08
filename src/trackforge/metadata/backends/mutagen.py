@@ -363,6 +363,9 @@ class MutagenBackend:
         audio.movement_name = _id3_text(tags, "MVNM")
         audio.movement_number = parse_int(_id3_text(tags, "MVIN"))
         audio.movement_total = parse_int(_id3_txxx_value(tags, "MOVEMENTTOTAL"))
+        popm = tags.getall("POPM")
+        if popm:
+            audio.rating = round(popm[0].rating / 51)
 
         conductor = _id3_texts(tags, "TPE3")
         if conductor:
@@ -483,6 +486,7 @@ class MutagenBackend:
         audio.movement_name = text("movementname") or text("movement_name")
         audio.movement_number = parse_int(text("movement") or text("movementnumber"))
         audio.movement_total = parse_int(text("movementtotal") or text("movement_total"))
+        audio.rating = parse_int(text("rating"))
 
         for key, name in _MB_VORBIS.items():
             value = text(key)
@@ -536,7 +540,7 @@ class MutagenBackend:
             "totaltracks", "discnumber", "disctotal", "totaldiscs", "compilation",
             "label", "organization", "isrc", "bpm", "initialkey",
             "movementname", "movement_name", "movement", "movementnumber",
-            "movementtotal", "movement_total",
+            "movementtotal", "movement_total", "rating",
             "metadata_block_picture", "coverart", "coverartmime",
             *_MB_VORBIS,
             *_RG_VORBIS,
@@ -599,6 +603,7 @@ class MutagenBackend:
             audio.movement_name = _mp4_text(tags, "©mvn")
             audio.movement_number = parse_int(_mp4_first(tags, "©mvi"))
             audio.movement_total = parse_int(_mp4_first(tags, "©mvc"))
+            audio.rating = parse_int(_mp4_freeform_text(tags, "RATING"))
 
         video = metadata.video
         if video is not None:
@@ -746,6 +751,7 @@ class MutagenBackend:
         audio.movement_name = text("movement name") or text("movementname")
         audio.movement_number = parse_int(text("movement"))
         audio.movement_total = parse_int(text("movement total") or text("movementtotal"))
+        audio.rating = parse_int(text("rating"))
 
         for key, value in items.items():
             if key.startswith("musicbrainz"):
@@ -779,7 +785,7 @@ class MutagenBackend:
             "album", "albumsort", "album artist", "albumartist", "albumartistsort",
             "track", "disc", "compilation", "label", "isrc", "bpm", "initial key",
             "key", "movement name", "movementname", "movement", "movement total",
-            "movementtotal", "cover art (front)",
+            "movementtotal", "rating", "cover art (front)",
         }
         for key, value in items.items():
             if key in known or key.startswith("musicbrainz") or key.startswith("replaygain"):
@@ -847,6 +853,9 @@ class MutagenBackend:
         audio.label = text("wm/publisher")
         audio.isrc = text("wm/isrc")
         audio.bpm = parse_int(text("wm/beatsperminute"))
+        shared_rating = parse_int(text("wm/shareduserrating"))
+        if shared_rating is not None:
+            audio.rating = round(shared_rating / 20)
 
         for key, value in items.items():
             if not key.startswith("musicbrainz/"):
@@ -908,7 +917,7 @@ def _merge_missing(target: MediaMetadata, source: MediaMetadata) -> None:
             "album", "album_sort", "album_artist", "album_artist_sort",
             "track_number", "track_total", "disc_number", "disc_total",
             "compilation", "label", "isrc", "bpm", "key", "movement_name",
-            "movement_number", "movement_total",
+            "movement_number", "movement_total", "rating",
         )
         for name in audio_scalars:
             if getattr(target.audio, name) is None and getattr(source.audio, name) is not None:

@@ -211,6 +211,7 @@ class AudioMetadata:
     movement_name: str | None = None
     movement_number: int | None = None
     movement_total: int | None = None
+    rating: int | None = None
     replaygain: dict[str, float] = field(default_factory=dict)
 
 

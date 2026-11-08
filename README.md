@@ -13,6 +13,7 @@ uv run tfg info track.mp3
 uv run tfg info --json track.mp3
 uv run tfg set track.mp3 --title "New title" --album "New album"
 uv run tfg set track.mp3 --cover cover.jpg
+uv run tfg set track.mp3 --rating 4
 uv run tfg set track.mp3 --clear comment --clear genre
 uv run tfg scan music/ --json
 uv run tfg scan music/ --progress

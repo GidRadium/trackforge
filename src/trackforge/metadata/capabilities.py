@@ -59,6 +59,7 @@ AUDIO_FIELDS: tuple[str, ...] = (
     "movement_name",
     "movement_number",
     "movement_total",
+    "rating",
     "replaygain",
 )
 

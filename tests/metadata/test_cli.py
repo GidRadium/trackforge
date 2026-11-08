@@ -84,6 +84,8 @@ def test_set_mp3(tmp_path: Path, media_dir: Path) -> None:
             "CLI Work",
             "--release-country",
             "US",
+            "--rating",
+            "5",
         ],
     )
 
@@ -99,6 +101,7 @@ def test_set_mp3(tmp_path: Path, media_dir: Path) -> None:
     assert media.mood == "Energetic"
     assert media.work == "CLI Work"
     assert media.release_country == "US"
+    assert media.audio.rating == 5
 
 
 def test_set_id3v23(tmp_path: Path, media_dir: Path) -> None:

@@ -528,6 +528,7 @@ class FfmpegBackend:
             audio.movement_name = first("movement_name", "movementname")
             audio.movement_number = parse_int(first("movement_number", "movement"))
             audio.movement_total = parse_int(first("movement_total", "movementtotal"))
+            audio.rating = parse_int(first("rating"))
             for name, key in _RG_KEYS.items():
                 value = first(key)
                 if value is not None:
@@ -562,7 +563,7 @@ class FfmpegBackend:
             "part_number", "disc", "discnumber", "compilation", "label", "publisher",
             "isrc", "bpm", "beatsperminute", "initial_key", "initialkey", "key",
             "movement_name", "movementname", "movement_number", "movement",
-            "movement_total", "movementtotal",
+            "movement_total", "movementtotal", "rating",
             "show", "tvshow", "season_number", "season", "episode_sort", "episode",
             "episode_id", "network", "director", "writer", "screenplay_by", "synopsis",
             "summary", "description", "rating", "law_rating", "keywords", "location",
@@ -654,6 +655,11 @@ class FfmpegBackend:
                 "movement_total",
                 str(audio.movement_total) if audio.movement_total is not None else None,
                 "audio.movement_total",
+            )
+            add(
+                "rating",
+                str(audio.rating) if audio.rating is not None else None,
+                "audio.rating",
             )
             for name, key in _RG_KEYS.items():
                 value = audio.replaygain.get(name)
