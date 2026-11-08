@@ -420,6 +420,20 @@ def test_write_legacy_id3v1(tmp_path: Path, media_dir: Path) -> None:
     assert tail[3:33].rstrip(b"\x00") == b"Legacy Title"
 
 
+def test_write_wavpack_artwork(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy-art.wv"
+    shutil.copy2(media_dir / "sample.wv", target)
+    media = MediaFile.open(target)
+    media.artwork.add(Artwork(data=b"pngdata", mime="image/png", width=1, height=1))
+
+    report = media.save()
+
+    assert "artwork" in report.written
+    updated = MediaFile.open(target)
+    assert updated.artwork.front is not None
+    assert updated.artwork.front.data == b"pngdata"
+
+
 def test_capabilities(media_dir: Path) -> None:
     media = MediaFile.open(media_dir / "sample.mp3")
     capabilities = media.capabilities
@@ -666,12 +680,62 @@ def test_write_aiff(tmp_path: Path, media_dir: Path) -> None:
     assert updated.require_audio().album == "AIFF Album"
 
 
-def test_read_only_wma_cannot_save(media_dir: Path) -> None:
-    media = MediaFile.open(media_dir / "sample.wma")
+def test_write_wma(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy.wma"
+    shutil.copy2(media_dir / "sample.wma", target)
+    media = MediaFile.open(target)
+    media.title = "Written WMA"
+    media.artists = ["WMA Artist"]
+    media.require_audio().album = "WMA Album"
+    media.require_audio().track_number = 6
+    media.genre = ["Jazz"]
+    media.musicbrainz_ids["track"] = "mbid-asf"
 
-    assert media.kind is MediaKind.AUDIO
-    with pytest.raises(UnsupportedFormatError):
-        media.save()
+    report = media.save()
+
+    assert "title" in report.written
+    updated = MediaFile.open(target)
+    assert updated.title == "Written WMA"
+    assert updated.artists == ["WMA Artist"]
+    assert updated.require_audio().album == "WMA Album"
+    assert updated.require_audio().track_number == 6
+    assert updated.genre == ["Jazz"]
+    assert updated.musicbrainz_ids["track"] == "mbid-asf"
+
+
+def test_write_wma_artwork(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy-art.wma"
+    shutil.copy2(media_dir / "sample.wma", target)
+    media = MediaFile.open(target)
+    media.artwork.add(Artwork(data=b"pngdata", mime="image/png", width=1, height=1))
+
+    report = media.save()
+
+    assert "artwork" in report.written
+    updated = MediaFile.open(target)
+    assert updated.artwork.front is not None
+    assert updated.artwork.front.data == b"pngdata"
+
+
+def test_write_wavpack(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy.wv"
+    shutil.copy2(media_dir / "sample.wv", target)
+    media = MediaFile.open(target)
+    media.title = "Written WavPack"
+    media.artists = ["WV Artist"]
+    media.require_audio().album = "WV Album"
+    media.require_audio().track_number = 8
+    media.musicbrainz_ids["track"] = "mbid-wv"
+
+    report = media.save()
+
+    assert "title" in report.written
+    updated = MediaFile.open(target)
+    assert updated.title == "Written WavPack"
+    assert updated.artists == ["WV Artist"]
+    assert updated.require_audio().album == "WV Album"
+    assert updated.require_audio().track_number == 8
+    assert updated.musicbrainz_ids["track"] == "mbid-wv"
 
 
 def test_corrupt_flac(tmp_path: Path) -> None:

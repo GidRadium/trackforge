@@ -102,6 +102,11 @@ WRITABLE_CONTAINERS = frozenset(
         ContainerFormat.AIFF,
         ContainerFormat.DSF,
         ContainerFormat.DFF,
+        ContainerFormat.ASF,
+        ContainerFormat.APE,
+        ContainerFormat.WAVPACK,
+        ContainerFormat.MUSEPACK,
+        ContainerFormat.TTA,
     }
 )
 
@@ -146,6 +151,16 @@ _MB_VORBIS = {
     "musicbrainz_releasegroupid": "release_group",
     "musicbrainz_releasetrackid": "release_track",
     "musicbrainz_workid": "work",
+}
+
+_ASF_MB_KEYS = {
+    "track id": "track",
+    "album id": "album",
+    "artist id": "artist",
+    "album artist id": "album_artist",
+    "release group id": "release_group",
+    "release track id": "release_track",
+    "work id": "work",
 }
 
 _RG_VORBIS = {
@@ -745,12 +760,14 @@ class MutagenBackend:
                 continue
             raw = getattr(value[0], "value", value[0]) if value else None
             if isinstance(raw, str):
-                metadata.musicbrainz_ids[key.split("/", 1)[1]] = raw
+                suffix = key.split("/", 1)[1].lower()
+                metadata.musicbrainz_ids[_ASF_MB_KEYS.get(suffix, suffix)] = raw
 
         video = metadata.video
         if video is not None:
             video.director = values("wm/director")
             video.writer = values("wm/writer")
+            video.synopsis = text("wm/description")
 
         asf_picture = items.get("wm/picture")
         if asf_picture:

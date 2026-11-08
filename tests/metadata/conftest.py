@@ -75,6 +75,7 @@ def media_dir(ffmpeg: str, tmp_path_factory: pytest.TempPathFactory) -> Path:
     make("sample.opus", "-f", "lavfi", "-i", audio, "-c:a", "libopus")
     make("sample.m4a", "-f", "lavfi", "-i", audio, "-c:a", "aac")
     make("sample.wma", "-f", "lavfi", "-i", audio, "-c:a", "wmav2")
+    make("sample.wv", "-f", "lavfi", "-i", audio, "-c:a", "wavpack")
     make("sample.wav", "-f", "lavfi", "-i", audio, "-c:a", "pcm_s16le")
     make("sample.aiff", "-f", "lavfi", "-i", audio, "-c:a", "pcm_s16be")
     make(

@@ -39,10 +39,11 @@ print(report.written, report.skipped)
 ```
 
 Writing is currently supported for MP3/AAC, FLAC, OGG, MP4/M4A, WAV, AIFF,
-DSF/DFF, MKV, AVI and FLV. Writes are atomic by default: tags are applied to a
-temporary copy, verified by re-reading, and only then replace the original.
-Pass `WritePolicy(remove_missing=True)` to delete fields instead of leaving
-them untouched, or `WritePolicy(write_legacy=True)` to also write an ID3v1
+DSF/DFF, ASF/WMA/WMV, APE/WavPack/Musepack/TTA, MKV, AVI and FLV. Writes are
+atomic by default: tags are applied to a temporary copy, verified by
+re-reading, and only then replace the original. Pass
+`WritePolicy(remove_missing=True)` to delete fields instead of leaving them
+untouched, or `WritePolicy(write_legacy=True)` to also write an ID3v1
 compatibility block for MP3/AAC.
 
 Matroska/WebM, AVI, FLV and MPEG-TS/PS are read through `ffprobe` when it is

@@ -22,6 +22,7 @@ from typing import Any
 
 import mutagen
 from mutagen import MutagenError
+from mutagen.asf import ASF, ASFByteArrayAttribute
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import APIC, COMM, TIPL, TXXX, USLT, ID3
 from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm, MP4Tags
@@ -52,6 +53,13 @@ _ID3_CONTAINERS = {
     ContainerFormat.AIFF,
     ContainerFormat.DSF,
     ContainerFormat.DFF,
+}
+
+_APE_CONTAINERS = {
+    ContainerFormat.APE,
+    ContainerFormat.WAVPACK,
+    ContainerFormat.MUSEPACK,
+    ContainerFormat.TTA,
 }
 
 _MB_ID3_DESCRIPTIONS = {
@@ -86,6 +94,16 @@ _RG_VORBIS_KEYS = {
     "album_gain": "REPLAYGAIN_ALBUM_GAIN",
     "track_peak": "REPLAYGAIN_TRACK_PEAK",
     "album_peak": "REPLAYGAIN_ALBUM_PEAK",
+}
+
+_ASF_MB_KEYS = {
+    "track": "MusicBrainz/Track Id",
+    "album": "MusicBrainz/Album Id",
+    "artist": "MusicBrainz/Artist Id",
+    "album_artist": "MusicBrainz/Album Artist Id",
+    "release_group": "MusicBrainz/Release Group Id",
+    "release_track": "MusicBrainz/Release Track Id",
+    "work": "MusicBrainz/Work Id",
 }
 
 _MB_MP4_NAMES = {
@@ -176,6 +194,12 @@ def _write_in_place(
         audio_file.save()
     elif detected.container == ContainerFormat.MP4:
         _write_mp4(audio_file, metadata, policy, report)
+        audio_file.save()
+    elif detected.container in _APE_CONTAINERS:
+        _write_ape(audio_file, metadata, policy, report)
+        audio_file.save()
+    elif detected.container == ContainerFormat.ASF:
+        _write_asf(audio_file, metadata, policy, report)
         audio_file.save()
     else:
         raise UnsupportedFormatError(str(path))
@@ -862,6 +886,143 @@ def _mp4_freeform(
     elif policy.remove_missing:
         _delete_tag(tags, key)
         report.written.append(field)
+
+
+# ----------------------------------------------------------------------
+# APEv2 (APE, WavPack, Musepack, TrueAudio)
+# ----------------------------------------------------------------------
+
+
+def _write_ape(audio_file, metadata: MediaMetadata, policy: WritePolicy, report: WriteReport) -> None:
+    if audio_file.tags is None:
+        audio_file.add_tags()
+    tags = audio_file.tags
+    if tags is None:
+        raise UnsupportedFormatError("APEv2 tag could not be created")
+
+    def add(key: str, value: str | None, field: str) -> None:
+        if value is not None:
+            tags[key] = str(value)
+            report.written.append(field)
+        elif policy.remove_missing:
+            _delete_tag(tags, key)
+
+    artists = metadata.artists or ([metadata.artist] if metadata.artist else [])
+    add("Title", metadata.title, "title")
+    add("Artist", _join(artists), "artists")
+    add("Album", metadata.audio.album if metadata.audio else None, "audio.album")
+    add("Album Artist", metadata.audio.album_artist if metadata.audio else None, "audio.album_artist")
+    add("Track", _number_pair(metadata.audio.track_number, metadata.audio.track_total) if metadata.audio else None, "audio.track")
+    add("Disc", _number_pair(metadata.audio.disc_number, metadata.audio.disc_total) if metadata.audio else None, "audio.disc")
+    add("Year", str(metadata.date) if metadata.date else None, "date")
+    add("Genre", _join(metadata.genre), "genre")
+    add("Comment", metadata.comment, "comment")
+    add("Composer", _join(metadata.composer), "composer")
+    add("Lyricist", _join(metadata.lyricist), "lyricist")
+    add("Conductor", _join(metadata.conductor), "conductor")
+    add("Lyrics", metadata.lyrics.text if metadata.lyrics else None, "lyrics")
+    add("Producer", _join(metadata.producer), "producer")
+    add("Copyright", metadata.copyright, "copyright")
+    add("Language", metadata.language, "language")
+    add("Grouping", metadata.grouping, "grouping")
+    add("Label", metadata.audio.label if metadata.audio else None, "audio.label")
+    add("ISRC", metadata.audio.isrc if metadata.audio else None, "audio.isrc")
+    add("BPM", str(metadata.audio.bpm) if metadata.audio and metadata.audio.bpm is not None else None, "audio.bpm")
+    add("Initial Key", metadata.audio.key if metadata.audio else None, "audio.key")
+    if metadata.audio:
+        add(
+            "Compilation",
+            "1" if metadata.audio.compilation else "0"
+            if metadata.audio.compilation is not None
+            else None,
+            "audio.compilation",
+        )
+        for name, key in _RG_VORBIS_KEYS.items():
+            value = metadata.audio.replaygain.get(name)
+            add(key, f"{value:.2f} dB" if value is not None else None, f"audio.replaygain.{name}")
+    for name, key in _MB_VORBIS_KEYS.items():
+        add(key, metadata.musicbrainz_ids.get(name), f"musicbrainz_ids.{name}")
+
+    if _artwork(metadata) or policy.remove_missing:
+        _delete_tag(tags, "Cover Art (Front)")
+        image = next(iter(_artwork(metadata)), None)
+        if image is not None:
+            suffix = ".png" if image.mime == "image/png" else ".jpg"
+            tags["Cover Art (Front)"] = (
+                f"cover{suffix}".encode("utf-8") + b"\x00" + image.data
+            )
+        report.written.append("artwork")
+
+
+# ----------------------------------------------------------------------
+# ASF (WMA/WMV)
+# ----------------------------------------------------------------------
+
+
+def _write_asf(audio_file: ASF, metadata: MediaMetadata, policy: WritePolicy, report: WriteReport) -> None:
+    if audio_file.tags is None:
+        audio_file.add_tags()
+    tags = audio_file.tags
+    if tags is None:
+        raise UnsupportedFormatError("ASF tag could not be created")
+
+    def add(key: str, value: str | None, field: str) -> None:
+        if value is not None:
+            tags[key] = str(value)
+            report.written.append(field)
+        elif policy.remove_missing:
+            _delete_tag(tags, key)
+
+    artists = metadata.artists or ([metadata.artist] if metadata.artist else [])
+    add("Title", metadata.title, "title")
+    add("Author", _join(artists), "artists")
+    add("Copyright", metadata.copyright, "copyright")
+    add("Description", metadata.comment, "comment")
+    add("WM/AlbumTitle", metadata.audio.album if metadata.audio else None, "audio.album")
+    add("WM/AlbumArtist", metadata.audio.album_artist if metadata.audio else None, "audio.album_artist")
+    add("WM/TrackNumber", _number_pair(metadata.audio.track_number, metadata.audio.track_total) if metadata.audio else None, "audio.track")
+    add("WM/PartOfSet", _number_pair(metadata.audio.disc_number, metadata.audio.disc_total) if metadata.audio else None, "audio.disc")
+    add("WM/Year", str(metadata.date) if metadata.date else None, "date")
+    add("WM/Genre", _join(metadata.genre), "genre")
+    add("WM/Composer", _join(metadata.composer), "composer")
+    add("WM/Conductor", _join(metadata.conductor), "conductor")
+    add("WM/Writer", _join(metadata.lyricist), "lyricist")
+    add("WM/Lyrics", metadata.lyrics.text if metadata.lyrics else None, "lyrics")
+    add("WM/Publisher", metadata.audio.label if metadata.audio else None, "audio.label")
+    add("WM/ISRC", metadata.audio.isrc if metadata.audio else None, "audio.isrc")
+    add("WM/BeatsPerMinute", str(metadata.audio.bpm) if metadata.audio and metadata.audio.bpm is not None else None, "audio.bpm")
+    add("WM/Language", metadata.language, "language")
+    if metadata.audio and metadata.audio.compilation is not None:
+        add("WM/IsCompilation", "1" if metadata.audio.compilation else "0", "audio.compilation")
+    if metadata.video is not None:
+        add("WM/Director", _join(metadata.video.director), "video.director")
+        add("WM/Description", metadata.video.synopsis, "video.synopsis")
+    for name, key in _ASF_MB_KEYS.items():
+        add(key, metadata.musicbrainz_ids.get(name), f"musicbrainz_ids.{name}")
+
+    if _artwork(metadata) or policy.remove_missing:
+        _delete_tag(tags, "WM/Picture")
+        image = next(iter(_artwork(metadata)), None)
+        if image is not None:
+            tags["WM/Picture"] = ASFByteArrayAttribute(_asf_picture_bytes(image))
+        report.written.append("artwork")
+
+
+def _asf_picture_bytes(image: Artwork) -> bytes:
+    mime = image.mime.encode("utf-16-le")
+    description = (image.description or "").encode("utf-16-le")
+    return b"".join(
+        [
+            bytes([_picture_type(image.kind)]),
+            struct.pack("<I", len(image.data)),
+            struct.pack("<I", len(mime)),
+            mime,
+            b"\x00\x00",
+            description,
+            b"\x00\x00",
+            image.data,
+        ]
+    )
 
 
 # ----------------------------------------------------------------------
