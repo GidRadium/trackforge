@@ -12,6 +12,7 @@ uv run tfg --help
 uv run tfg info track.mp3
 uv run tfg info --json track.mp3
 uv run tfg set track.mp3 --title "New title" --album "New album"
+uv run tfg scan music/ --json
 uv run pytest
 ```
 

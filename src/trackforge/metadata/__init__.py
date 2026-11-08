@@ -8,6 +8,7 @@ Public entry point::
     print(media.title, media.audio.album)
 """
 
+from .batch import ScanResult, discover_media_files, read_many, scan
 from .capabilities import (
     Capabilities,
     FieldCapability,
@@ -70,6 +71,7 @@ __all__ = [
     "NoAudioStreamError",
     "NoVideoStreamError",
     "PartialDate",
+    "ScanResult",
     "TagSystem",
     "TrackForgeError",
     "UnsupportedFieldError",
@@ -79,7 +81,10 @@ __all__ = [
     "WritePolicy",
     "WriteReport",
     "WriteVerificationError",
+    "discover_media_files",
     "expected_tag_systems",
+    "read_many",
+    "scan",
     "sniff",
     "sniff_bytes",
 ]

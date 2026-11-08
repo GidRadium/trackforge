@@ -166,3 +166,24 @@ def test_set_help() -> None:
     assert result.exit_code == 0
     assert "--id3v23" in result.output
     assert "--strict" in result.output
+
+
+def test_scan_json(media_dir: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["scan", str(media_dir), "--json", "--workers", "2"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    mp3 = next(item for item in payload if item["path"].endswith("sample.mp3"))
+    assert mp3["ok"] is True
+    assert mp3["title"] == "MP3 Title"
+    assert any(item["path"].endswith("sample.mkv") for item in payload)
+
+
+def test_scan_empty_directory(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["scan", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "no media files" in result.output
