@@ -24,6 +24,11 @@ uv run pytest
 The `tfg` command is declared in `pyproject.toml` (`[project.scripts]`), so once
 the project is installed it is available directly, without `uv run`.
 
+## Known limitations
+
+See [docs/METADATA_LIMITATIONS.md](docs/METADATA_LIMITATIONS.md) for Matroska
+native tags, AVI/FLV artwork, ID3v2.3 dates and external tool requirements.
+
 ## Metadata API
 
 ```python
