@@ -7,6 +7,7 @@ run.
 
 from __future__ import annotations
 
+import shutil
 import wave
 from pathlib import Path
 
@@ -16,11 +17,13 @@ from trackforge.metadata import (
     MediaFile,
     MediaKind,
     MetadataReadError,
+    MetadataWriteError,
     NoAudioStreamError,
     NoVideoStreamError,
     PartialDate,
     UnsupportedFormatError,
     VideoMetadata,
+    WritePolicy,
 )
 
 
@@ -166,7 +169,7 @@ def test_capabilities(media_dir: Path) -> None:
     capabilities = media.capabilities
 
     assert capabilities is not None
-    assert capabilities.writable is False
+    assert capabilities.writable is True
     assert capabilities.supports("title")
     assert capabilities.supports("album")
     assert not capabilities.supports("season")
@@ -206,9 +209,148 @@ def test_unsupported_container(tmp_path: Path) -> None:
         MediaFile.open(path)
 
 
-def test_save_is_not_implemented(media_dir: Path) -> None:
-    media = MediaFile.open(media_dir / "sample.mp3")
-    with pytest.raises(NotImplementedError):
+def test_write_mp3(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+    media = MediaFile.open(target)
+    media.title = "Written Title"
+    media.comment = "Written Comment"
+    media.require_audio().album = "Written Album"
+    media.require_audio().track_number = 9
+    media.require_audio().track_total = 9
+
+    report = media.save()
+
+    assert report.backend == "mutagen"
+    assert not report.lossy
+    assert "title" in report.written
+    assert "audio.album" in report.written
+    assert report.bytes_before > 0
+
+    updated = MediaFile.open(target)
+    assert updated.title == "Written Title"
+    assert updated.comment == "Written Comment"
+    assert updated.require_audio().album == "Written Album"
+    assert (updated.audio.track_number, updated.audio.track_total) == (9, 9)
+    assert updated.artwork.front is not None
+
+
+def test_write_flac(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy.flac"
+    shutil.copy2(media_dir / "sample.flac", target)
+    media = MediaFile.open(target)
+    media.title = "Written FLAC"
+    media.require_audio().album = "Written FLAC Album"
+    media.require_audio().track_number = 8
+    media.date = PartialDate(2030, 1, 2)
+
+    report = media.save()
+
+    assert "title" in report.written
+    assert "audio.album" in report.written
+    updated = MediaFile.open(target)
+    assert updated.title == "Written FLAC"
+    assert updated.require_audio().album == "Written FLAC Album"
+    assert updated.require_audio().track_number == 8
+    assert updated.date == PartialDate(2030, 1, 2)
+    assert updated.artwork.front is not None
+
+
+def test_write_ogg(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy.ogg"
+    shutil.copy2(media_dir / "sample.ogg", target)
+    media = MediaFile.open(target)
+    media.title = "Written OGG"
+    media.artists = ["Written Artist"]
+    media.lyrics = None
+
+    report = media.save()
+
+    assert "title" in report.written
+    updated = MediaFile.open(target)
+    assert updated.title == "Written OGG"
+    assert updated.artists == ["Written Artist"]
+
+
+def test_write_m4a(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy.m4a"
+    shutil.copy2(media_dir / "sample.m4a", target)
+    media = MediaFile.open(target)
+    media.title = "Written M4A"
+    media.require_audio().album = "Written M4A Album"
+    media.require_audio().bpm = 99
+    media.require_audio().compilation = False
+
+    report = media.save()
+
+    assert "title" in report.written
+    assert "audio.bpm" in report.written
+    updated = MediaFile.open(target)
+    assert updated.title == "Written M4A"
+    assert updated.require_audio().album == "Written M4A Album"
+    assert updated.require_audio().bpm == 99
+    assert updated.require_audio().compilation is False
+
+
+def test_write_mp4_video(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy.mp4"
+    shutil.copy2(media_dir / "sample.mp4", target)
+    media = MediaFile.open(target)
+    media.require_video().show = "Written Show"
+    media.require_video().season = 4
+    media.require_video().episode = 5
+    media.require_video().director = ["New Director"]
+
+    report = media.save()
+
+    assert "video.show" in report.written
+    updated = MediaFile.open(target)
+    assert updated.require_video().show == "Written Show"
+    assert (updated.video.season, updated.video.episode) == (4, 5)
+    assert updated.video.director == ["New Director"]
+
+
+def test_write_in_place(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy-in-place.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+    media = MediaFile.open(target)
+    media.title = "In-place Title"
+
+    report = media.save(policy=WritePolicy(atomic=False))
+
+    assert "title" in report.written
+    assert MediaFile.open(target).title == "In-place Title"
+
+
+def test_remove_missing_field(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy-remove.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+    media = MediaFile.open(target)
+    media.comment = None
+
+    report = media.save(policy=WritePolicy(remove_missing=True))
+
+    assert "comment" in report.written
+    updated = MediaFile.open(target)
+    assert updated.comment is None
+
+
+def test_save_without_source() -> None:
+    media = MediaFile()
+    with pytest.raises(MetadataWriteError):
+        media.save()
+
+
+def test_read_only_wav_cannot_save(tmp_path: Path) -> None:
+    path = tmp_path / "silence.wav"
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(8000)
+        handle.writeframes(b"\x00\x00" * 8)
+
+    media = MediaFile.open(path)
+    with pytest.raises(UnsupportedFormatError):
         media.save()
 
 

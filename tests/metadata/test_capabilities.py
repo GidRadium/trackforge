@@ -59,6 +59,8 @@ def test_write_policy_defaults() -> None:
     assert policy.write_legacy is False
     assert policy.preserve_unknown is True
     assert policy.verify is True
+    assert policy.remove_missing is False
+    assert policy.atomic is True
 
 
 def test_write_report_lossy() -> None:

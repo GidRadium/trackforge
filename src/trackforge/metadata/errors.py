@@ -20,6 +20,15 @@ class MetadataReadError(MetadataError):
         super().__init__(f"cannot read metadata from {path}: {reason}")
 
 
+class MetadataWriteError(MetadataError):
+    """A container was recognized but its tags could not be written."""
+
+    def __init__(self, path: str, reason: str) -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(f"cannot write metadata to {path}: {reason}")
+
+
 class UnsupportedFormatError(MetadataError):
     """The file's container is not supported by any registered backend."""
 

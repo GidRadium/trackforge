@@ -36,7 +36,12 @@ from mutagen.trueaudio import TrueAudio
 from mutagen.wave import WAVE
 from mutagen.wavpack import WavPack
 
-from ..capabilities import Capabilities, standard_capabilities
+from ..capabilities import (
+    Capabilities,
+    WritePolicy,
+    WriteReport,
+    standard_capabilities,
+)
 from ..errors import MetadataReadError, UnsupportedFormatError
 from ..formats import ContainerFormat, DetectedFormat, TagSystem
 from ..model import (
@@ -85,8 +90,17 @@ _OGG_CLASSES: dict[str, type[Any]] = {
     "theora": OggTheora,
 }
 
-_TAG_SYSTEMS: dict[ContainerFormat, TagSystem] = {
-    ContainerFormat.MP3: TagSystem.ID3V2,
+WRITABLE_CONTAINERS = frozenset(
+    {
+        ContainerFormat.MP3,
+        ContainerFormat.AAC,
+        ContainerFormat.FLAC,
+        ContainerFormat.OGG,
+        ContainerFormat.MP4,
+    }
+)
+
+_TAG_SYSTEMS: dict[ContainerFormat, TagSystem] = {    ContainerFormat.MP3: TagSystem.ID3V2,
     ContainerFormat.AAC: TagSystem.ID3V2,
     ContainerFormat.FLAC: TagSystem.VORBIS_COMMENT,
     ContainerFormat.OGG: TagSystem.VORBIS_COMMENT,
@@ -102,8 +116,7 @@ _TAG_SYSTEMS: dict[ContainerFormat, TagSystem] = {
     ContainerFormat.DFF: TagSystem.ID3V2,
 }
 
-_MB_TXXX = {
-    "musicbrainz track id": "track",
+_MB_TXXX = {    "musicbrainz track id": "track",
     "musicbrainz album id": "album",
     "musicbrainz artist id": "artist",
     "musicbrainz album artist id": "album_artist",
@@ -135,6 +148,23 @@ _RG_VORBIS = {
     "replaygain_track_peak": "track_peak",
     "replaygain_album_peak": "album_peak",
 }
+
+
+def open_audio_file(path: Path, detected: DetectedFormat) -> Any:
+    """Open ``path`` with the mutagen class selected by ``detected``."""
+    if detected.container == ContainerFormat.OGG:
+        file_class = _OGG_CLASSES.get(detected.codec or "")
+        if file_class is None:
+            raise UnsupportedFormatError(str(path))
+    else:
+        file_class = _FILE_CLASSES.get(detected.container)
+        if file_class is None:
+            raise UnsupportedFormatError(str(path))
+
+    try:
+        return file_class(path)
+    except (MutagenError, OSError, ValueError) as exc:
+        raise MetadataReadError(str(path), str(exc)) from exc
 
 
 class MutagenBackend:
@@ -178,23 +208,23 @@ class MutagenBackend:
             arbitrary_keys=tag_system
             in {TagSystem.ID3V2, TagSystem.VORBIS_COMMENT, TagSystem.APEV2, TagSystem.MP4_ILST},
             artwork=True,
-            writable=False,
+            writable=container in WRITABLE_CONTAINERS,
         )
 
-    def _open(self, path: Path, detected: DetectedFormat) -> Any:
-        if detected.container == ContainerFormat.OGG:
-            file_class = _OGG_CLASSES.get(detected.codec or "")
-            if file_class is None:
-                raise UnsupportedFormatError(str(path))
-        else:
-            file_class = _FILE_CLASSES.get(detected.container)
-            if file_class is None:
-                raise UnsupportedFormatError(str(path))
+    def write(
+        self,
+        path: Path,
+        detected: DetectedFormat,
+        metadata: MediaMetadata,
+        *,
+        policy: WritePolicy,
+    ) -> WriteReport:
+        from .mutagen_write import write_file
 
-        try:
-            return file_class(path)
-        except (MutagenError, OSError, ValueError) as exc:
-            raise MetadataReadError(str(path), str(exc)) from exc
+        return write_file(self, path, detected, metadata, policy=policy)
+
+    def _open(self, path: Path, detected: DetectedFormat) -> Any:
+        return open_audio_file(path, detected)
 
     @staticmethod
     def _init_facets(metadata: MediaMetadata, detected: DetectedFormat) -> None:
@@ -493,12 +523,13 @@ class MutagenBackend:
             if not values:
                 continue
             lower = name.lower()
+            rg_key = lower.replace(" ", "_")
             if lower in _MB_TXXX:
                 metadata.musicbrainz_ids[_MB_TXXX[lower]] = values[0]
-            elif lower in _RG_TXXX and audio is not None:
+            elif rg_key in _RG_TXXX and audio is not None:
                 gain = parse_gain(values[0])
                 if gain is not None:
-                    audio.replaygain[_RG_TXXX[lower]] = gain
+                    audio.replaygain[_RG_TXXX[rg_key]] = gain
             elif lower == "artists":
                 metadata.artists.extend(values)
             elif lower == "conductor":

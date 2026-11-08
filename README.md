@@ -30,3 +30,15 @@ print(media.artwork.front)
 
 `MediaFile.open` detects the container by magic bytes. Audio, video and
 artwork are optional facets, so `media.audio` / `media.video` may be `None`.
+
+```python
+media.title = "New title"
+media.audio.album = "New album"
+report = media.save()
+print(report.written, report.skipped)
+```
+
+Writing is currently supported for MP3/AAC, FLAC, OGG and MP4/M4A. Writes are
+atomic by default: tags are applied to a temporary copy, verified by re-reading,
+and only then replace the original. Pass `WritePolicy(remove_missing=True)` to
+delete fields instead of leaving them untouched.

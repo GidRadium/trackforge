@@ -12,7 +12,12 @@ from pathlib import Path
 
 from .backends.base import MetadataBackend
 from .capabilities import Capabilities, WritePolicy, WriteReport
-from .errors import NoAudioStreamError, NoVideoStreamError
+from .errors import (
+    MetadataWriteError,
+    NoAudioStreamError,
+    NoVideoStreamError,
+    UnsupportedFormatError,
+)
 from .formats import ContainerFormat, DetectedFormat, sniff
 from .model import (
     ArtworkCollection,
@@ -91,10 +96,24 @@ class MediaFile(MediaMetadata):
     def save(self, *, policy: WritePolicy | None = None) -> WriteReport:
         """Write changes back to the file.
 
-        Writing is the next implementation step; the method exists now so the
-        facade's shape is stable.
+        ``None``/empty values are left untouched by default; pass
+        ``WritePolicy(remove_missing=True)`` to delete them.  The write is
+        atomic by default: tags are applied to a temporary copy and the
+        original is replaced only after verification succeeds.
         """
-        raise NotImplementedError("metadata writing is not implemented yet")
+        if self.path is None or self.detected is None or self._backend is None:
+            raise MetadataWriteError("<memory>", "no source file to write")
+        write = getattr(self._backend, "write", None)
+        if write is None:
+            raise UnsupportedFormatError(str(self.path))
+        report = write(
+            self.path,
+            self.detected,
+            self,
+            policy=policy or WritePolicy(),
+        )
+        self.warnings.extend(report.warnings)
+        return report
 
     def __repr__(self) -> str:
         title = self.title or "<untitled>"

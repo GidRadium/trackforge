@@ -110,12 +110,16 @@ class WritePolicy:
 
     ``SKIP`` is the friendly default: write what fits and return the rest in
     :class:`WriteReport`.  ``ERROR`` makes loss explicit and refuses to write.
+    ``remove_missing`` treats ``None``/empty fields as deletions; it is off by
+    default so a partially populated object cannot erase a file's tags.
     """
 
     on_unsupported: UnsupportedPolicy = UnsupportedPolicy.SKIP
     write_legacy: bool = False
     preserve_unknown: bool = True
     verify: bool = True
+    remove_missing: bool = False
+    atomic: bool = True
 
 
 @dataclass(slots=True)

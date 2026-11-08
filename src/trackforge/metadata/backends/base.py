@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from ..capabilities import Capabilities
+from ..capabilities import Capabilities, WritePolicy, WriteReport
 from ..formats import ContainerFormat, DetectedFormat
 from ..model import Artwork, MediaMetadata
 
@@ -36,4 +36,19 @@ class MetadataBackend(Protocol):
 
     def capabilities(self, container: ContainerFormat) -> Capabilities:
         """Describe what the backend can store for ``container``."""
+        ...
+
+
+class WritableMetadataBackend(MetadataBackend, Protocol):
+    """A backend that can write normalized metadata back to a file."""
+
+    def write(
+        self,
+        path: Path,
+        detected: DetectedFormat,
+        metadata: MediaMetadata,
+        *,
+        policy: WritePolicy,
+    ) -> WriteReport:
+        """Write ``metadata`` and return a report of what happened."""
         ...
