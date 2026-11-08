@@ -46,6 +46,21 @@ _ID3_PICTURE_TYPE = {
     ArtworkKind.OTHER: 0,
 }
 
+_SKIP_EXTRA = {
+    "encoder",
+    "encodedby",
+    "encodersettings",
+    "software",
+    "duration",
+    "creation_time",
+    "handler_name",
+    "vendor_id",
+    "major_brand",
+    "minor_version",
+    "compatible_brands",
+    "media_type",
+}
+
 _ID3_CONTAINERS = {
     ContainerFormat.MP3,
     ContainerFormat.AAC,
@@ -269,6 +284,9 @@ def _write_id3(
     _id3_producer(tags, metadata, policy, report)
     _id3_musicbrainz(tags, metadata, policy, report)
     _id3_replaygain(tags, metadata, policy, report)
+    if policy.write_extra:
+        for key, values in _extra_items(metadata):
+            _id3_txxx_values(tags, key, values, f"extra.{key}", report)
     _id3_artwork(tags, _artwork(metadata), policy, report)
 
     audio = metadata.audio
@@ -384,6 +402,26 @@ def _downgrade_id3(tags: ID3 | None, metadata: MediaMetadata) -> None:
     tags.add(TYER(encoding=Encoding.UTF16, text=[f"{date.year:04d}"]))
     if date.month is not None and date.day is not None:
         tags.add(TDAT(encoding=Encoding.UTF16, text=[f"{date.day:02d}{date.month:02d}"]))
+
+
+def _extra_items(metadata: MediaMetadata):
+    return (
+        (key, values)
+        for key, values in metadata.extra.items()
+        if values and key.lower() not in _SKIP_EXTRA
+    )
+
+
+def _id3_txxx_values(
+    tags: ID3,
+    description: str,
+    values: list[str],
+    field: str,
+    report: WriteReport,
+) -> None:
+    tags.delall(f"TXXX:{description}")
+    tags.add(TXXX(encoding=3, desc=description, text=list(values)))
+    report.written.append(field)
 
 
 def _replace_id3_comment(tags: ID3, value: str | None, report: WriteReport) -> None:
@@ -651,6 +689,11 @@ def _write_vorbis_common(
             report,
         )
 
+    if policy.write_extra:
+        for key, values in _extra_items(metadata):
+            tags[key] = values
+            report.written.append(f"extra.{key}")
+
 
 def _write_vorbis_audio(
     tags,
@@ -900,6 +943,13 @@ def _write_mp4(
         value = metadata.musicbrainz_ids.get(name)
         _mp4_freeform(tags, description, value, f"musicbrainz_ids.{name}", policy, report)
 
+    if policy.write_extra:
+        for key, values in _extra_items(metadata):
+            tags[f"----:com.apple.iTunes:{key}"] = [
+                MP4FreeForm(value.encode("utf-8")) for value in values
+            ]
+            report.written.append(f"extra.{key}")
+
     if _artwork(metadata) or policy.remove_missing:
         tags.pop("covr", None)
         if _artwork(metadata):
@@ -1023,6 +1073,13 @@ def _write_ape(audio_file, metadata: MediaMetadata, policy: WritePolicy, report:
             add(key, f"{value:.2f} dB" if value is not None else None, f"audio.replaygain.{name}")
     for name, key in _MB_VORBIS_KEYS.items():
         add(key, metadata.musicbrainz_ids.get(name), f"musicbrainz_ids.{name}")
+    if policy.write_extra:
+        for key, values in _extra_items(metadata):
+            add(key, "; ".join(values), f"extra.{key}")
+            if len(values) > 1:
+                report.coerced.append(
+                    (f"extra.{key}", "joined multiple values with '; '")
+                )
 
     if _artwork(metadata) or policy.remove_missing:
         _delete_tag(tags, "Cover Art (Front)")
@@ -1083,6 +1140,13 @@ def _write_asf(audio_file: ASF, metadata: MediaMetadata, policy: WritePolicy, re
         add("WM/Description", metadata.video.synopsis, "video.synopsis")
     for name, key in _ASF_MB_KEYS.items():
         add(key, metadata.musicbrainz_ids.get(name), f"musicbrainz_ids.{name}")
+    if policy.write_extra:
+        for key, values in _extra_items(metadata):
+            add(key, "; ".join(values), f"extra.{key}")
+            if len(values) > 1:
+                report.coerced.append(
+                    (f"extra.{key}", "joined multiple values with '; '")
+                )
 
     if _artwork(metadata) or policy.remove_missing:
         _delete_tag(tags, "WM/Picture")

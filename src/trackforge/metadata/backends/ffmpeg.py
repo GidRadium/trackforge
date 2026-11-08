@@ -65,6 +65,21 @@ _MUXERS = {
     ContainerFormat.FLV: "flv",
 }
 
+_SKIP_EXTRA = {
+    "encoder",
+    "encodedby",
+    "encodersettings",
+    "software",
+    "duration",
+    "creation_time",
+    "handler_name",
+    "vendor_id",
+    "major_brand",
+    "minor_version",
+    "compatible_brands",
+    "media_type",
+}
+
 _AVI_FIELDS = {
     "title",
     "artists",
@@ -631,6 +646,11 @@ class FfmpegBackend:
         for name, key in _MB_KEYS.items():
             add(key, metadata.musicbrainz_ids.get(name), f"musicbrainz_ids.{name}")
 
+        if policy.write_extra:
+            for key, values in metadata.extra.items():
+                if values and key.lower() not in _SKIP_EXTRA:
+                    add(key, "; ".join(values), f"extra.{key}")
+
         return args
 
     def _verify(
@@ -657,6 +677,9 @@ class FfmpegBackend:
             if field == "lyrics" or field.endswith(".lyrics"):
                 expected_value = expected_value.text if expected_value else None
                 actual_value = actual_value.text if actual_value else None
+            if field.startswith("extra.") and isinstance(expected_value, list) and isinstance(actual_value, list):
+                if len(actual_value) == 1 and "; ".join(expected_value) == actual_value[0]:
+                    continue
             if expected_value != actual_value:
                 mismatches.append(f"{field}: {expected_value!r} != {actual_value!r}")
         if mismatches:

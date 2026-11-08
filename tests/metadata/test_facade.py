@@ -469,6 +469,45 @@ def test_write_wavpack_artwork(tmp_path: Path, media_dir: Path) -> None:
     assert updated.artwork.front.data == b"pngdata"
 
 
+def test_write_extra_mp3(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "extra.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+    media = MediaFile.open(target)
+    media.extra["custom_note"] = ["one", "two"]
+
+    report = media.save(policy=WritePolicy(write_extra=True))
+
+    assert "extra.custom_note" in report.written
+    updated = MediaFile.open(target)
+    assert updated.extra["custom_note"] == ["one", "two"]
+
+
+def test_write_extra_m4a(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "extra.m4a"
+    shutil.copy2(media_dir / "sample.m4a", target)
+    media = MediaFile.open(target)
+    media.extra["custom_note"] = ["one", "two"]
+
+    report = media.save(policy=WritePolicy(write_extra=True))
+
+    assert "extra.custom_note" in report.written
+    updated = MediaFile.open(target)
+    assert updated.extra["custom_note"] == ["one", "two"]
+
+
+def test_write_extra_mkv(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "extra.mkv"
+    shutil.copy2(media_dir / "sample.mkv", target)
+    media = MediaFile.open(target)
+    media.extra["custom_note"] = ["one", "two"]
+
+    report = media.save(policy=WritePolicy(write_extra=True))
+
+    assert "extra.custom_note" in report.written
+    updated = MediaFile.open(target)
+    assert updated.extra["custom_note"] == ["one; two"]
+
+
 def test_capabilities(media_dir: Path) -> None:
     media = MediaFile.open(media_dir / "sample.mp3")
     capabilities = media.capabilities

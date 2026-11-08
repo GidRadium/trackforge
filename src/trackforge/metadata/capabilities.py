@@ -124,6 +124,7 @@ class WritePolicy:
     remove_missing: bool = False
     atomic: bool = True
     id3_version: int = 4
+    write_extra: bool = False
 
     def __post_init__(self) -> None:
         if self.id3_version not in (3, 4):
