@@ -52,6 +52,7 @@ from ..model import (
     VideoMetadata,
 )
 from ..normalize import (
+    ID3_GENRES,
     clean_text,
     first_text,
     parse_bool,
@@ -181,20 +182,26 @@ class MutagenBackend:
         warnings: list[str] = []
 
         tags = audio_file.tags
-        if tags is None:
+        fallback_found = False
+        if tags:
+            if isinstance(tags, ID3):
+                self._read_id3(tags, metadata, artwork)
+            elif isinstance(tags, APEv2):
+                self._read_ape(tags, metadata, artwork)
+            elif isinstance(tags, VCommentDict):
+                self._read_vorbis(tags, audio_file, metadata, artwork)
+            elif isinstance(tags, MP4Tags):
+                self._read_mp4(tags, metadata, artwork)
+            elif isinstance(tags, ASFTags):
+                self._read_asf(tags, metadata, artwork)
+            else:
+                warnings.append(f"unsupported tag container: {type(tags).__name__}")
+
+        if detected.container in {ContainerFormat.MP3, ContainerFormat.AAC}:
+            fallback_found = self._read_legacy(path, metadata, artwork)
+
+        if not tags and not fallback_found:
             warnings.append("no tags found")
-        elif isinstance(tags, ID3):
-            self._read_id3(tags, metadata, artwork)
-        elif isinstance(tags, APEv2):
-            self._read_ape(tags, metadata, artwork)
-        elif isinstance(tags, VCommentDict):
-            self._read_vorbis(tags, audio_file, metadata, artwork)
-        elif isinstance(tags, MP4Tags):
-            self._read_mp4(tags, metadata, artwork)
-        elif isinstance(tags, ASFTags):
-            self._read_asf(tags, metadata, artwork)
-        else:
-            warnings.append(f"unsupported tag container: {type(tags).__name__}")
 
         return ReadResult(metadata=metadata, artwork=artwork, warnings=warnings)
 
@@ -225,6 +232,35 @@ class MutagenBackend:
 
     def _open(self, path: Path, detected: DetectedFormat) -> Any:
         return open_audio_file(path, detected)
+
+    def _read_legacy(
+        self,
+        path: Path,
+        metadata: MediaMetadata,
+        artwork: list[Artwork],
+    ) -> bool:
+        """Read APEv2/ID3v1 fallbacks for MP3/AAC files."""
+        found = False
+
+        try:
+            ape_tags = APEv2(path)
+        except (MutagenError, OSError, ValueError):
+            ape_tags = None
+        if ape_tags:
+            temp = MediaMetadata()
+            temp.audio = AudioMetadata()
+            temp_artwork: list[Artwork] = []
+            self._read_ape(ape_tags, temp, temp_artwork)
+            _merge_missing(metadata, temp)
+            if not artwork:
+                artwork.extend(temp_artwork)
+            found = True
+
+        id3v1 = _read_id3v1(path)
+        if id3v1 is not None:
+            _merge_missing(metadata, id3v1)
+            found = True
+        return found
 
     @staticmethod
     def _init_facets(metadata: MediaMetadata, detected: DetectedFormat) -> None:
@@ -726,6 +762,81 @@ class MutagenBackend:
 # ----------------------------------------------------------------------
 
 
+def _merge_missing(target: MediaMetadata, source: MediaMetadata) -> None:
+    """Fill only empty fields of ``target`` from a lower-priority tag system."""
+    common_scalars = (
+        "title", "title_sort", "artist", "artist_sort", "date", "comment",
+        "copyright", "language", "grouping",
+    )
+    for name in common_scalars:
+        if getattr(target, name) is None and getattr(source, name) is not None:
+            setattr(target, name, getattr(source, name))
+
+    common_lists = ("artists", "genre", "composer", "lyricist", "conductor", "producer")
+    for name in common_lists:
+        if not getattr(target, name) and getattr(source, name):
+            setattr(target, name, list(getattr(source, name)))
+
+    if target.lyrics is None:
+        target.lyrics = source.lyrics
+    for name in ("musicbrainz_ids", "extra"):
+        target_value = getattr(target, name)
+        for key, value in getattr(source, name).items():
+            target_value.setdefault(key, value)
+
+    if target.audio is None:
+        target.audio = source.audio
+    elif source.audio is not None:
+        audio_scalars = (
+            "album", "album_sort", "album_artist", "album_artist_sort",
+            "track_number", "track_total", "disc_number", "disc_total",
+            "compilation", "label", "isrc", "bpm", "key",
+        )
+        for name in audio_scalars:
+            if getattr(target.audio, name) is None and getattr(source.audio, name) is not None:
+                setattr(target.audio, name, getattr(source.audio, name))
+        for key, value in source.audio.replaygain.items():
+            target.audio.replaygain.setdefault(key, value)
+
+
+def _read_id3v1(path: Path) -> MediaMetadata | None:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(-128, 2)
+            data = handle.read(128)
+    except (OSError, ValueError):
+        return None
+    if len(data) != 128 or data[:3] != b"TAG":
+        return None
+
+    def field(start: int, end: int) -> str | None:
+        return clean_text(data[start:end].decode("latin-1"))
+
+    comment_bytes = data[97:127]
+    track: int | None = None
+    if comment_bytes[28] == 0:
+        track = comment_bytes[29] or None
+        comment_bytes = comment_bytes[:28]
+
+    metadata = MediaMetadata()
+    metadata.title = field(3, 33)
+    metadata.artist = field(33, 63)
+    if metadata.artist:
+        metadata.artists = [metadata.artist]
+    metadata.date = parse_partial_date(field(93, 97))
+    metadata.comment = clean_text(comment_bytes.decode("latin-1"))
+
+    genre_index = data[127]
+    if 0 <= genre_index < len(ID3_GENRES):
+        metadata.genre = [ID3_GENRES[genre_index]]
+
+    metadata.audio = AudioMetadata(
+        album=field(63, 93),
+        track_number=track,
+    )
+    return metadata
+
+
 def _id3_text(tags: ID3, frame_id: str) -> str | None:
     frame = tags.get(frame_id)
     if frame is None:
@@ -752,13 +863,11 @@ def _id3_fallback_date(tags: ID3) -> str | None:
 
 def _id3_comment(tags: ID3) -> str | None:
     frames = tags.getall("COMM")
-    for frame in frames:
-        if not clean_text(frame.desc):
-            value = first_text(getattr(frame, "text", None))
-            if value is not None:
-                return value
-    if frames:
-        return first_text(getattr(frames[0], "text", None))
+    preferred = [frame for frame in frames if frame.lang == "eng" and not clean_text(frame.desc)]
+    for frame in preferred or frames:
+        value = first_text(getattr(frame, "text", None))
+        if value is not None:
+            return value
     return None
 
 
@@ -766,7 +875,8 @@ def _id3_lyrics(tags: ID3) -> Lyrics | None:
     frames = tags.getall("USLT")
     if not frames:
         return None
-    frame = frames[0]
+    preferred = [frame for frame in frames if frame.lang == "eng" and not clean_text(frame.desc)]
+    frame = (preferred or frames)[0]
     value = first_text(getattr(frame, "text", None))
     if value is None:
         return None

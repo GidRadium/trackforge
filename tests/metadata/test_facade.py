@@ -12,9 +12,13 @@ import wave
 from pathlib import Path
 
 import pytest
+from mutagen.apev2 import APEv2
+from mutagen.id3 import COMM, USLT
+from mutagen.mp3 import MP3
 
 from trackforge.metadata import (
     Artwork,
+    Lyrics,
     MediaFile,
     MediaKind,
     MetadataReadError,
@@ -265,6 +269,127 @@ def test_mpeg_ts_is_read_only(media_dir: Path) -> None:
     assert media.kind is MediaKind.AUDIO_VIDEO
     with pytest.raises(UnsupportedFormatError):
         media.save()
+
+
+@pytest.mark.skipif(shutil.which("ffprobe") is None, reason="ffprobe is required for stream probing")
+def test_mp4_video_only_has_no_audio(media_dir: Path) -> None:
+    media = MediaFile.open(media_dir / "sample-video-only.mp4")
+
+    assert media.kind is MediaKind.VIDEO
+    assert media.audio is None
+    assert media.video is not None
+    with pytest.raises(NoAudioStreamError):
+        media.require_audio()
+
+
+def _id3v1(
+    *,
+    title: str,
+    artist: str,
+    album: str,
+    year: str,
+    comment: str,
+    track: int,
+    genre: int = 17,
+) -> bytes:
+    def field(value: str, length: int) -> bytes:
+        return value.encode("latin-1")[:length].ljust(length, b"\x00")
+
+    return (
+        b"TAG"
+        + field(title, 30)
+        + field(artist, 30)
+        + field(album, 30)
+        + field(year, 4)
+        + field(comment, 28)
+        + b"\x00"
+        + bytes([track])
+        + bytes([genre])
+    )
+
+
+def test_mp3_id3v1_fallback(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "id3v1.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+    audio = MP3(target)
+    audio.delete()
+    audio.save()
+    with target.open("ab") as handle:
+        handle.write(
+            _id3v1(
+                title="ID3v1 Title",
+                artist="ID3v1 Artist",
+                album="ID3v1 Album",
+                year="1999",
+                comment="ID3v1 Comment",
+                track=7,
+            )
+        )
+
+    media = MediaFile.open(target)
+
+    assert media.title == "ID3v1 Title"
+    assert media.artist == "ID3v1 Artist"
+    assert media.date == PartialDate(1999)
+    assert media.genre == ["Rock"]
+    assert media.require_audio().album == "ID3v1 Album"
+    assert media.require_audio().track_number == 7
+    assert media.comment == "ID3v1 Comment"
+
+
+def test_mp3_apev2_fallback(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "apev2.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+    audio = MP3(target)
+    audio.delete()
+    audio.save()
+    tags = APEv2()
+    tags["Title"] = "APEv2 Title"
+    tags["Artist"] = "APEv2 Artist"
+    tags["Album"] = "APEv2 Album"
+    tags["Track"] = "5"
+    tags["Year"] = "2001"
+    tags["Genre"] = "Jazz"
+    tags.save(target)
+
+    media = MediaFile.open(target)
+
+    assert media.title == "APEv2 Title"
+    assert media.artist == "APEv2 Artist"
+    assert media.date == PartialDate(2001)
+    assert media.genre == ["Jazz"]
+    assert media.require_audio().album == "APEv2 Album"
+    assert media.require_audio().track_number == 5
+
+
+def test_write_preserves_other_id3_languages(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "languages.mp3"
+    shutil.copy2(media_dir / "sample.mp3", target)
+    audio = MP3(target)
+    assert audio.tags is not None
+    audio.tags.add(COMM(encoding=3, lang="fra", desc="", text=["Commentaire"]))
+    audio.tags.add(USLT(encoding=3, lang="fra", desc="", text="Paroles"))
+    audio.save()
+
+    media = MediaFile.open(target)
+    media.comment = "New English Comment"
+    media.lyrics = Lyrics(text="New English Lyrics", language="eng")
+    media.save()
+
+    tags = MP3(target).tags
+    assert tags is not None
+    comments = {
+        (frame.lang, frame.desc): list(frame.text)
+        for frame in tags.getall("COMM")
+    }
+    lyrics = {
+        (frame.lang, frame.desc): frame.text
+        for frame in tags.getall("USLT")
+    }
+    assert comments[("fra", "")] == ["Commentaire"]
+    assert comments[("eng", "")] == ["New English Comment"]
+    assert lyrics[("fra", "")] == "Paroles"
+    assert lyrics[("eng", "")] == "New English Lyrics"
 
 
 def test_capabilities(media_dir: Path) -> None:

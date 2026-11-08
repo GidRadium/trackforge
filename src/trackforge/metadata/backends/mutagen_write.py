@@ -33,7 +33,7 @@ from ..errors import (
     WriteVerificationError,
 )
 from ..formats import ContainerFormat, DetectedFormat
-from ..model import Artwork, ArtworkKind, MediaMetadata
+from ..model import Artwork, ArtworkKind, Lyrics, MediaMetadata
 from .mutagen import WRITABLE_CONTAINERS, open_audio_file
 
 _ID3_PICTURE_TYPE = {
@@ -198,30 +198,10 @@ def _write_id3(
     _id3_text(tags, "GRP1", metadata.grouping, "grouping", policy, report)
 
     if metadata.comment is not None or policy.remove_missing:
-        tags.delall("COMM")
-        if metadata.comment is not None:
-            tags.add(
-                COMM(
-                    encoding=3,
-                    lang="eng",
-                    desc="",
-                    text=[metadata.comment],
-                )
-            )
-        report.written.append("comment")
+        _replace_id3_comment(tags, metadata.comment, report)
 
     if metadata.lyrics is not None or policy.remove_missing:
-        tags.delall("USLT")
-        if metadata.lyrics is not None:
-            tags.add(
-                USLT(
-                    encoding=3,
-                    lang=metadata.lyrics.language or "eng",
-                    desc="",
-                    text=metadata.lyrics.text,
-                )
-            )
-        report.written.append("lyrics")
+        _replace_id3_lyrics(tags, metadata.lyrics, report)
 
     _id3_producer(tags, metadata, policy, report)
     _id3_musicbrainz(tags, metadata, policy, report)
@@ -318,6 +298,37 @@ def _id3_texts(
     elif policy.remove_missing:
         tags.delall(frame_id)
         report.written.append(field)
+
+
+def _replace_id3_comment(tags: ID3, value: str | None, report: WriteReport) -> None:
+    """Replace only the default English/empty-description comment."""
+    keys = [
+        frame.HashKey
+        for frame in tags.getall("COMM")
+        if frame.lang == "eng" and not (frame.desc or "")
+    ]
+    for key in keys:
+        tags.delall(key)
+    if value is not None:
+        tags.add(COMM(encoding=3, lang="eng", desc="", text=[value]))
+    if value is not None or keys:
+        report.written.append("comment")
+
+
+def _replace_id3_lyrics(tags: ID3, lyrics: Lyrics | None, report: WriteReport) -> None:
+    """Replace only the matching language/empty-description lyrics frame."""
+    language = (lyrics.language if lyrics is not None else None) or "eng"
+    keys = [
+        frame.HashKey
+        for frame in tags.getall("USLT")
+        if frame.lang == language and not (frame.desc or "")
+    ]
+    for key in keys:
+        tags.delall(key)
+    if lyrics is not None:
+        tags.add(USLT(encoding=3, lang=language, desc="", text=lyrics.text))
+    if lyrics is not None or keys:
+        report.written.append("lyrics")
 
 
 def _id3_producer(

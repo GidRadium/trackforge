@@ -81,6 +81,11 @@ def media_dir(ffmpeg: str, tmp_path_factory: pytest.TempPathFactory) -> Path:
         "-c:v", "mpeg4", "-c:a", "aac", "-shortest",
     )
     make(
+        "sample-video-only.mp4",
+        "-f", "lavfi", "-i", video,
+        "-c:v", "mpeg4", "-an",
+    )
+    make(
         "sample.mkv",
         "-f", "lavfi", "-i", video,
         "-f", "lavfi", "-i", audio,

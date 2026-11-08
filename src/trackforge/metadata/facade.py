@@ -25,7 +25,37 @@ from .model import (
     MediaMetadata,
     VideoMetadata,
 )
+from .probe import probe_streams
 from .registry import BackendRegistry, default_registry
+
+
+def _correct_facets(
+    path: Path,
+    detected: DetectedFormat,
+    backend: MetadataBackend,
+    metadata: MediaMetadata,
+) -> None:
+    """Use real stream information when the container is ambiguous.
+
+    Mutagen's MP4/ASF readers know about audio properties but not whether a
+    video stream exists, so an MP4 with only video would still get an audio
+    facet.  ffprobe is optional; without it the heuristic remains.
+    """
+    if backend.name != "mutagen":
+        return
+    if detected.container not in {ContainerFormat.MP4, ContainerFormat.ASF}:
+        return
+    probe = probe_streams(path)
+    if probe is None or (not probe.has_audio and not probe.has_video):
+        return
+    if probe.has_audio and metadata.audio is None:
+        metadata.audio = AudioMetadata()
+    if not probe.has_audio:
+        metadata.audio = None
+    if probe.has_video and metadata.video is None:
+        metadata.video = VideoMetadata()
+    if not probe.has_video:
+        metadata.video = None
 
 
 @dataclass(slots=True)
@@ -53,6 +83,7 @@ class MediaFile(MediaMetadata):
             path=str(source),
         )
         result = backend.read(source, detected)
+        _correct_facets(source, detected, backend, result.metadata)
 
         common_fields = {
             item.name: getattr(result.metadata, item.name)
