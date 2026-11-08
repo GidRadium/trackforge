@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,17 @@ _AVI_FIELDS = {
     "genre",
     "comment",
     "audio.track",
+}
+
+_AVI_CAPABILITY_FIELDS = {
+    "title",
+    "artists",
+    "album",
+    "date",
+    "genre",
+    "comment",
+    "track_number",
+    "track_total",
 }
 
 _MB_KEYS = {
@@ -155,7 +167,7 @@ class FfmpegBackend:
             if container is ContainerFormat.AVI
             else TagSystem.NONE
         )
-        return standard_capabilities(
+        capabilities = standard_capabilities(
             container,
             tag_system,
             audio=True,
@@ -164,6 +176,15 @@ class FfmpegBackend:
             artwork=False,
             writable=container in _WRITABLE,
         )
+        if container is ContainerFormat.AVI:
+            fields = {
+                name: capability
+                if name in _AVI_CAPABILITY_FIELDS
+                else replace(capability, supported=False)
+                for name, capability in capabilities.fields.items()
+            }
+            capabilities = replace(capabilities, fields=fields)
+        return capabilities
 
     def write(
         self,

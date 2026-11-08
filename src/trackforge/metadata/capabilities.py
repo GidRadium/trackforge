@@ -8,7 +8,7 @@ touching a file.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -154,6 +154,7 @@ def standard_capabilities(
     arbitrary_keys: bool = True,
     artwork: bool = True,
     writable: bool = False,
+    unsupported: Iterable[str] = (),
 ) -> Capabilities:
     """Build a capability table for a container and its field groups."""
     keys = native_keys or {}
@@ -163,8 +164,13 @@ def standard_capabilities(
     if video:
         names.extend(VIDEO_FIELDS)
 
+    unsupported_names = set(unsupported)
     fields = {
-        name: FieldCapability(native_key=keys.get(name)) for name in names
+        name: FieldCapability(
+            supported=name not in unsupported_names,
+            native_key=keys.get(name),
+        )
+        for name in names
     }
     return Capabilities(
         container=container,

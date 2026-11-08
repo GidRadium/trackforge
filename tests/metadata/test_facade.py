@@ -233,7 +233,20 @@ def test_write_avi_skips_unsupported(tmp_path: Path, media_dir: Path) -> None:
     assert updated.require_audio().track_number == 4
 
 
+def test_avi_capabilities_are_truthful(media_dir: Path) -> None:
+    media = MediaFile.open(media_dir / "sample.avi")
+    capabilities = media.capabilities
+
+    assert capabilities is not None
+    assert capabilities.writable is True
+    assert capabilities.supports("title")
+    assert capabilities.supports("album")
+    assert not capabilities.supports("composer")
+    assert not capabilities.supports("video.show")
+
+
 def test_avi_strict_write_rejects_unsupported(tmp_path: Path, media_dir: Path) -> None:
+
     target = tmp_path / "copy-strict.avi"
     shutil.copy2(media_dir / "sample.avi", target)
     media = MediaFile.open(target)
