@@ -101,9 +101,17 @@ def sniff(path: str | Path, *, read_size: int = _DEFAULT_READ_SIZE) -> DetectedF
 
     detected = sniff_bytes(head)
     extension = source.suffix[1:].lower() if source.suffix else None
-    if extension == detected.extension:
-        return detected
-    return replace(detected, extension=extension)
+    detected = replace(detected, extension=extension)
+
+    # A generic ``isom`` brand can still be an audio-only .m4a/.m4b file.
+    # The extension is a hint, but it is a useful one for the MIME type.
+    if (
+        detected.container is ContainerFormat.MP4
+        and extension in {"m4a", "m4b"}
+        and detected.mime_type == "video/mp4"
+    ):
+        detected = replace(detected, mime_type="audio/mp4")
+    return detected
 
 
 def sniff_bytes(data: bytes) -> DetectedFormat:

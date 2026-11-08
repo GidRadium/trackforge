@@ -66,6 +66,8 @@ class TestNumbers:
             ("3/12", (3, 12)),
             ("3", (3, None)),
             ("3 of 12", (3, 12)),
+            ("4/0", (4, None)),
+            ("0", (None, None)),
             ((3, 12), (3, 12)),
             (None, (None, None)),
             ("", (None, None)),

@@ -166,10 +166,13 @@ def parse_number_pair(value: object) -> tuple[int | None, int | None]:
     if isinstance(value, bool):
         return (None, None)
     if isinstance(value, int):
-        return (value, None)
+        return (value or None, None)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         if len(value) == 2:
-            return (_parse_int_value(value[0]), _parse_int_value(value[1]))
+            return (
+                _parse_int_value(value[0]) or None,
+                _parse_int_value(value[1]) or None,
+            )
         return (None, None)
 
     text = str(value).strip()
@@ -177,10 +180,13 @@ def parse_number_pair(value: object) -> tuple[int | None, int | None]:
         return (None, None)
     match = _NUMBER_PAIR_RE.match(text)
     if match is not None:
-        return (int(match.group(1)), int(match.group(2)) if match.group(2) else None)
+        return (
+            int(match.group(1)) or None,
+            int(match.group(2)) or None if match.group(2) else None,
+        )
     match = _NUMBER_OF_RE.match(text)
     if match is not None:
-        return (int(match.group(1)), int(match.group(2)))
+        return (int(match.group(1)) or None, int(match.group(2)) or None)
     return (None, None)
 
 

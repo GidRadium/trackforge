@@ -447,7 +447,7 @@ def _write_ogg(
     _write_vorbis_audio(tags, metadata, policy, report)
 
     if _artwork(metadata) or policy.remove_missing:
-        tags.pop("METADATA_BLOCK_PICTURE", None)
+        _delete_tag(tags, "METADATA_BLOCK_PICTURE")
         if _artwork(metadata):
             tags["METADATA_BLOCK_PICTURE"] = [
                 base64.b64encode(_flac_picture_bytes(image)).decode("ascii")
@@ -479,7 +479,7 @@ def _write_vorbis_common(
     if metadata.lyrics is not None:
         _vorbis_text(tags, "LYRICS", metadata.lyrics.text, "lyrics", policy, report)
     elif policy.remove_missing:
-        tags.pop("LYRICS", None)
+        _delete_tag(tags, "LYRICS")
         report.written.append("lyrics")
 
     for name, key in _MB_VORBIS_KEYS.items():
@@ -531,7 +531,7 @@ def _write_vorbis_audio(
             report,
         )
     elif policy.remove_missing:
-        tags.pop("TRACKNUMBER", None)
+        _delete_tag(tags, "TRACKNUMBER")
     if audio.track_total is not None:
         _vorbis_text(
             tags,
@@ -542,7 +542,7 @@ def _write_vorbis_audio(
             report,
         )
     elif policy.remove_missing:
-        tags.pop("TRACKTOTAL", None)
+        _delete_tag(tags, "TRACKTOTAL")
     if audio.disc_number is not None:
         _vorbis_text(
             tags,
@@ -553,7 +553,7 @@ def _write_vorbis_audio(
             report,
         )
     elif policy.remove_missing:
-        tags.pop("DISCNUMBER", None)
+        _delete_tag(tags, "DISCNUMBER")
     if audio.disc_total is not None:
         _vorbis_text(
             tags,
@@ -564,7 +564,7 @@ def _write_vorbis_audio(
             report,
         )
     elif policy.remove_missing:
-        tags.pop("DISCTOTAL", None)
+        _delete_tag(tags, "DISCTOTAL")
     if audio.compilation is not None:
         _vorbis_text(
             tags,
@@ -592,6 +592,11 @@ def _write_vorbis_audio(
         )
 
 
+def _delete_tag(tags, key: str) -> None:
+    if key in tags:
+        del tags[key]
+
+
 def _vorbis_text(
     tags,
     key: str,
@@ -604,7 +609,7 @@ def _vorbis_text(
         tags[key] = [value]
         report.written.append(field)
     elif policy.remove_missing:
-        tags.pop(key, None)
+        _delete_tag(tags, key)
         report.written.append(field)
 
 
@@ -620,7 +625,7 @@ def _vorbis_values(
         tags[key] = list(values)
         report.written.append(field)
     elif policy.remove_missing:
-        tags.pop(key, None)
+        _delete_tag(tags, key)
         report.written.append(field)
 
 
@@ -749,7 +754,7 @@ def _mp4_text(
         tags[key] = [value]
         report.written.append(field)
     elif policy.remove_missing:
-        tags.pop(key, None)
+        _delete_tag(tags, key)
         report.written.append(field)
 
 
@@ -765,7 +770,7 @@ def _mp4_values(
         tags[key] = list(values)
         report.written.append(field)
     elif policy.remove_missing:
-        tags.pop(key, None)
+        _delete_tag(tags, key)
         report.written.append(field)
 
 
@@ -782,7 +787,7 @@ def _mp4_freeform(
         tags[key] = [MP4FreeForm(value.encode("utf-8"))]
         report.written.append(field)
     elif policy.remove_missing:
-        tags.pop(key, None)
+        _delete_tag(tags, key)
         report.written.append(field)
 
 

@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from trackforge.metadata import (
+    Artwork,
     MediaFile,
     MediaKind,
     MetadataReadError,
@@ -272,6 +273,21 @@ def test_write_ogg(tmp_path: Path, media_dir: Path) -> None:
     assert updated.artists == ["Written Artist"]
 
 
+def test_write_ogg_artwork(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy-art.ogg"
+    shutil.copy2(media_dir / "sample.ogg", target)
+    media = MediaFile.open(target)
+    media.artwork.add(Artwork(data=b"pngdata", mime="image/png", width=1, height=1))
+
+    report = media.save()
+
+    assert "artwork" in report.written
+    updated = MediaFile.open(target)
+    assert updated.artwork.front is not None
+    assert updated.artwork.front.mime == "image/png"
+    assert updated.artwork.front.data == b"pngdata"
+
+
 def test_write_m4a(tmp_path: Path, media_dir: Path) -> None:
     target = tmp_path / "copy.m4a"
     shutil.copy2(media_dir / "sample.m4a", target)
@@ -333,6 +349,18 @@ def test_remove_missing_field(tmp_path: Path, media_dir: Path) -> None:
     assert "comment" in report.written
     updated = MediaFile.open(target)
     assert updated.comment is None
+
+
+def test_remove_missing_vorbis_field(tmp_path: Path, media_dir: Path) -> None:
+    target = tmp_path / "copy-remove.flac"
+    shutil.copy2(media_dir / "sample.flac", target)
+    media = MediaFile.open(target)
+    media.comment = None
+
+    report = media.save(policy=WritePolicy(remove_missing=True))
+
+    assert "comment" in report.written
+    assert MediaFile.open(target).comment is None
 
 
 def test_save_without_source() -> None:

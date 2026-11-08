@@ -203,6 +203,17 @@ def test_sniff_m4a_extension(tmp_path: Path) -> None:
     assert detected.extension == "m4a"
 
 
+def test_sniff_generic_m4a_extension_sets_audio_mime(tmp_path: Path) -> None:
+    path = tmp_path / "song.m4a"
+    path.write_bytes(_ftyp(b"isom"))
+
+    detected = sniff(path)
+
+    assert detected.container is ContainerFormat.MP4
+    assert detected.extension == "m4a"
+    assert detected.mime_type == "audio/mp4"
+
+
 def test_sniff_missing_file(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         sniff(tmp_path / "missing.mp3")
