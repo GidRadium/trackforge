@@ -2,6 +2,14 @@
 
 Tooling to collect, verify, and write metadata for audio and video files.
 
+## Design docs
+
+- [Project idea and roadmap](docs/IDEA.md)
+- [Metadata formats and limitations](docs/METADATA_RESEARCH.md)
+- [Download research: yt-dlp, sources, cookies, progress](docs/INGESTION_RESEARCH.md)
+- [Ingestion architecture: input → variants → download → ingest](docs/INGESTION_ARCHITECTURE.md)
+- [Implementation plan: layers, vertical slices, test strategy](docs/INGESTION_IMPLEMENTATION_PLAN.md)
+
 ## Development
 
 The project uses [uv](https://docs.astral.sh/uv/) and Python 3.14.

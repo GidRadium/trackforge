@@ -1,0 +1,7 @@
+{
+  "include": ["src", "tests"],
+  "exclude": [".venv", "**/__pycache__", "test-user-data"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.14"
+}

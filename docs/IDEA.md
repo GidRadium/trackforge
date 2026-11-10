@@ -13,3 +13,9 @@
 6) Получение результата.
 
 Все функции надо добротно спроектировать, обосновать, написать и протестировать. Я (программист) должен быть уверен в том, что эти функции работают как надо.
+
+## Проектирование шагов 3–4
+
+- [INGESTION_RESEARCH.md](./INGESTION_RESEARCH.md) — что реально отдаёт yt-dlp, как устроены форматы, поиск, cookies/прокси, прогресс и где нужны кастомные источники.
+- [INGESTION_ARCHITECTURE.md](./INGESTION_ARCHITECTURE.md) — предлагаемая архитектура: единый ввод, `MediaLoader`/`YtDlpLoader`/сайтовые наследники/`VkApiLoader`, модель `SourceInfo`, CLI и ingest-пайплайн.
+- [INGESTION_IMPLEMENTATION_PLAN.md](./INGESTION_IMPLEMENTATION_PLAN.md) — план по слоям: каркас, resolve, download, выбор, ingest handoff, кастомные источники и hardening.

@@ -10,8 +10,11 @@ authors = [
     { name = "GidRadium", email = "73718589+GidRadium@users.noreply.github.com" },
 ]
 dependencies = [
+    "deno>=2.9.8",
     "mutagen>=1.47",
     "typer>=0.15",
+    "yt-dlp[default]>=2026.10.21",
+    "yt-dlp-yandex-music>=2026.9.24",
 ]
 
 [project.scripts]
@@ -32,3 +35,4 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = ["network: real network access"]

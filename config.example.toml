@@ -1,0 +1,141 @@
+# TrackForge configuration example
+# ================================
+#
+# Copy this file to the user config location:
+#
+#   Linux:   ~/.config/trackforge/config.toml
+#            (or $XDG_CONFIG_HOME/trackforge/config.toml)
+#   Windows: %APPDATA%\trackforge\config.toml
+#
+# The file in the current working directory (for example .trackforge.toml)
+# is deliberately not read automatically.
+#
+# Precedence: CLI > environment > --config > user config > defaults.
+# CLI overrides arrive with L1.0; the Python API already accepts an explicit
+# path: load_config("/path/to/config.toml").
+#
+# ${VAR} is a pure environment substitution. It is not shell evaluation.
+# A missing variable is a ConfigError.
+
+# ---------------------------------------------------------------------------
+# General
+# ---------------------------------------------------------------------------
+[general]
+output_dir = "~/Music/TrackForge"
+temp_dir = "~/.cache/trackforge/tmp"
+language = "ru"
+
+# ---------------------------------------------------------------------------
+# Download defaults (used by the download layer in L2)
+# ---------------------------------------------------------------------------
+[download]
+retries = 3
+concurrent_fragments = 4
+write_thumbnail = true
+write_info_json = false
+audio_format = "original"          # original | mp3 | m4a
+subtitle_langs = ["ru", "en"]
+collision = "subfolder"            # subfolder | error | skip | overwrite
+
+# ---------------------------------------------------------------------------
+# Search
+# ---------------------------------------------------------------------------
+[search]
+# Empty list means: all search-capable loaders.
+loaders = []
+limit = 10
+
+# ---------------------------------------------------------------------------
+# Shared source defaults
+#
+# Every [sources.<name>] profile is merged on top of this section:
+#   [sources.default] + [sources.youtube]
+# ---------------------------------------------------------------------------
+[sources.default]
+enabled = true
+
+# Cookies: pick ONE of the two methods per source.
+# `cookies` is an alias for `cookies_file`.
+# cookies = "~/.config/trackforge/cookies/default.txt"
+# cookies_file = "~/.config/trackforge/cookies/default.txt"
+# cookies_from_browser = ["chrome"]
+
+# Proxy forms:
+#   "http://user:pass@proxy.example:8080"
+#   "none"     -> explicitly no proxy
+#   "env"      -> later use HTTPS_PROXY / HTTP_PROXY / ALL_PROXY
+#   "${VAR}"   -> substitute an environment variable
+# proxy = "${TRACKFORGE_PROXY}"
+
+# user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ..."
+# headers = { "Accept-Language" = "ru,en;q=0.9" }
+# impersonate = "chrome"
+
+# yt-dlp extractor arguments. The inner values may be a string or a list.
+# extractor_args = { youtube = { player_client = ["web", "tv"] } }
+
+retries = 3
+socket_timeout = 20
+# rate_limit = "3M"
+# geo_bypass = false
+
+# Loader-specific secrets. Prefer environment substitution over literals.
+# token = "${TRACKFORGE_TOKEN}"
+
+# Arbitrary loader-specific keys. Unknown keys in [sources.<name>] are also
+# collected here, with a warning.
+# [sources.default.extra]
+# api_version = "5.199"
+
+# ---------------------------------------------------------------------------
+# YouTube
+# ---------------------------------------------------------------------------
+[sources.youtube]
+cookies = "~/.config/trackforge/cookies/youtube.txt"
+# cookies_from_browser = ["chrome"]  # mutually exclusive with cookies above
+# proxy = "${YOUTUBE_PROXY}"
+# impersonate = "chrome"
+extractor_args = { youtube = { player_client = ["web", "tv"] } }
+
+# ---------------------------------------------------------------------------
+# Yandex Music (requires the yt-dlp-yandex-music plugin)
+# ---------------------------------------------------------------------------
+[sources.yandex_music]
+cookies = "~/.config/trackforge/cookies/yandex.txt"
+# proxy = "${YANDEX_PROXY}"
+
+# ---------------------------------------------------------------------------
+# SoundCloud (cookies are usually not required)
+# ---------------------------------------------------------------------------
+[sources.soundcloud]
+proxy = "none"
+# cookies = "~/.config/trackforge/cookies/soundcloud.txt"
+# proxy = "${SOUNDCLOUD_PROXY}"
+
+# ---------------------------------------------------------------------------
+# VK (requires a token)
+# ---------------------------------------------------------------------------
+[sources.vk]
+# token = "${VK_TOKEN}"
+# proxy = "${VK_PROXY}"
+rate_limit = 3
+
+[sources.vk.extra]
+api_version = "5.199"
+
+# ---------------------------------------------------------------------------
+# Pinterest (cookies are usually required)
+# ---------------------------------------------------------------------------
+[sources.pinterest]
+cookies = "~/.config/trackforge/cookies/pinterest.txt"
+# proxy = "${PINTEREST_PROXY}"
+
+# ---------------------------------------------------------------------------
+# Generic yt-dlp fallback
+#
+# The loader has name "yt-dlp" and config_key "yt_dlp", so its section is
+# [sources.yt_dlp]. It is selected last, after site-specific loaders.
+# ---------------------------------------------------------------------------
+[sources.yt_dlp]
+socket_timeout = 20
+# proxy = "${YTDLP_PROXY}"
