@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 
 from ...metadata.model import PartialDate
 from ..config import SourceProfile
-from ..errors import UnresolvedRedirect, UnsupportedUrl
+from ..errors import UnresolvedEntry, UnresolvedRedirect, UnsupportedUrl
 from ..models import (
     DownloadVariant,
     LiveStatus,
@@ -47,6 +47,13 @@ _AUTH_AVAILABILITY = frozenset(
 )
 _DRM_AVAILABILITY = frozenset({"drm", "drm_protected"})
 _GENERIC_FORMAT_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+
+# Flat collections are intentionally bounded: yt-dlp's ``entries`` may be a
+# lazy ``PagedList`` and materialising it would trigger hundreds of requests
+# before the user gets a chance to choose anything.
+DEFAULT_FLAT_LIMIT = 50
+MAX_FLAT_LIMIT = 500
+_COLLECTION_TYPES = frozenset({"playlist", "multi_video"})
 
 _MAPPED_KEYS = frozenset(
     {
@@ -1289,40 +1296,97 @@ class YtDlpMapper:
         ref: SourceRef,
         *,
         flat: bool = False,
+        limit: int | None = None,
     ) -> SourceInfo:
         if not isinstance(info, Mapping):
             raise UnsupportedUrl(ref.url, source=ref.source)
-        self._check_type(info, ref)
+        type_ = self._check_type(info, ref)
         thumbnails = map_thumbnails(info)
-        item = self._item(info, ref, flat=flat, position=1)
         creator = self._creator(info)
+
+        if type_ in _COLLECTION_TYPES:
+            entries = self._entries(info, limit=limit)
+            items = tuple(
+                self._item(
+                    entry,
+                    ref,
+                    flat=flat,
+                    position=position,
+                    fallback_url=None,
+                )
+                for position, entry in enumerate(entries, start=1)
+            )
+            kind = SourceKind.COLLECTION
+            title = _first_text(
+                info.get("title"),
+                info.get("playlist_title"),
+                ref.url,
+            )
+        else:
+            items = (
+                self._item(
+                    info,
+                    ref,
+                    flat=flat,
+                    position=1,
+                    fallback_url=ref.url,
+                ),
+            )
+            kind = SourceKind.SINGLE
+            title = _first_text(info.get("title"), info.get("track"), ref.url)
+
         return SourceInfo(
             source=ref.source,
             url=ref.url,
-            kind=SourceKind.SINGLE,
+            kind=kind,
             id=_text(info.get("id")) or ref.id,
-            title=_first_text(info.get("title"), info.get("track"), ref.url),
+            title=title,
             creator=creator,
             description=_text(info.get("description")),
             thumbnails=thumbnails,
             thumbnail=select_best_thumbnail(thumbnails),
-            items=(item,),
+            items=items,
             publisher=_text(info.get("publisher")),
         )
 
-    def _check_type(self, info: Mapping[str, Any], ref: SourceRef) -> None:
+    def _check_type(self, info: Mapping[str, Any], ref: SourceRef) -> str:
         type_ = (_text(info.get("_type")) or "video").lower()
         if type_ in {"url", "url_transparent"}:
             raise UnresolvedRedirect(
                 f"unresolved {type_} result for {ref.url}",
                 url=ref.url,
             )
-        if type_ in {"playlist", "multi_video"}:
-            raise UnsupportedUrl(
-                ref.url,
-                source=ref.source,
-                hint="collections are implemented in L1.2",
-            )
+        return type_
+
+    def _entries(
+        self,
+        info: Mapping[str, Any],
+        *,
+        limit: int | None,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Return at most ``limit`` entries without materialising the playlist.
+
+        ``entries`` can be a lazy ``PagedList``.  We iterate only until the
+        requested bound is reached so a 500-track playlist does not turn into
+        hundreds of network requests during the flat stage.
+        """
+        raw = info.get("entries")
+        if raw is None or isinstance(raw, (str, bytes, bytearray, Mapping)):
+            return ()
+        requested = limit if isinstance(limit, int) and limit > 0 else DEFAULT_FLAT_LIMIT
+        cap = min(requested, MAX_FLAT_LIMIT)
+        entries: list[Mapping[str, Any]] = []
+        try:
+            iterator = iter(raw)
+        except TypeError:
+            return ()
+        for entry in iterator:
+            if not isinstance(entry, Mapping):
+                continue
+            entries.append(entry)
+            if len(entries) >= cap:
+                break
+        return tuple(entries)
 
     def _creator(self, info: Mapping[str, Any]) -> str | None:
         artists = _str_tuple(info.get("artists") or info.get("artist"))
@@ -1340,9 +1404,14 @@ class YtDlpMapper:
         *,
         flat: bool,
         position: int,
+        fallback_url: str | None,
     ) -> MediaItem:
-        title = _first_text(info.get("track"), info.get("title"), info.get("id"), ref.url)
-        assert title is not None
+        title = _first_text(
+            info.get("track"),
+            info.get("title"),
+            info.get("id"),
+            fallback_url,
+        ) or "item"
         creator = self._creator(info)
         artists = _str_tuple(info.get("artists") or info.get("artist"))
         if not artists and creator is not None:
@@ -1358,7 +1427,7 @@ class YtDlpMapper:
             if flat
             else tuple(build_variants(info, authenticated=authenticated))
         )
-        page_url = _first_text(info.get("webpage_url"), info.get("url"), ref.url)
+        page_url = self._page_url(info, fallback_url=fallback_url)
         if not artists and creator:
             artists = (creator,)
         suggested_stem = self._suggested_stem(creator, title)
@@ -1388,6 +1457,31 @@ class YtDlpMapper:
         if flat:
             return base
         return replace(base, recommendations=default_recommendations(base))
+
+    @staticmethod
+    def _page_url(
+        info: Mapping[str, Any],
+        *,
+        fallback_url: str | None,
+    ) -> str:
+        for key in ("webpage_url", "original_url", "url"):
+            candidate = _text(info.get(key))
+            if candidate is None:
+                continue
+            try:
+                parsed = urlsplit(candidate)
+            except ValueError:
+                continue
+            if parsed.scheme in {"http", "https"} and parsed.netloc:
+                return candidate
+        if fallback_url:
+            return fallback_url
+        identifier = _text(info.get("id")) or _text(info.get("display_id"))
+        suffix = f" (id {identifier})" if identifier else ""
+        raise UnresolvedEntry(
+            f"collection entry has no page URL{suffix}",
+            entry_id=identifier,
+        )
 
     @staticmethod
     def _suggested_stem(creator: str | None, title: str) -> str:
@@ -1468,6 +1562,8 @@ def best_audio_variant(variants: Sequence[DownloadVariant]) -> DownloadVariant |
 
 
 __all__ = [
+    "DEFAULT_FLAT_LIMIT",
+    "MAX_FLAT_LIMIT",
     "YtDlpMapper",
     "best_audio_variant",
     "best_variant",

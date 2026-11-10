@@ -76,16 +76,54 @@ class UnresolvedRedirect(AcquireError):
 
 
 class UnsupportedCollection(AcquireError):
-    """The URL is a collection/playlist, which is not implemented yet."""
+    """The URL is a collection/playlist, which this loader cannot expand."""
 
-    default_message = "collections are not supported yet"
-    hint = "collection/playlist support arrives in L1.2; pass a single item URL"
+    default_message = "collections are not supported"
+    hint = "pass a single item URL or use a loader with playlist support"
 
     def __init__(self, url: str | None = None, *, hint: str | None = None) -> None:
         message = self.default_message
         if url:
             message = f"{message}: {url}"
         super().__init__(message, hint=hint)
+        self.url = url
+
+
+class UnsupportedPost(AcquireError):
+    """The URL points to a social post that has no extractor yet."""
+
+    default_message = "posts are not supported yet"
+    hint = "post support arrives in L5; pass a direct media URL instead"
+
+    def __init__(
+        self,
+        url: str | None = None,
+        *,
+        message: str | None = None,
+        hint: str | None = None,
+    ) -> None:
+        # The URL is kept as structured data; callers such as the CLI already
+        # show it in context, so repeating it in the message just looks noisy.
+        super().__init__(message or self.default_message, hint=hint)
+        self.url = url
+
+
+class UnresolvedEntry(AcquireError):
+    """A collection entry cannot be resolved to a concrete page URL."""
+
+    default_message = "collection entry has no resolvable URL"
+    hint = "refresh the collection; the source may have removed the entry"
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        entry_id: str | None = None,
+        url: str | None = None,
+        hint: str | None = None,
+    ) -> None:
+        super().__init__(message, hint=hint)
+        self.entry_id = entry_id
         self.url = url
 
 

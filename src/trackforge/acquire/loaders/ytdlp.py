@@ -1,8 +1,10 @@
-"""Generic yt-dlp loader for single media items.
+"""Generic yt-dlp loader for single media items and collections.
 
 The module keeps :mod:`yt_dlp` imports lazy so importing the acquisition
 package stays offline.  ``get_info`` only extracts metadata
-(``download=False``); downloading belongs to L2.
+(``download=False``); downloading belongs to L2.  Collections are resolved in
+two stages: a bounded flat listing first, then a full resolve of the selected
+item by its ``page_url``.
 """
 
 # pyright: standard
@@ -18,7 +20,14 @@ from urllib.parse import urlsplit
 
 from ..auth import ensure_auth_ready
 from ..config import SourceProfile
-from ..models import DownloadRequest, DownloadResult, SourceInfo, SourceRef
+from ..errors import AuthRequired, Unavailable
+from ..models import (
+    DownloadRequest,
+    DownloadResult,
+    SourceInfo,
+    SourceKind,
+    SourceRef,
+)
 from .base import LoaderCapabilities, LoaderContext, MediaLoader
 from .ytdlp_errors import (
     humanize_error,
@@ -26,6 +35,8 @@ from .ytdlp_errors import (
     map_ytdlp_error,
 )
 from .ytdlp_mapper import (
+    DEFAULT_FLAT_LIMIT,
+    MAX_FLAT_LIMIT,
     YtDlpMapper,
     best_audio_variant,
     best_video_variant,
@@ -50,6 +61,39 @@ _YT_HOSTS = frozenset(
         "www.youtu.be",
     }
 )
+
+_AUTH_AVAILABILITY = frozenset(
+    {"private", "premium_only", "subscriber_only", "needs_auth", "members_only"}
+)
+
+
+def _configured_limit(profile: SourceProfile, key: str, default: int) -> int:
+    """Read a positive integer limit override from ``SourceProfile.extra``."""
+    value = profile.extra.get(key)
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return default
+
+
+def effective_flat_limit(
+    limit: int | None,
+    profile: SourceProfile,
+) -> int:
+    """Return a bounded item limit for a flat collection extraction.
+
+    ``None``, zero and negative values mean "use the configured default"
+    rather than "fetch everything".  Both the default and the hard maximum can
+    be overridden for a source through ``extra.flat_limit`` and
+    ``extra.flat_limit_max``.
+    """
+    default = _configured_limit(profile, "flat_limit", DEFAULT_FLAT_LIMIT)
+    maximum = _configured_limit(profile, "flat_limit_max", MAX_FLAT_LIMIT)
+    requested = (
+        limit
+        if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0
+        else default
+    )
+    return max(1, min(requested, maximum))
 
 
 class YtDlpLoader(MediaLoader):
@@ -140,11 +184,46 @@ class YtDlpLoader(MediaLoader):
         flat: bool = False,
         limit: int | None = None,
     ) -> SourceInfo:
-        """Extract metadata only; never download media files."""
+        """Extract metadata only; never download media files.
+
+        ``flat=True`` asks yt-dlp for a bounded list of collection entries
+        without resolving their formats.  A full resolve is intended for one
+        selected item's ``page_url``; ``noplaylist`` keeps a ``watch?v&list``
+        URL from expanding into the whole playlist.
+        """
         self.preflight(ref.url, ctx.profile)
-        info = self._extract(ref.url, ctx=ctx, flat=flat, limit=limit)
-        source = YtDlpMapper(ctx.profile).map(info, ref, flat=flat)
-        return self._finalize(source, ctx)
+        effective_limit = effective_flat_limit(limit, ctx.profile)
+        info = self._extract(
+            ref.url,
+            ctx=ctx,
+            flat=flat,
+            limit=effective_limit,
+        )
+        source = YtDlpMapper(ctx.profile).map(
+            info,
+            ref,
+            flat=flat,
+            limit=effective_limit,
+        )
+        source = self._finalize(source, ctx)
+        return self._validate_collection(source, info)
+
+    def _validate_collection(
+        self,
+        source: SourceInfo,
+        info: Mapping[str, Any],
+    ) -> SourceInfo:
+        """Turn an empty/private collection into a typed acquisition error."""
+        if source.kind is not SourceKind.COLLECTION or source.items:
+            return source
+        availability = str(info.get("availability") or "").strip().lower()
+        if availability in _AUTH_AVAILABILITY:
+            raise AuthRequired(
+                f"collection is not accessible ({availability}): {source.url}",
+            )
+        raise Unavailable(
+            f"collection is empty or has no accessible items: {source.url}",
+        )
 
     def _extract(
         self,
@@ -155,7 +234,7 @@ class YtDlpLoader(MediaLoader):
         limit: int | None = None,
     ) -> Mapping[str, Any]:
         """Run ``extract_info(download=False)`` and sanitize the payload."""
-        del flat, limit  # collections are implemented in L1.2
+        effective_limit = effective_flat_limit(limit, ctx.profile)
         options = self._base_options(ctx.profile, logger=ctx.logger)
         options.update(
             {
@@ -165,7 +244,10 @@ class YtDlpLoader(MediaLoader):
                 "noprogress": True,
                 "ignoreerrors": False,
                 "cachedir": False,
-                "extract_flat": False,
+                "extract_flat": "in_playlist" if flat else False,
+                "playlist_items": f"1:{effective_limit}",
+                # A full resolve targets one item; never expand its playlist.
+                "noplaylist": not flat,
                 "remote_components": [],
             }
         )
@@ -247,6 +329,8 @@ def _is_youtube_url(url: str) -> bool:
 
 
 __all__ = [
+    "DEFAULT_FLAT_LIMIT",
+    "MAX_FLAT_LIMIT",
     "YtDlpLoader",
     "YtDlpMapper",
     "best_audio_variant",
@@ -255,6 +339,7 @@ __all__ = [
     "build_ydl_options",
     "create_youtube_dl",
     "deno_js_runtimes",
+    "effective_flat_limit",
     "humanize_error",
     "is_retryable",
     "map_thumbnails",

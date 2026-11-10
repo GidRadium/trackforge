@@ -37,6 +37,7 @@ from trackforge.acquire.models import (
     StreamRole,
     SubtitleTrack,
     Thumbnail,
+    UrlHint,
 )
 from trackforge.acquire.progress import NullProgressSink
 from trackforge.acquire.registry import default_registry
@@ -83,16 +84,19 @@ def inspect_url(
         "--no-extractor-args",
         help="Ignore configured extractor_args for this run.",
     ),
-    flat: bool = typer.Option(
-        False,
-        "--flat",
-        help="Ask for a flat result (collections are still L1.2).",
+    flat: bool | None = typer.Option(
+        None,
+        "--flat/--no-flat",
+        help=(
+            "Flat collection listing without item formats. "
+            "Defaults to flat for playlists/collections."
+        ),
     ),
     limit: int | None = typer.Option(
         None,
         "--limit",
         min=1,
-        help="Collection item limit (collections are still L1.2).",
+        help="Maximum items for a flat collection listing (default 50).",
     ),
     json_output: bool = typer.Option(
         False,
@@ -163,6 +167,10 @@ def inspect_url(
                 logger=_LOGGER,
             )
             ref = SourceRef(resolved.loader.name, url)
+            run_flat = _resolve_flat(
+                flat,
+                resolved.loader.classify_url(url),
+            )
             if raw:
                 preflight = getattr(resolved.loader, "preflight", None)
                 if callable(preflight):
@@ -173,13 +181,13 @@ def inspect_url(
                         f"--raw is only supported for yt-dlp based loaders; "
                         f"got {resolved.loader.name!r}"
                     )
-                extracted = extract(url, ctx=ctx, flat=flat, limit=limit)
+                extracted = extract(url, ctx=ctx, flat=run_flat, limit=limit)
                 results.append((url, extracted))
             else:
                 source_info = resolved.loader.get_info(
                     ref,
                     ctx=ctx,
-                    flat=flat,
+                    flat=run_flat,
                     limit=limit,
                 )
                 results.append((url, source_info))
@@ -202,6 +210,9 @@ def inspect_url(
             message = f"{type(exc).__name__}: {exc}"
             failures.append((url, message))
             typer.echo(f"error [{url}]: {message}", err=True)
+            hint = getattr(exc, "hint", None)
+            if isinstance(hint, str) and hint:
+                typer.echo(f"hint: {hint}", err=True)
 
     if json_output or raw:
         if len(urls) == 1 and results:
@@ -219,6 +230,18 @@ def inspect_url(
 
     if failed:
         raise typer.Exit(code=1)
+
+
+def _resolve_flat(flat: bool | None, hint: UrlHint) -> bool:
+    """Honour an explicit --flat/--no-flat, otherwise auto-flat collections.
+
+    Running a full playlist extraction by accident resolves every entry and
+    issues one YouTube request per item.  A collection URL should therefore
+    start in the cheap flat mode unless the user explicitly asks otherwise.
+    """
+    if flat is not None:
+        return flat
+    return hint is UrlHint.COLLECTION
 
 
 def _profile_with_client_override(

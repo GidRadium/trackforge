@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Self
 
@@ -258,8 +259,8 @@ def test_extract_uses_metadata_only_options_and_cookies(
 
     captured: dict[str, object] = {}
 
-    def create(options: object) -> FakeYoutubeDL:
-        captured.update(options)  # type: ignore[arg-type]
+    def create(options: Mapping[str, object]) -> FakeYoutubeDL:
+        captured.update(options)
         return fake
 
     monkeypatch.setattr(loader, "_create_youtube_dl", create)
@@ -275,7 +276,11 @@ def test_extract_uses_metadata_only_options_and_cookies(
     assert captured["remote_components"] == []
     assert captured["cookiefile"] == str(source)
     assert captured["proxy"] == "http://proxy.test:8080"
-    assert captured["js_runtimes"]["deno"]["path"].endswith("deno")  # type: ignore[index]
+    js_runtimes = captured["js_runtimes"]
+    assert isinstance(js_runtimes, Mapping)
+    deno = js_runtimes["deno"]
+    assert isinstance(deno, Mapping)
+    assert str(deno["path"]).endswith("deno")
     assert not list(tmp_path.glob("*.part"))
     assert not list(tmp_path.glob("*.mp4"))
 

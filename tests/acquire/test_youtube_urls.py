@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from trackforge.acquire.config import SourceProfile
-from trackforge.acquire.errors import SearchNotSupported, UnsupportedCollection
+from trackforge.acquire.errors import SearchNotSupported, UnsupportedPost
 from trackforge.acquire.loaders.base import LoaderContext
 from trackforge.acquire.loaders.youtube import YouTubeLoader
 from trackforge.acquire.loaders.ytdlp import YtDlpLoader
@@ -29,6 +29,7 @@ def loader() -> YouTubeLoader:
         "https://music.youtube.com/watch?v=abc123",
         "https://youtu.be/abc123",
         "https://youtu.be/abc123?t=42",
+        "https://youtu.be/abc123?list=PL123",
         "https://www.youtube.com/shorts/abc123",
         "https://www.youtube.com/live/abc123",
         "https://www.youtube.com/embed/abc123",
@@ -48,13 +49,26 @@ def test_supports_video_urls(loader: YouTubeLoader, url: str) -> None:
         "https://youtube.com/playlist?list=PL123",
         "https://music.youtube.com/playlist?list=PL123",
         "https://www.youtube.com/watch?v=abc123&list=PL123",
-        "https://youtu.be/abc123?list=PL123",
         "https://www.youtube.com/watch?list=PL123",
     ],
 )
 def test_supports_collection_urls(loader: YouTubeLoader, url: str) -> None:
     assert loader.supports_url(url) is True
     assert loader.classify_url(url) is UrlHint.COLLECTION
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://youtube.com/post/UgkxlAlQMwv6UbrLuBbOj0tO2B299LdCd4eq",
+        "https://www.youtube.com/post/Ugpost123?si=token",
+        "https://www.youtube.com/@trackforge/post/Ugpost123",
+        "https://www.youtube.com/channel/UCtrackforge/post/Ugpost123",
+    ],
+)
+def test_post_urls_are_classified(loader: YouTubeLoader, url: str) -> None:
+    assert loader.supports_url(url) is True
+    assert loader.classify_url(url) is UrlHint.POST
 
 
 @pytest.mark.parametrize(
@@ -115,7 +129,7 @@ def test_search_is_not_supported_yet(loader: YouTubeLoader) -> None:
         loader.search("query", limit=5, ctx=ctx)
 
 
-def test_playlist_inspection_fails_before_network(
+def test_post_inspection_fails_before_network(
     loader: YouTubeLoader,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -124,18 +138,18 @@ def test_playlist_inspection_fails_before_network(
     def forbidden_extract(*args: object, **kwargs: object) -> dict[str, object]:
         del args, kwargs
         calls.append("extract")
-        raise AssertionError("playlist extraction must not run in L1.1")
+        raise AssertionError("post extraction must not run before L5")
 
     monkeypatch.setattr(loader, "_extract", forbidden_extract)
     ctx = LoaderContext(
         job_id="job-1",
         profile=SourceProfile(name="youtube"),
     )
-    with pytest.raises(UnsupportedCollection, match="collections are not supported"):
+    with pytest.raises(UnsupportedPost, match="YouTube community posts"):
         loader.get_info(
             SourceRef(
                 "youtube",
-                "https://www.youtube.com/playlist?list=PL123",
+                "https://youtube.com/post/UgkxlAlQMwv6UbrLuBbOj0tO2B299LdCd4eq",
             ),
             ctx=ctx,
         )

@@ -13,7 +13,15 @@ from fakes import FakeLoader, make_source_info
 from typer.testing import CliRunner
 
 from trackforge.acquire.config import AppConfig
-from trackforge.acquire.models import LiveStatus, SubtitleTrack
+from trackforge.acquire.loaders.base import LoaderContext
+from trackforge.acquire.models import (
+    LiveStatus,
+    SourceInfo,
+    SourceKind,
+    SourceRef,
+    SubtitleTrack,
+    UrlHint,
+)
 from trackforge.acquire.registry import LoaderRegistry
 from trackforge.cli import app
 from trackforge.cli.commands import inspect as inspect_command
@@ -171,6 +179,7 @@ def test_inspect_typed_error_and_exit_code(
     assert result.exit_code == 1
     assert "error" in result.output
     assert "UnsupportedUrl" in result.output
+    assert "hint:" in result.output
 
 
 class RawLoader(FakeLoader):
@@ -293,12 +302,12 @@ def test_inspect_player_client_reaches_extraction(
     def capture(
         url: str,
         *,
-        ctx: object,
+        ctx: LoaderContext,
         flat: bool = False,
         limit: int | None = None,
     ) -> dict[str, object]:
         del flat, limit
-        profile = ctx.profile  # type: ignore[attr-defined]
+        profile = ctx.profile
         observed.update(profile.extractor_args)
         return {
             "_type": "video",
@@ -333,3 +342,62 @@ def test_inspect_marks_live_stream(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "live_status:   is_live" in result.output
     assert "LIVE STREAM" in result.output
     assert "duration:      —" in result.output
+
+
+class CollectionLoader(FakeLoader):
+    """Fake YouTube-like loader that reports a collection hint."""
+
+    def __init__(
+        self,
+        *,
+        name: str = "fake",
+        info: SourceInfo | None = None,
+    ) -> None:
+        super().__init__(name=name, info=info)
+        self.flat_calls: list[bool] = []
+
+    def classify_url(self, url: str) -> UrlHint:
+        del url
+        return UrlHint.COLLECTION
+
+    def get_info(
+        self,
+        ref: SourceRef,
+        *,
+        ctx: LoaderContext,
+        flat: bool = False,
+        limit: int | None = None,
+    ) -> SourceInfo:
+        self.flat_calls.append(flat)
+        return super().get_info(
+            ref,
+            ctx=ctx,
+            flat=flat,
+            limit=limit,
+        )
+
+
+def test_inspect_auto_flattens_collections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loader = CollectionLoader(
+        name="fake",
+        info=make_source_info(kind=SourceKind.COLLECTION),
+    )
+    install_fake_command(monkeypatch, loader)
+
+    result = runner.invoke(app, ["inspect", URL, "--json"])
+    assert result.exit_code == 0, result.output
+    assert loader.flat_calls == [True]
+
+    result = runner.invoke(app, ["inspect", URL, "--no-flat", "--json"])
+    assert result.exit_code == 0, result.output
+    assert loader.flat_calls == [True, False]
+
+
+def test_resolve_flat_honours_explicit_choice() -> None:
+    assert inspect_command._resolve_flat(None, UrlHint.COLLECTION) is True
+    assert inspect_command._resolve_flat(None, UrlHint.SINGLE) is False
+    assert inspect_command._resolve_flat(None, UrlHint.UNKNOWN) is False
+    assert inspect_command._resolve_flat(True, UrlHint.SINGLE) is True
+    assert inspect_command._resolve_flat(False, UrlHint.COLLECTION) is False

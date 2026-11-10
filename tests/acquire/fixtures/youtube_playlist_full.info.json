@@ -1,0 +1,132 @@
+{
+  "_type": "playlist",
+  "id": "PLfull1234567890",
+  "title": "TrackForge Full Playlist",
+  "description": "A sanitized fully resolved playlist fixture for offline tests.",
+  "uploader": "TrackForge Channel",
+  "channel": "TrackForge Channel",
+  "channel_id": "UCtrackforge0000000000",
+  "webpage_url": "https://www.youtube.com/playlist?list=PLfull1234567890",
+  "original_url": "https://www.youtube.com/playlist?list=PLfull1234567890",
+  "playlist_count": 2,
+  "extractor": "youtube:tab",
+  "extractor_key": "YoutubeTab",
+  "thumbnails": [
+    {
+      "url": "https://i.ytimg.com/vi/plflat001/hqdefault.jpg",
+      "width": 480,
+      "height": 360,
+      "ext": "jpg"
+    }
+  ],
+  "entries": [
+    {
+      "_type": "video",
+      "id": "plflat001",
+      "title": "First Playlist Track",
+      "description": "The first selected item, resolved in full.",
+      "uploader": "TrackForge Channel",
+      "channel": "TrackForge Channel",
+      "duration": 181.0,
+      "webpage_url": "https://www.youtube.com/watch?v=plflat001",
+      "original_url": "https://www.youtube.com/watch?v=plflat001",
+      "availability": "public",
+      "live_status": "not_live",
+      "playlist_index": 1,
+      "thumbnails": [
+        {
+          "url": "https://i.ytimg.com/vi/plflat001/mqdefault.jpg",
+          "width": 320,
+          "height": 180,
+          "ext": "jpg"
+        },
+        {
+          "url": "https://i.ytimg.com/vi/plflat001/maxresdefault.jpg",
+          "width": 1280,
+          "height": 720,
+          "ext": "jpg",
+          "preference": 1
+        }
+      ],
+      "formats": [
+        {
+          "format_id": "137",
+          "format_note": "1080p",
+          "ext": "mp4",
+          "protocol": "https",
+          "vcodec": "avc1.640028",
+          "acodec": "none",
+          "width": 1920,
+          "height": 1080,
+          "fps": 30,
+          "tbr": 4200,
+          "filesize": 48000000,
+          "url": "https://media.example.test/video/plflat001-137.mp4"
+        },
+        {
+          "format_id": "140",
+          "format_note": "medium",
+          "ext": "m4a",
+          "protocol": "https",
+          "vcodec": "none",
+          "acodec": "mp4a.40.2",
+          "abr": 128,
+          "asr": 44100,
+          "audio_channels": 2,
+          "filesize": 4100000,
+          "url": "https://media.example.test/audio/plflat001-140.m4a"
+        },
+        {
+          "format_id": "22",
+          "format_note": "720p",
+          "ext": "mp4",
+          "protocol": "https",
+          "vcodec": "avc1.64001F",
+          "acodec": "mp4a.40.2",
+          "width": 1280,
+          "height": 720,
+          "fps": 30,
+          "tbr": 1800,
+          "filesize": 30000000,
+          "url": "https://media.example.test/video/plflat001-22.mp4"
+        }
+      ]
+    },
+    {
+      "_type": "video",
+      "id": "plflat002",
+      "title": "Second Playlist Track",
+      "uploader": "TrackForge Channel",
+      "channel": "TrackForge Channel",
+      "duration": 202.5,
+      "webpage_url": "https://www.youtube.com/watch?v=plflat002",
+      "availability": "public",
+      "live_status": "not_live",
+      "playlist_index": 2,
+      "thumbnails": [
+        {
+          "url": "https://i.ytimg.com/vi/plflat002/hqdefault.jpg",
+          "width": 480,
+          "height": 360,
+          "ext": "jpg"
+        }
+      ],
+      "formats": [
+        {
+          "format_id": "18",
+          "format_note": "360p",
+          "ext": "mp4",
+          "protocol": "https",
+          "vcodec": "avc1.42001E",
+          "acodec": "mp4a.40.2",
+          "width": 640,
+          "height": 360,
+          "fps": 30,
+          "tbr": 700,
+          "filesize": 12000000,
+          "url": "https://media.example.test/video/plflat002-18.mp4"
+        }
+      ]
+    }
+  ]
+}

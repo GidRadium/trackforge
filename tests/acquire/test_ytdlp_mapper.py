@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from trackforge.acquire.config import SourceProfile
-from trackforge.acquire.errors import UnresolvedRedirect, UnsupportedUrl
+from trackforge.acquire.errors import UnresolvedEntry, UnresolvedRedirect
 from trackforge.acquire.loaders.base import LoaderContext
 from trackforge.acquire.loaders.youtube import YouTubeLoader
 from trackforge.acquire.loaders.ytdlp_mapper import YtDlpMapper
@@ -229,15 +229,28 @@ def test_flat_mapping_has_no_variants() -> None:
     assert item.resolution is ResolutionState.FLAT
 
 
-def test_redirect_and_collection_types_are_typed_errors() -> None:
+def test_redirect_is_a_typed_error_and_empty_playlist_is_a_collection() -> None:
     mapper = YtDlpMapper(SourceProfile(name="yt_dlp"))
     ref = SourceRef("yt-dlp", "https://example.test/x")
     with pytest.raises(UnresolvedRedirect):
         mapper.map({"_type": "url", "url": "https://example.test/y"}, ref)
     with pytest.raises(UnresolvedRedirect):
         mapper.map({"_type": "url_transparent", "url": "https://example.test/y"}, ref)
-    with pytest.raises(UnsupportedUrl):
-        mapper.map({"_type": "playlist", "entries": []}, ref)
+    collection = mapper.map({"_type": "playlist", "entries": []}, ref)
+    assert collection.kind is SourceKind.COLLECTION
+    assert collection.items == ()
+
+
+def test_entry_without_page_url_is_a_typed_error() -> None:
+    mapper = YtDlpMapper(SourceProfile(name="yt_dlp"))
+    with pytest.raises(UnresolvedEntry):
+        mapper.map(
+            {
+                "_type": "playlist",
+                "entries": [{"_type": "url", "id": "no-url"}],
+            },
+            SourceRef("yt-dlp", "https://example.test/playlist"),
+        )
 
 
 def test_maps_all_subtitle_and_automatic_caption_tracks() -> None:

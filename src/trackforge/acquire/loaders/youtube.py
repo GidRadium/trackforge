@@ -1,7 +1,8 @@
 """YouTube site policy on top of the generic yt-dlp loader.
 
-Only single-video inspection is implemented in L1.1.  Playlist/collection
-handling arrives in L1.2 and search in L3.
+Collections use the two-stage contract from :class:`YtDlpLoader`: a bounded
+flat listing first, then a full resolve of a selected item's ``page_url``.
+Search arrives in L3.
 """
 
 # pyright: standard
@@ -16,11 +17,12 @@ from urllib.parse import parse_qs, quote, urlsplit
 
 from ..auth import resolve_proxy
 from ..config import SourceProfile
-from ..errors import SearchNotSupported, UnsupportedCollection
+from ..errors import SearchNotSupported, UnsupportedPost
 from ..models import (
     MediaItem,
     MediaKind,
     Recommendations,
+    ResolutionState,
     SearchCandidate,
     SourceInfo,
     SourceRef,
@@ -72,6 +74,20 @@ def _is_youtube_host(host: str) -> bool:
     return host in _YOUTUBE_HOSTS or host.endswith(".youtube.com")
 
 
+def _is_post_path(segments: list[str]) -> bool:
+    """Recognise /post/<id> and channel-scoped /<channel>/post/<id> URLs."""
+    if not segments:
+        return False
+    first = segments[0].lower()
+    if first == "post":
+        return len(segments) >= 2
+    if first in {"channel", "c", "user"}:
+        return len(segments) >= 4 and segments[2].lower() == "post"
+    if first.startswith("@"):
+        return len(segments) >= 3 and segments[1].lower() == "post"
+    return False
+
+
 class YouTubeLoader(YtDlpLoader):
     """Site-specific policy for YouTube single videos."""
 
@@ -96,19 +112,26 @@ class YouTubeLoader(YtDlpLoader):
             or not _is_youtube_host(host)
         ):
             return UrlHint.UNKNOWN
-        if query.get("list", [""])[0].strip():
-            return UrlHint.COLLECTION
         path = parsed.path.rstrip("/")
         segments = [segment for segment in path.split("/") if segment]
         if not segments:
             return UrlHint.UNKNOWN
+        # Short links always identify one video, even when a ``list`` query is
+        # attached.  Expanding that list is a user choice (L3).
         if host == "youtu.be" or host.endswith(".youtu.be"):
             return UrlHint.SINGLE
-        if segments[0].lower() == "playlist":
+        if _is_post_path(segments):
+            return UrlHint.POST
+        first = segments[0].lower()
+        if first == "playlist":
             return UrlHint.COLLECTION
-        if segments[0].lower() in _VIDEO_PATHS and (
-            segments[0].lower() != "watch" or len(segments) == 1
-        ):
+        if first == "watch":
+            if query.get("list", [""])[0].strip():
+                return UrlHint.COLLECTION
+            if len(segments) == 1:
+                return UrlHint.SINGLE
+            return UrlHint.UNKNOWN
+        if first in _VIDEO_PATHS:
             return UrlHint.SINGLE
         return UrlHint.UNKNOWN
 
@@ -120,8 +143,19 @@ class YouTubeLoader(YtDlpLoader):
         flat: bool = False,
         limit: int | None = None,
     ) -> SourceInfo:
-        if self.classify_url(ref.url) is UrlHint.COLLECTION:
-            raise UnsupportedCollection(ref.url)
+        # yt-dlp has no extractor for a standalone community post URL; its
+        # YoutubeTabIE mistakes ``post`` for a channel and the post id for a
+        # tab.  Fail fast with a typed error instead of a misleading network
+        # failure.  Actual post extraction belongs to L5.
+        if self.classify_url(ref.url) is UrlHint.POST:
+            raise UnsupportedPost(
+                ref.url,
+                message="YouTube community posts are not supported yet",
+                hint=(
+                    "open the post and send the direct video or playlist link; "
+                    "post extraction arrives in L5"
+                ),
+            )
         return super().get_info(ref, ctx=ctx, flat=flat, limit=limit)
 
     def choose_thumbnail(
@@ -133,6 +167,10 @@ class YouTubeLoader(YtDlpLoader):
         candidates = list(item.thumbnails)
         if item.thumbnail is not None:
             candidates.append(item.thumbnail)
+        # A flat collection item only has metadata.  Probing maxres/sd here
+        # would add network requests to the stage that must stay cheap.
+        if item.resolution is ResolutionState.FLAT:
+            return select_best_thumbnail(candidates)
         if item.id and item.position in (None, 1):
             existing = {thumbnail.url for thumbnail in candidates}
             for template, source, fallback_width, fallback_height in _THUMBNAIL_FALLBACKS:

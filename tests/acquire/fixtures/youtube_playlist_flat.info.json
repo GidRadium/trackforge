@@ -1,0 +1,111 @@
+{
+  "_type": "playlist",
+  "id": "PLflat1234567890",
+  "title": "TrackForge Flat Playlist",
+  "description": "A sanitized flat playlist fixture for offline metadata tests.",
+  "uploader": "TrackForge Channel",
+  "channel": "TrackForge Channel",
+  "channel_id": "UCtrackforge0000000000",
+  "webpage_url": "https://www.youtube.com/playlist?list=PLflat1234567890",
+  "original_url": "https://www.youtube.com/playlist?list=PLflat1234567890",
+  "playlist_count": 5,
+  "extractor": "youtube:tab",
+  "extractor_key": "YoutubeTab",
+  "thumbnails": [
+    {
+      "url": "https://i.ytimg.com/vi/plflat001/hqdefault.jpg",
+      "width": 480,
+      "height": 360,
+      "ext": "jpg"
+    }
+  ],
+  "entries": [
+    {
+      "_type": "url",
+      "id": "plflat001",
+      "title": "First Playlist Track",
+      "url": "https://www.youtube.com/watch?v=plflat001",
+      "webpage_url": "https://www.youtube.com/watch?v=plflat001",
+      "uploader": "TrackForge Channel",
+      "channel": "TrackForge Channel",
+      "duration": 181.0,
+      "playlist_index": 1,
+      "thumbnails": [
+        {
+          "url": "https://i.ytimg.com/vi/plflat001/hqdefault.jpg",
+          "width": 480,
+          "height": 360,
+          "ext": "jpg"
+        }
+      ]
+    },
+    {
+      "_type": "url",
+      "id": "plflat002",
+      "title": "Second Playlist Track",
+      "url": "https://www.youtube.com/watch?v=plflat002",
+      "uploader": "TrackForge Channel",
+      "duration": 202.5,
+      "playlist_index": 2,
+      "thumbnails": [
+        {
+          "url": "https://i.ytimg.com/vi/plflat002/hqdefault.jpg",
+          "width": 480,
+          "height": 360,
+          "ext": "jpg"
+        }
+      ]
+    },
+    {
+      "_type": "url",
+      "id": "plflat003",
+      "title": "Third Playlist Track",
+      "webpage_url": "https://www.youtube.com/watch?v=plflat003",
+      "channel": "TrackForge Channel",
+      "duration": 240.0,
+      "playlist_index": 3,
+      "thumbnails": [
+        {
+          "url": "https://i.ytimg.com/vi/plflat003/hqdefault.jpg",
+          "width": 480,
+          "height": 360,
+          "ext": "jpg"
+        }
+      ]
+    },
+    {
+      "_type": "url",
+      "id": "plflat004",
+      "title": "Fourth Playlist Track",
+      "url": "https://www.youtube.com/watch?v=plflat004",
+      "uploader": "Guest Artist",
+      "duration": 165.0,
+      "playlist_index": 4,
+      "thumbnails": [
+        {
+          "url": "https://i.ytimg.com/vi/plflat004/hqdefault.jpg",
+          "width": 480,
+          "height": 360,
+          "ext": "jpg"
+        }
+      ]
+    },
+    {
+      "_type": "url",
+      "id": "plflat005",
+      "title": "Fifth Playlist Track",
+      "url": "https://www.youtube.com/watch?v=plflat005",
+      "uploader": "TrackForge Channel",
+      "duration": 199.0,
+      "playlist_index": 5,
+      "thumbnails": [
+        {
+          "url": "https://i.ytimg.com/vi/plflat005/hqdefault.jpg",
+          "width": 480,
+          "height": 360,
+          "ext": "jpg"
+        }
+      ]
+    }
+  ]
+}
