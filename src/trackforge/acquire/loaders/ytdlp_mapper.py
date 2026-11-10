@@ -99,6 +99,7 @@ _NON_EXTRA_KEYS = frozenset(
         "audio_channels",
         "automatic_captions",
         "container",
+        "cookies",
         "entries",
         "ext",
         "filesize",
@@ -242,6 +243,24 @@ def _codec_present(value: object) -> bool:
     return value.strip().lower() not in {"", "none", "null"}
 
 
+def _looks_audio_only(fmt: Mapping[str, Any]) -> bool:
+    """Recognize audio-only HLS/DASH formats whose ``acodec`` is missing.
+
+    Vimeo and VK expose separate audio renditions with ``vcodec="none"`` and
+    no ``acodec``/``abr`` at all.  Their only marker is ``audio`` in the
+    format id or note.  Without this hint they would be mistaken for
+    progressive video and would never be paired with a video stream.
+    """
+    if _positive_int(fmt.get("width")) or _positive_int(fmt.get("height")):
+        return False
+    marker = " ".join(
+        part
+        for part in (_text(fmt.get("format_id")), _text(fmt.get("format_note")))
+        if part
+    ).lower()
+    return "audio" in marker
+
+
 def _classify_format(fmt: Mapping[str, Any], *, direct: bool = False) -> MediaKind:
     """Classify one yt-dlp format without trusting optional codec fields."""
     vcodec = fmt.get("vcodec")
@@ -274,6 +293,8 @@ def _classify_format(fmt: Mapping[str, Any], *, direct: bool = False) -> MediaKi
         return MediaKind.AUDIO
 
     # Codecs are missing entirely (common for direct file URLs).
+    if _looks_audio_only(fmt):
+        return MediaKind.AUDIO
     if direct and ext in _AUDIO_EXTENSIONS and not has_dimensions:
         return MediaKind.AUDIO
     if direct:
@@ -293,6 +314,16 @@ def _format_has_source(fmt: Mapping[str, Any]) -> bool:
     if _text(fmt.get("url")) is not None:
         return True
     return bool(_items(fmt.get("fragments")))
+
+
+def _entry_has_media(entry: Mapping[str, Any]) -> bool:
+    """Whether a collection entry already carries playable media.
+
+    VK wall entries for audio attachments expose only per-format URLs, with
+    no page URL of their own.  Such an entry is still usable and should fall
+    back to the parent post URL instead of failing as unresolved.
+    """
+    return bool(_items(entry.get("formats")) or _text(entry.get("url")))
 
 
 def _stream(
@@ -963,7 +994,14 @@ def build_variants(
     ``url`` becomes one progressive variant.
     """
     raw_formats = _items(item.get("formats"))
-    direct = not raw_formats and _text(item.get("url")) is not None
+    item_type = (_text(item.get("_type")) or "").lower()
+    # A flat/redirect entry has a page ``url`` but no media formats; it must
+    # not be mistaken for a direct file just because the URL is present.
+    direct = (
+        not raw_formats
+        and _text(item.get("url")) is not None
+        and item_type not in {"url", "url_transparent"}
+    )
     if direct:
         raw_formats = [item]
 
@@ -1349,7 +1387,7 @@ class YtDlpMapper:
                     ref,
                     flat=effective_flat,
                     position=position,
-                    fallback_url=None,
+                    fallback_url=ref.url if _entry_has_media(entry) else None,
                 )
                 for position, entry in enumerate(entries, start=1)
             )

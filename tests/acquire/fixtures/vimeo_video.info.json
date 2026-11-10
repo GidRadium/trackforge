@@ -1,0 +1,78 @@
+{
+  "_type": "video",
+  "id": "76979871",
+  "display_id": "76979871",
+  "title": "The New Vimeo Player (You Know, For Videos)",
+  "uploader": "Vimeo",
+  "duration": 62,
+  "webpage_url": "https://player.vimeo.com/video/76979871",
+  "original_url": "https://player.vimeo.com/video/76979871",
+  "thumbnails": [
+    {
+      "url": "https://i.vimeocdn.com/video/452001751-8216e0571c251a09d7a8387550942d89f7f86f6398f8ed886e639b0dd50d3c90-d"
+    }
+  ],
+  "thumbnail": "https://i.vimeocdn.com/video/452001751-8216e0571c251a09d7a8387550942d89f7f86f6398f8ed886e639b0dd50d3c90-d",
+  "formats": [
+    {
+      "format_id": "hls-akfire_interconnect_quic-audio-low-English",
+      "format_note": "English, low",
+      "ext": "mp4",
+      "vcodec": "none",
+      "protocol": "m3u8_native",
+      "language": "en",
+      "url": "https://media.example.test/vimeo/0/hls-akfire_interconnect_quic-audio-low-English.m3u8"
+    },
+    {
+      "format_id": "hls-akfire_interconnect_quic-audio-high-English",
+      "format_note": "English, high",
+      "ext": "mp4",
+      "vcodec": "none",
+      "protocol": "m3u8_native",
+      "language": "en",
+      "url": "https://media.example.test/vimeo/1/hls-akfire_interconnect_quic-audio-high-English.m3u8"
+    },
+    {
+      "format_id": "hls-akfire_interconnect_quic-407",
+      "ext": "mp4",
+      "vcodec": "avc1.42C01E",
+      "acodec": "none",
+      "protocol": "m3u8_native",
+      "width": 480,
+      "height": 270,
+      "fps": 23.976,
+      "tbr": 407.0,
+      "abr": 0,
+      "dynamic_range": "SDR",
+      "url": "https://media.example.test/vimeo/2/hls-akfire_interconnect_quic-407.m3u8"
+    },
+    {
+      "format_id": "hls-akfire_interconnect_quic-1526",
+      "ext": "mp4",
+      "vcodec": "avc1.64001F",
+      "acodec": "none",
+      "protocol": "m3u8_native",
+      "width": 960,
+      "height": 540,
+      "fps": 23.976,
+      "tbr": 1526.0,
+      "abr": 0,
+      "dynamic_range": "SDR",
+      "url": "https://media.example.test/vimeo/3/hls-akfire_interconnect_quic-1526.m3u8"
+    },
+    {
+      "format_id": "hls-akfire_interconnect_quic-2644",
+      "ext": "mp4",
+      "vcodec": "avc1.64001F",
+      "acodec": "none",
+      "protocol": "m3u8_native",
+      "width": 1280,
+      "height": 720,
+      "fps": 23.976,
+      "tbr": 2644.0,
+      "abr": 0,
+      "dynamic_range": "SDR",
+      "url": "https://media.example.test/vimeo/4/hls-akfire_interconnect_quic-2644.m3u8"
+    }
+  ]
+}

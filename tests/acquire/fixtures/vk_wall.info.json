@@ -1,0 +1,123 @@
+{
+  "_type": "playlist",
+  "id": "-8881618_469114",
+  "title": "METAL | обитель тяжёлой музыки - Wall post -8881618_469114",
+  "description": "Sanitized VK wall probe with one video and one audio attachment.",
+  "webpage_url": "https://vk.com/wall-8881618_469114",
+  "original_url": "https://vk.com/wall-8881618_469114",
+  "entries": [
+    {
+      "_type": "video",
+      "id": "-2000843141_119843141",
+      "display_id": "-2000843141_119843141",
+      "title": "Nebulae Come Sweet — Claritas",
+      "duration": 346,
+      "upload_date": "20230426",
+      "timestamp": 1682501064,
+      "uploader_id": "474499219",
+      "webpage_url": "https://vk.com/video-2000843141_119843141",
+      "original_url": "https://vk.com/video-2000843141_119843141",
+      "is_live": false,
+      "uploader": "METAL | обитель тяжёлой музыки",
+      "description": "Sanitized VK video attachment metadata.",
+      "thumbnails": [
+        {
+          "url": "https://sun9-66.userapi.com/8X3hGBCYdWgLYW7iSjraP3501m3QRc-p2BncWQ/wF4nbwdeYX8.jpg"
+        }
+      ],
+      "thumbnail": "https://sun9-66.userapi.com/8X3hGBCYdWgLYW7iSjraP3501m3QRc-p2BncWQ/wF4nbwdeYX8.jpg",
+      "formats": [
+        {
+          "format_id": "dash_sep-6",
+          "format_note": "DASH video",
+          "ext": "mp4",
+          "vcodec": "avc1.640028",
+          "acodec": "none",
+          "protocol": "https",
+          "width": 1920,
+          "height": 1080,
+          "fps": 25,
+          "tbr": 7821.396,
+          "abr": 0,
+          "dynamic_range": "SDR",
+          "url": "https://media.example.test/vk-video/0/dash_sep-6.mp4"
+        },
+        {
+          "format_id": "hls_fmp4-2525",
+          "ext": "mp4",
+          "vcodec": "avc1.64001F",
+          "acodec": "none",
+          "protocol": "m3u8_native",
+          "width": 1280,
+          "height": 720,
+          "fps": 25.0,
+          "tbr": 2525.644,
+          "abr": 0,
+          "dynamic_range": "SDR",
+          "url": "https://media.example.test/vk-video/1/hls_fmp4-2525.m3u8"
+        },
+        {
+          "format_id": "hls-308",
+          "ext": "mp4",
+          "protocol": "m3u8_native",
+          "width": 256,
+          "height": 144,
+          "fps": 25.0,
+          "tbr": 308.681,
+          "dynamic_range": "SDR",
+          "url": "https://media.example.test/vk-video/2/hls-308.m3u8"
+        },
+        {
+          "format_id": "dash_sep-13",
+          "format_note": "DASH audio",
+          "ext": "m4a",
+          "vcodec": "none",
+          "acodec": "mp4a.40.2",
+          "protocol": "https",
+          "tbr": 267.09,
+          "abr": 267.09,
+          "asr": 48000,
+          "url": "https://media.example.test/vk-video/3/dash_sep-13.m4a"
+        },
+        {
+          "format_id": "dash_sep-12",
+          "format_note": "DASH audio",
+          "ext": "m4a",
+          "vcodec": "none",
+          "acodec": "mp4a.40.2",
+          "protocol": "https",
+          "tbr": 135.636,
+          "abr": 135.636,
+          "asr": 48000,
+          "url": "https://media.example.test/vk-video/4/dash_sep-12.m4a"
+        }
+      ]
+    },
+    {
+      "id": "135220665_111806521",
+      "title": "Black Shadow - Слепое Верование",
+      "artist": "Black Shadow",
+      "track": "Слепое Верование",
+      "duration": 370,
+      "uploader": "METAL | обитель тяжёлой музыки",
+      "thumbnails": [
+        {
+          "url": "https://sun9-66.userapi.com/fixture-audio-cover.jpg"
+        },
+        {
+          "url": "https://sun9-66.userapi.com/fixture-audio-cover-2.jpg"
+        }
+      ],
+      "formats": [
+        {
+          "format_id": "audio-m4a",
+          "url": "https://media.example.test/vk-audio/135220665_111806521.m4a",
+          "ext": "m4a",
+          "vcodec": "none",
+          "acodec": "mp3",
+          "container": "m4a_dash"
+        }
+      ]
+    }
+  ]
+}

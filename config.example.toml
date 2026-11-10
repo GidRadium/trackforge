@@ -135,7 +135,14 @@ cookies = "~/.config/trackforge/cookies/pinterest.txt"
 #
 # The loader has name "yt-dlp" and config_key "yt_dlp", so its section is
 # [sources.yt_dlp]. It is selected last, after site-specific loaders.
+#
+# Vimeo and Bandcamp use this profile. Vimeo's normal web client currently
+# requires cookies; public videos also work through player.vimeo.com URLs.
+# Vimeo shares this generic profile/cookie jar with other generic sites;
+# use a dedicated profile if you need per-source isolation. Bandcamp needs
+# no cookies.
 # ---------------------------------------------------------------------------
 [sources.yt_dlp]
 socket_timeout = 20
 # proxy = "${YTDLP_PROXY}"
+# cookies = "~/.config/trackforge/cookies/vimeo.txt"

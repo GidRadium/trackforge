@@ -1,0 +1,86 @@
+{
+  "_type": "video",
+  "id": "2650410135",
+  "display_id": "2650410135",
+  "title": "Ben Prunty - Lanius (Battle)",
+  "track": "Lanius (Battle)",
+  "track_number": 1,
+  "track_id": "2650410135",
+  "album": "FTL: Advanced Edition Soundtrack",
+  "artist": "Ben Prunty",
+  "artists": [
+    "Ben Prunty"
+  ],
+  "album_artist": "Ben Prunty",
+  "album_artists": [
+    "Ben Prunty"
+  ],
+  "duration": 260.877,
+  "release_date": "20140403",
+  "release_timestamp": 1396483200,
+  "release_year": 2014,
+  "upload_date": "20140403",
+  "timestamp": 1396508491,
+  "uploader": "Ben Prunty",
+  "uploader_id": "benprunty",
+  "uploader_url": "https://benprunty.bandcamp.com",
+  "webpage_url": "https://benprunty.bandcamp.com/track/lanius-battle",
+  "original_url": "https://benprunty.bandcamp.com/track/lanius-battle",
+  "tags": [
+    "soundtrack",
+    "chiptunes",
+    "cinematic",
+    "electronic",
+    "video game music",
+    "North Carolina"
+  ],
+  "thumbnails": [
+    {
+      "url": "https://f4.bcbits.com/img/a1270682128_5.jpg"
+    }
+  ],
+  "thumbnail": "https://f4.bcbits.com/img/a1270682128_5.jpg",
+  "formats": [
+    {
+      "format_id": "mp3-128",
+      "ext": "mp3",
+      "vcodec": "none",
+      "acodec": "mp3",
+      "protocol": "https",
+      "tbr": 128,
+      "abr": 128,
+      "filesize_approx": 4174032,
+      "url": "https://media.example.test/bandcamp/0/mp3-128.mp3"
+    },
+    {
+      "format_id": "mp3-320",
+      "format_note": "MP3 320",
+      "ext": "mp3",
+      "vcodec": "none",
+      "acodec": "mp3",
+      "protocol": "https",
+      "filesize": 10100000,
+      "url": "https://media.example.test/bandcamp/1/mp3-320.mp3"
+    },
+    {
+      "format_id": "aac-hi",
+      "format_note": "AAC",
+      "ext": "m4a",
+      "vcodec": "none",
+      "acodec": "aac",
+      "protocol": "https",
+      "filesize": 5200000,
+      "url": "https://media.example.test/bandcamp/2/aac-hi.m4a"
+    },
+    {
+      "format_id": "flac",
+      "format_note": "FLAC",
+      "ext": "flac",
+      "vcodec": "none",
+      "acodec": "flac",
+      "protocol": "https",
+      "filesize": 41100000,
+      "url": "https://media.example.test/bandcamp/3/flac.flac"
+    }
+  ]
+}
