@@ -21,7 +21,8 @@ _USERINFO_RE = re.compile(
 _COOKIE_HEADER_RE = re.compile(r"(?i)(cookie\s*:\s*).*")
 _AUTH_HEADER_RE = re.compile(r"(?i)(authorization\s*:\s*).*")
 _QUERY_SECRET_RE = re.compile(
-    r"(?i)([?&](?:token|access_token|api_key|password|secret)=)[^&\s]+"
+    r"(?i)([?&](?:token|access_token|api_key|password|secret|sig|signature|"
+    r"expires|exp|policy|key-pair-id|x-amz-[^=&\s]+)=)[^&\s]+"
 )
 _SENTINELS = frozenset({"none", "env"})
 

@@ -14,8 +14,17 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING, ClassVar
 
 from ..metadata.model import PartialDate
+
+if TYPE_CHECKING:
+    from .serialization import SourceInfoDict
+
+# The public inspect JSON contract.  Bump this only together with a documented
+# schema change; internal/model additions that are not serialized do not need
+# a bump, but public fields do.
+SOURCE_INFO_SCHEMA_VERSION = 1
 
 
 class InputKind(StrEnum):
@@ -276,6 +285,8 @@ class MediaItem:
 class SourceInfo:
     """A resolved source: a single item, a post or a collection."""
 
+    SCHEMA_VERSION: ClassVar[int] = SOURCE_INFO_SCHEMA_VERSION
+
     source: str
     url: str
     kind: SourceKind
@@ -292,6 +303,23 @@ class SourceInfo:
     def __post_init__(self) -> None:
         if not isinstance(self.kind, SourceKind):
             object.__setattr__(self, "kind", SourceKind(self.kind))
+
+    @property
+    def schema_version(self) -> int:
+        """Version of the public ``inspect`` JSON contract."""
+        return SOURCE_INFO_SCHEMA_VERSION
+
+    def to_dict(self) -> SourceInfoDict:
+        """Return the frozen schema-version-1 representation."""
+        from .serialization import source_info_to_dict
+
+        return source_info_to_dict(self)
+
+    def to_json(self, *, indent: int | None = 2) -> str:
+        """Return the frozen schema-version-1 representation as JSON text."""
+        from .serialization import source_info_to_json
+
+        return source_info_to_json(self, indent=indent)
 
     def ref(self) -> SourceRef:
         return SourceRef(self.source, self.url, self.id)

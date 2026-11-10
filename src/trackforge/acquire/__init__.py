@@ -87,6 +87,7 @@ from .loaders import (
     select_best_thumbnail,
 )
 from .models import (
+    SOURCE_INFO_SCHEMA_VERSION,
     CollisionPolicy,
     DownloadedFile,
     DownloadFailure,
@@ -123,10 +124,27 @@ from .progress import (
     RecordingSink,
 )
 from .registry import LoaderRegistry, ResolvedLoader, default_registry
+from .serialization import (
+    MEDIA_ITEM_FIELDS,
+    RECOMMENDATION_FIELDS,
+    SOURCE_INFO_FIELDS,
+    THUMBNAIL_FIELDS,
+    VARIANT_FIELDS,
+    assert_schema_shape,
+    serialize_source_info,
+    source_info_to_dict,
+    source_info_to_json,
+)
 from .service import AcquisitionService
 from .staging import StagingArea, allocate_target
 
 __all__ = [
+    "MEDIA_ITEM_FIELDS",
+    "RECOMMENDATION_FIELDS",
+    "SOURCE_INFO_FIELDS",
+    "SOURCE_INFO_SCHEMA_VERSION",
+    "THUMBNAIL_FIELDS",
+    "VARIANT_FIELDS",
     "AcquireError",
     "AcquisitionService",
     "AmbiguousInput",
@@ -208,6 +226,7 @@ __all__ = [
     "YtDlpLoader",
     "YtDlpMapper",
     "allocate_target",
+    "assert_schema_shape",
     "best_audio_variant",
     "best_variant",
     "best_video_variant",
@@ -237,6 +256,9 @@ __all__ = [
     "resolve_proxy",
     "run_doctor",
     "select_best_thumbnail",
+    "serialize_source_info",
+    "source_info_to_dict",
+    "source_info_to_json",
     "user_config_path",
     "validate_cookie_file",
 ]

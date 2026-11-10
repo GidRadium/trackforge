@@ -131,6 +131,7 @@ class FakeLoader(MediaLoader):
         self._info = info
         self._search_results = search_results
         self.info_calls: list[SourceRef] = []
+        self.info_requests: list[tuple[SourceRef, bool | None, int | None]] = []
         self.download_calls: list[DownloadRequest] = []
         self.profiles: list[SourceProfile] = []
 
@@ -158,8 +159,8 @@ class FakeLoader(MediaLoader):
         flat: bool | None = False,
         limit: int | None = None,
     ) -> SourceInfo:
-        del flat, limit
         self.info_calls.append(ref)
+        self.info_requests.append((ref, flat, limit))
         # Touch the context so the test exercises the real contract.
         assert ctx.profile.name
         assert isinstance(ctx.progress, RecordingSink) or ctx.progress is not None

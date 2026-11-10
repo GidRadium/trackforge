@@ -1,6 +1,7 @@
 # Архитектура получения медиа (input → download → ingest)
 
-**Статус:** предложение для обсуждения  
+**Статус:** L1 завершён; `SourceInfo v1` frozen (2026-11-10)
+
 **Дата:** 2026-11-09  
 **Связанные документы:** [IDEA.md](./IDEA.md), [METADATA_RESEARCH.md](./METADATA_RESEARCH.md), [INGESTION_RESEARCH.md](./INGESTION_RESEARCH.md), [INGESTION_IMPLEMENTATION_PLAN.md](./INGESTION_IMPLEMENTATION_PLAN.md)
 
@@ -352,6 +353,76 @@ class SourceInfo:
 - `raw`/`info_dict` **не входит** в публичную модель. Адаптер держит его внутри; наружу — только нормализованные данные. Это защищает от гигантских словарей и изменения схемы yt-dlp.
 
 > `PartialDate` переиспользуем из `trackforge.metadata`, чтобы не плодить второй тип даты.
+
+### 3.2.1. `SourceInfo` v1 — зафиксировано
+
+**Дата фиксации:** 2026-11-10.  **`schema_version`: 1.**
+
+Публичный JSON-контракт реализован в
+`trackforge.acquire.serialization` (`source_info_to_dict`,
+`source_info_to_json`); у `SourceInfo` есть `schema_version`, `to_dict()` и
+`to_json()`.  Для машинного вывода CLI используется только этот
+сериализатор, а не `dataclasses.asdict` и не сырой `info_dict`.
+
+```json
+{
+  "schema_version": 1,
+  "source": "youtube",
+  "kind": "single",
+  "title": "...",
+  "creator": "...",
+  "thumbnail": {"url": "...", "width": 1280, "height": 720},
+  "items": [
+    {
+      "id": "...",
+      "title": "...",
+      "page_url": "...",
+      "resolution": "full",
+      "thumbnail": {"url": "...", "width": 1280, "height": 720},
+      "recommendations": {"audio": "...", "video": "..."},
+      "variants": [
+        {"id": "...", "label": "...", "kind": "video", "container": "mp4",
+         "height": 1080, "filesize": 48000000, "requires_merge": true}
+      ]
+    }
+  ],
+  "warnings": []
+}
+```
+
+Правила v1:
+
+- набор полей на всех трёх уровнях фиксирован; меняется только вместе с
+  `schema_version`;
+- `kind` — `single`/`post`/`collection`; `resolution` — `full`/`flat`/
+  `unresolved`; `variant.kind` — значение `MediaKind`;
+- для flat-режима каждый item имеет `resolution: "flat"` и `variants: []`;
+  список items при этом ограничен `--limit`/настройкой источника;
+- `variants` не содержат подписанных media URL, `format_id`-селекторов,
+  `http_headers` и потоков; для скачивания L2 переизвлекает формат по
+  `variant.id`/`item.page_url`;
+- `thumbnail` — только URL и размеры, без байтов и заголовков;
+- `recommendations` в v1 — только `audio` и `video`;
+  `image`/`document` появятся в новой версии вместе с L5;
+- `filesize` — точный размер, если источник его дал, иначе приблизительный
+  (`filesize_approx`); отдельного признака точности в v1 нет;
+- **никогда не сериализуются:** `cookies`, `http_headers`, заголовки
+  авторизации, токены, proxy, `extras`, `subtitles`, `StreamInfo.url`,
+  `DownloadVariant.selector`, сырой `info_dict`;
+- новые source-specific данные сначала попадают только в
+  `MediaItem.extras`; чтобы вывести их в JSON, нужен `schema_version: 2`.
+
+Публичный API:
+
+```python
+info = AcquisitionService(...).inspect(url, flat=False, limit=None, source=None)
+payload = info.to_dict()       # schema_version == 1
+text = info.to_json()          # тот же объект, ensure_ascii=False
+```
+
+CLI: `tfg inspect URL [--json] [--flat] [--limit N] [--source NAME]`.
+Коды выхода: `0` — успех, `1` — ошибка получения/конфигурации, `2` —
+неверные аргументы.  Команда не задаёт вопросов и не скачивает медиа.
 
 ### 3.3. Поиск
 
@@ -1998,7 +2069,11 @@ tfg inspect "https://..." --json
 - `--proxy URL` — разовый override прокси;
 - `--config PATH` — явный конфиг (не читаем `.trackforge.toml` из cwd).
 
-### 10.4. JSON
+### 10.4. JSON (download result; будущие L2/L3)
+
+Для `tfg inspect` действует отдельная зафиксированная схема из §3.2.1
+(`schema_version: 1`, без `input`/`result`). Ниже — эскиз будущего JSON
+результата скачивания; он не должен подменять inspect-контракт.
 
 ```json
 {
@@ -2017,10 +2092,10 @@ tfg inspect "https://..." --json
         "recommendations": {"audio": "audio-m4a-128", "video": "1080p-mp4"},
         "variants": [
           {"id": "1080p-mp4", "label": "1080p MP4", "kind": "video",
-           "container": "mp4", "height": 1080, "size": 48000000,
+           "container": "mp4", "height": 1080, "filesize": 48000000,
            "requires_merge": true},
           {"id": "audio-m4a-128", "label": "Audio M4A 128k", "kind": "audio",
-           "container": "m4a", "size": 4100000}
+           "container": "m4a", "filesize": 4100000}
         ]
       }
     ]

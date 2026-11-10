@@ -665,23 +665,26 @@ class YandexMusicLoader(YtDlpLoader):
             result = data.get("result")
             if not isinstance(result, Mapping):
                 result = data
-            tracks: list[Mapping[str, Any]] = []
+            album_tracks: list[Mapping[str, Any]] = []
             volumes = result.get("volumes")
             if isinstance(volumes, list):
                 for volume in volumes:
                     if not isinstance(volume, list):
                         continue
-                    tracks.extend(
+                    album_tracks.extend(
                         entry for entry in volume if isinstance(entry, Mapping)
                     )
-            if not tracks:
+            if not album_tracks:
                 raw_tracks = result.get("tracks")
                 if isinstance(raw_tracks, list):
-                    tracks.extend(
+                    album_tracks.extend(
                         entry for entry in raw_tracks if isinstance(entry, Mapping)
                     )
             album_artists = _api_names(result.get("artists"))
-            return tracks[:limit], album_artists[0] if album_artists else None
+            return (
+                album_tracks[:limit],
+                album_artists[0] if album_artists else None,
+            )
 
         if kind == "playlist":
             login, playlist_kind = values
@@ -700,13 +703,18 @@ class YandexMusicLoader(YtDlpLoader):
         raw_tracks = result.get("tracks")
         if not isinstance(raw_tracks, list):
             return [], None
-        tracks = []
+        playlist_tracks: list[Mapping[str, Any]] = []
         for entry in raw_tracks:
             if not isinstance(entry, Mapping):
                 continue
             wrapped = entry.get("track")
-            tracks.append(wrapped if isinstance(wrapped, Mapping) else entry)
-        return tracks[:limit], _api_owner_name(result.get("owner"))
+            playlist_tracks.append(
+                wrapped if isinstance(wrapped, Mapping) else entry
+            )
+        return (
+            playlist_tracks[:limit],
+            _api_owner_name(result.get("owner")),
+        )
 
     def _fallback_playlist_source(
         self,

@@ -15,11 +15,11 @@ from trackforge.acquire.config import SourceProfile
 from trackforge.acquire.errors import AuthRequired, UnsupportedUrl
 from trackforge.acquire.loaders import yandex_music
 from trackforge.acquire.loaders.base import LoaderContext
+from trackforge.acquire.loaders.thumbnail_probe import ImageSize
 from trackforge.acquire.loaders.yandex_music import (
     YandexMusicLoader,
     normalize_yandex_titles,
 )
-from trackforge.acquire.loaders.thumbnail_probe import ImageSize
 from trackforge.acquire.loaders.ytdlp_mapper import YtDlpMapper
 from trackforge.acquire.models import MediaKind, SourceRef
 from trackforge.metadata.model import PartialDate

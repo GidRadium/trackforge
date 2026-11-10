@@ -28,19 +28,23 @@ uv run tfg scan music/ --progress
 uv run tfg scan music/ --limit 100
 uv run tfg doctor --source youtube
 uv run tfg doctor --source youtube --check-network
-uv run tfg inspect "https://www.youtube.com/watch?v=..." --cookies cookies.txt
 uv run tfg inspect "https://www.youtube.com/watch?v=..." --json
-uv run tfg inspect "https://www.youtube.com/watch?v=..." --raw
-uv run tfg inspect "https://www.youtube.com/watch?v=..." --player-client default
+uv run tfg inspect "https://www.youtube.com/playlist?list=..." --flat --limit 20 --json
+uv run tfg inspect "https://soundcloud.com/.../sets/..." --flat --limit 20
+uv run tfg inspect "https://www.youtube.com/watch?v=..." --cookies cookies.txt
 uv run pytest
 ```
 
-`tfg inspect` is a temporary L1.1 debug command: it prints normalized
-`SourceInfo`, `--json` prints it machine-readably, and `--raw` prints the
-sanitized yt-dlp `info_dict`. It never downloads media. The public `inspect`
-CLI contract is finalized in L1.5. `--player-client default` ignores a
-configured `extractor_args.youtube.player_client` restriction for one run;
-`--no-extractor-args` drops all configured extractor arguments.
+`tfg inspect` is the public L1 acquisition command. It resolves metadata only:
+it never downloads media and never asks interactive questions. `--json` prints
+the frozen `SourceInfo` v1 object (`schema_version: 1`); the default output is a
+human-readable summary of source/kind/title/creator/thumbnail/items/variants.
+`--flat` lists collection entries without resolving their formats and
+`--limit` bounds that list; both are also available through
+`AcquisitionService.inspect(url, flat=..., limit=..., source=...)`. Exit codes
+are `0` success, `1` acquisition/configuration error, `2` invalid arguments.
+The JSON contract deliberately contains no cookies, tokens, HTTP headers,
+proxy settings, stream URLs or raw yt-dlp `info_dict`.
 
 `tfg doctor` is offline by default. It checks the selected source profile,
 cookie file permissions/format, proxy URL, yt-dlp, yt-dlp-ejs, Deno, ffmpeg and

@@ -1,10 +1,11 @@
 # Аудит сайтов L1.4 — Vimeo, Bandcamp, Pinterest, VK
 
-**Статус:** завершён  
+**Статус:** завершён; `SourceInfo v1` frozen (2026-11-10)
+
 **Дата:** 2026-11-10  
 **Проверено на:** `yt-dlp 2026.10.26`, Python `3.14.9`  
 **Общий контекст:** [INGESTION_ARCHITECTURE.md](./INGESTION_ARCHITECTURE.md), [INGESTION_RESEARCH.md](./INGESTION_RESEARCH.md)  
-**Следующий чекпоинт:** [plan/L1_5_INSPECT_FREEZE.md](./plan/L1_5_INSPECT_FREEZE.md)
+**Следующий чекпоинт:** [plan/L2_DOWNLOAD.md](./plan/L2_DOWNLOAD.md)
 
 ---
 
@@ -20,8 +21,9 @@ Bandcamp, Pinterest и VK, и чего не хватает модели `SourceI
 - Pinterest: image-only pin, video pin, доска (по данным экстрактора);
 - VK: wall post, direct video, аудио-вложения (по форме `VKWallPostIE`).
 
-**Не проверялось и не делалось:** скачивание медиа, полноценные
-`PinterestLoader`/`VkApiLoader`, поиск, `SourceInfo` v1.
+**Не проверялось и не делалось в L1.4:** скачивание медиа, полноценные
+`PinterestLoader`/`VkApiLoader`, поиск. `SourceInfo v1` зафиксирован
+отдельным чекпоинтом L1.5 (см. §10).
 
 ---
 
@@ -264,27 +266,58 @@ API и манифестам.
 - `test_unknown_fields.py` — неизвестные/битые поля, thumbnail'ы, числа,
   `_type`, транспортные поля не роняют mapper.
 
+Для L1.5 добавлены:
+
+- `test_inspect_service.py` — single/collection/flat/limit/source,
+  типизированные ошибки и отсутствие download;
+- `test_inspect_json.py` — схема v1, `schema_version`, flat-состояние и
+  отсутствие секретов/сырых полей;
+- `test_inspect_cli.py` — `CliRunner`, `--json`/`--flat`/`--limit`/
+  `--source`, коды выхода 0/1/2;
+- `test_model_freeze.py` — имена/наборы полей модели и JSON v1, все
+  fixtures в flat/full, неизвестные поля только в `extras`.
+
 Полный прогон:
 
 ```text
 uv run pytest -q
-639 passed
+714 passed
 ```
 
 ---
 
-## 10. Выводы для L1.5 и L5
+## 10. `SourceInfo v1` frozen
 
-Для L1.5:
+**Дата фиксации:** 2026-11-10.  **Версия:** `schema_version: 1`.
 
-- Vimeo/Bandcamp покрываются generic-моделью; **новые поля не нужны**;
-- `SourceInfo` можно фиксировать без `POST`/`IMAGE`-расширений, если
-  явно записать, что Pinterest image/VK wall пока не полноценные
-  источники;
-- cookies для Vimeo сейчас задаются в `[sources.yt_dlp]`, а не в
-  отдельном `[sources.vimeo]`; если нужна изоляция cookies по источнику,
-  это отдельный лёгкий loader, а не поле модели;
-- `track_number`/`disc_number`/`tags`/`categories` остаются в `extras`.
+Решение: `SourceInfo` и публичный JSON-контракт `inspect` считаются
+зафиксированными. L2 может использовать модель и `variant.id` без ожидания
+дополнительных полей.
+
+Что вошло в v1:
+
+- модель: `SourceInfo`, `MediaItem`, `DownloadVariant`, `Thumbnail`,
+  `Recommendations`, `StreamInfo` — наборы полей закреплены
+  `test_model_freeze.py`;
+- сериализатор: `trackforge.acquire.serialization`
+  (`source_info_to_dict`/`source_info_to_json`), плюс
+  `SourceInfo.to_dict()`/`to_json()` и `schema_version`;
+- JSON: `schema_version`, `source`, `kind`, `title`, `creator`, `thumbnail`,
+  `items`, `warnings`; у item — `id`, `title`, `page_url`, `resolution`,
+  `thumbnail`, `recommendations`, `variants`; у variant — `id`, `label`,
+  `kind`, `container`, `height`, `filesize`, `requires_merge`;
+- flat: `resolution="flat"`, `variants=[]`;
+- в JSON нет `cookies`, `http_headers`, токенов, proxy, `extras`,
+  `subtitles`, `StreamInfo.url`, селекторов и сырого `info_dict`;
+- API: `AcquisitionService.inspect(url, flat=..., limit=..., source=...)`
+  возвращает `SourceInfo` и не скачивает медиа;
+- CLI: `tfg inspect URL [--json] [--flat] [--limit N] [--source NAME]`,
+  коды выхода 0/1/2, без интерактивных вопросов.
+
+Правило расширения: новые source-specific поля — только в
+`MediaItem.extras`; публичное поле в JSON — только с новой
+`schema_version`.  `POST` и `IMAGE`-варианты (Pinterest/VK) остаются
+задачами L5 и не меняют v1.
 
 Для L5:
 
@@ -297,4 +330,5 @@ uv run pytest -q
 - при добавлении `POST` проверить `group_id` и `description` на нескольких
   медиа в одном посте.
 
-`SourceInfo v1` **не зафиксирован** этим чекпоинтом.
+`SourceInfo v1` **зафиксирован**; следующие изменения публичной схемы —
+только через новую версию.

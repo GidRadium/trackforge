@@ -1,9 +1,10 @@
 """High-level acquisition service.
 
-The service owns loader selection and context creation; it deliberately does
-not ask questions or download anything.  L1.5 extends it with the public
-``inspect`` CLI/JSON surface, while the method itself already works for the
-loaders implemented in L1.1.
+The service owns loader selection and context creation.  ``inspect`` is the
+public L1 entry point: it resolves a URL, returns a normalized
+:class:`~trackforge.acquire.models.SourceInfo` and never downloads media or
+asks the user a question.  JSON rendering lives in
+:mod:`trackforge.acquire.serialization`.
 """
 
 # pyright: standard
@@ -12,13 +13,12 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
 
 from .config import AppConfig
 from .loaders.base import LoaderContext
 from .models import SourceInfo, SourceRef
 from .progress import NullProgressSink
-from .registry import LoaderRegistry, default_registry
+from .registry import LoaderRegistry, ResolvedLoader, default_registry
 
 _LOGGER = logging.getLogger("trackforge.acquire")
 
@@ -47,20 +47,39 @@ class AcquisitionService:
         limit: int | None = None,
         source: str | None = None,
     ) -> SourceInfo:
-        """Return normalized source metadata without downloading media."""
+        """Return normalized source metadata without downloading media.
+
+        The registry chooses the loader and its merged profile; the caller
+        never has to know which source a URL belongs to.  Errors are already
+        typed :class:`~trackforge.acquire.errors.AcquireError` instances and
+        propagate unchanged.  ``limit`` is only meaningful for collections.
+        """
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be >= 1")
         resolved = self.registry.resolve(url, source=source)
-        ctx = LoaderContext(
-            job_id=uuid.uuid4().hex,
-            profile=resolved.profile,
-            progress=NullProgressSink(),
-            http=self.http,
-            logger=self.logger,
-        )
+        ctx = self.context_for(resolved)
         ref = SourceRef(source=resolved.loader.name, url=url)
         return resolved.loader.get_info(ref, ctx=ctx, flat=flat, limit=limit)
 
-    def context_for(self, resolved: Any) -> LoaderContext:
-        """Build a context for an already resolved loader (L1.5 helper)."""
+    def inspect_json(
+        self,
+        url: str,
+        *,
+        flat: bool = False,
+        limit: int | None = None,
+        source: str | None = None,
+        indent: int | None = 2,
+    ) -> str:
+        """Inspect and return the frozen schema-version-1 JSON text."""
+        from .serialization import source_info_to_json
+
+        return source_info_to_json(
+            self.inspect(url, flat=flat, limit=limit, source=source),
+            indent=indent,
+        )
+
+    def context_for(self, resolved: ResolvedLoader) -> LoaderContext:
+        """Build a context for an already resolved loader."""
         return LoaderContext(
             job_id=uuid.uuid4().hex,
             profile=resolved.profile,
