@@ -82,13 +82,12 @@ cookies = "~/.config/trackforge/cookies/yandex.txt"
 - неизвестные ключи — warning, не падение;
 - `token`/`cookies`/`proxy` не попадают в `repr`, JSON, логи.
 
-### 2. Cookie copy
+### 2. Cookie passthrough
 
-- Не передавать оригинальный файл в yt-dlp, если он может быть записан.
-- На job копировать cookies в staging с `0600`.
-- Оригинал не мутировать.
-- Два job'а не должны писать один файл.
-- Проверить формат Netscape (первая строка/поля), но не читать содержимое в лог.
+- Передавать в yt-dlp оригинальный файл из профиля напрямую.
+- Не копировать cookies в staging: yt-dlp может обновлять файл на месте.
+- Оригинал может меняться yt-dlp; TrackForge его не перезаписывает сам.
+- Проверить формат Netscape (первая строка/поля) и права, но не читать содержимое в лог.
 
 ### 3. Proxy
 
@@ -128,7 +127,7 @@ tfg doctor --source youtube --check-network
 Добавить:
 
 - `tests/acquire/test_auth_config.py`;
-- `tests/acquire/test_cookie_copy.py`;
+- `tests/acquire/test_cookie_handling.py`;
 - `tests/acquire/test_ytdlp_options.py`;
 - `tests/acquire/test_doctor.py`.
 
@@ -136,7 +135,7 @@ tfg doctor --source youtube --check-network
 
 - captured `YoutubeDL` opts содержат `cookiefile`/`proxy`;
 - `cookies_from_browser` tuple;
-- cookie copy `0600`, оригинал не изменён;
+- `cookiefile` указывает на настроенный файл; yt-dlp может его обновлять;
 - `${MISSING}` → `ConfigError`;
 - `proxy="none"` не попадает в opts;
 - `proxy="env"` подхватывает env;
@@ -189,7 +188,7 @@ uv run tfg doctor --source youtube --check-network
 
 - [ ] `SourceProfile`/`AppConfig` читают cookies/proxy.
 - [ ] `cookiefile`/`proxy` реально попадают в `YoutubeDL` options (тест).
-- [ ] Cookie copy 0600; оригинал не меняется.
+- [ ] Cookie passthrough: используется настроенный файл; yt-dlp может его обновлять.
 - [ ] `doctor` без сети зелёный.
 - [ ] `doctor --check-network` с рабочими cookies/proxy проходит.
 - [ ] Секреты не утекают.

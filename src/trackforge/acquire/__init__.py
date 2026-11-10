@@ -2,6 +2,13 @@
 
 # pyright: standard
 
+from .auth import (
+    CookieFileCheck,
+    ensure_auth_ready,
+    inspect_cookie_file,
+    resolve_proxy,
+    validate_cookie_file,
+)
 from .config import (
     AppConfig,
     DownloadConfig,
@@ -13,6 +20,13 @@ from .config import (
     load_config,
     merge_profiles,
     user_config_path,
+)
+from .doctor import (
+    CheckStatus,
+    DoctorCheck,
+    DoctorReport,
+    NetworkProbeResult,
+    run_doctor,
 )
 from .errors import (
     AcquireError,
@@ -41,7 +55,11 @@ from .loaders import (
     LoaderContext,
     MediaLoader,
     YtDlpLoader,
+    build_ydl_options,
+    create_youtube_dl,
     default_recommendations,
+    deno_js_runtimes,
+    prepare_ydl_options,
     select_best_thumbnail,
 )
 from .models import (
@@ -88,9 +106,13 @@ __all__ = [
     "AuthRequired",
     "CancellationToken",
     "CancelledError",
+    "CheckStatus",
     "CollisionPolicy",
     "ConfigError",
     "CookieError",
+    "CookieFileCheck",
+    "DoctorCheck",
+    "DoctorReport",
     "DownloadConfig",
     "DownloadFailed",
     "DownloadFailure",
@@ -112,6 +134,7 @@ __all__ = [
     "MediaKind",
     "MediaLoader",
     "MediaUse",
+    "NetworkProbeResult",
     "NoFormats",
     "NullProgressSink",
     "PostprocessError",
@@ -145,12 +168,21 @@ __all__ = [
     "VariantUnavailable",
     "YtDlpLoader",
     "allocate_target",
+    "build_ydl_options",
+    "create_youtube_dl",
     "default_config_path",
     "default_recommendations",
     "default_registry",
+    "deno_js_runtimes",
+    "ensure_auth_ready",
+    "inspect_cookie_file",
     "load_app_config",
     "load_config",
     "merge_profiles",
+    "prepare_ydl_options",
+    "resolve_proxy",
+    "run_doctor",
     "select_best_thumbnail",
     "user_config_path",
+    "validate_cookie_file",
 ]

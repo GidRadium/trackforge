@@ -1515,7 +1515,7 @@ request = DownloadRequest(source_info=full, selections=(...), options=...)
 
 ### 7.3. Этапы download
 
-1. **Prepare** — проверить диск, создать staging, скопировать cookies (0600), проверить `ffmpeg` при `requires_ffmpeg`.
+1. **Prepare** — проверить диск, создать staging, проверить cookies (используются in place), проверить `ffmpeg` при `requires_ffmpeg`.
 2. **Download** — `YoutubeDL.extract_info(..., download=True)` с `format`, `paths`, `outtmpl`; прогресс.
 3. **Postprocess** — merge/remux/extract audio/subtitles; postprocessor hooks.
 4. **Collect** — найти реальные файлы (не доверять шаблону), sidecars; вернуть `DownloadResult`.
@@ -1757,7 +1757,7 @@ def _download_options(item_plan, plan, options, ctx) -> dict:
 ### 8.5. Потоки и cookies
 
 - Один `YoutubeDL` на job; не переиспользовать между потоками.
-- Cookies-файл копировать в staging на job (0600); не давать двум job'ам писать один файл.
+- Cookies-файл используется напрямую (in place); yt-dlp может обновлять его. Не запускать несколько job с одним cookie-файлом одновременно.
 - `cachedir=False` или отдельный temp на job; иначе общий кэш yt-dlp может конфликтовать.
 - Плагины yt-dlp загружаются глобально; не устанавливать недоверенные.
 
@@ -1888,7 +1888,7 @@ class AppConfig:
 - `${VAR}` — только подстановка env, без выполнения команд.
 - Не поддерживать `!command` и shell-evaluation.
 - `tfg doctor` показывает «настроено/не настроено», но не значения.
-- Cookies копируются на job с правами `0600`; оригинал не мутируется.
+- Cookies используются из настроенного файла напрямую; yt-dlp может обновлять его.
 - В JSON-выводе `http_headers`, `token`, `cookies`, `proxy` не сериализуются.
 
 ---
@@ -2582,7 +2582,7 @@ source = service.inspect(chosen.url)
 - [ ] `get_info` не скачивает медиа.
 - [ ] `download` не пишет теги/обложки.
 - [ ] Все URL-ы проходят через `http/https`-валидацию.
-- [ ] Cookies копируются на job, 0600, не логируются.
+- [ ] Cookies используются in place, не копируются и не логируются.
 - [ ] Proxy — per-source, не глобальный.
 - [ ] Плейлист сначала flat, потом полный resolve выбранных.
 - [ ] Signed URL не кэшируются.

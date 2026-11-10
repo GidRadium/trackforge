@@ -26,8 +26,17 @@ uv run tfg set track.mp3 --clear comment --clear genre
 uv run tfg scan music/ --json
 uv run tfg scan music/ --progress
 uv run tfg scan music/ --limit 100
+uv run tfg doctor --source youtube
+uv run tfg doctor --source youtube --check-network
 uv run pytest
 ```
+
+`tfg doctor` is offline by default. It checks the selected source profile,
+cookie file permissions/format, proxy URL, yt-dlp, yt-dlp-ejs, Deno, ffmpeg and
+the Yandex Music plugin without contacting the network. Network access happens
+only with `--check-network`; `--cookies PATH` and `--proxy URL|env|none` are
+one-shot overrides for that run. The configured cookie file is passed to
+yt-dlp directly, so yt-dlp may refresh it in place.
 
 The `tfg` command is declared in `pyproject.toml` (`[project.scripts]`), so once
 the project is installed it is available directly, without `uv run`.
