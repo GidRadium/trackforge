@@ -9,6 +9,8 @@ from .base import (
     default_recommendations,
     select_best_thumbnail,
 )
+from .soundcloud import SoundCloudLoader
+from .yandex_music import YandexMusicLoader
 from .youtube import YouTubeLoader
 from .ytdlp import YtDlpLoader
 from .ytdlp_errors import (
@@ -42,6 +44,8 @@ __all__ = [
     "LoaderCapabilities",
     "LoaderContext",
     "MediaLoader",
+    "SoundCloudLoader",
+    "YandexMusicLoader",
     "YouTubeLoader",
     "YtDlpLoader",
     "YtDlpMapper",

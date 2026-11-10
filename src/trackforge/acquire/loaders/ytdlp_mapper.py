@@ -15,7 +15,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from ...metadata.model import PartialDate
 from ..config import SourceProfile
@@ -195,6 +195,28 @@ def _first_text(*values: object) -> str | None:
         text = _text(value)
         if text is not None:
             return text
+    return None
+
+
+def _url_identifier(url: str | None) -> str | None:
+    """Derive a stable item id from a page URL when the extractor omits one."""
+    if not url:
+        return None
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return None
+    query = parse_qs(parsed.query)
+    for key in ("v", "id", "track_id"):
+        value = (query.get(key) or [""])[0].strip()
+        if value:
+            return value
+    path = parsed.path.rstrip("/")
+    if not path:
+        return None
+    last = path.rsplit("/", 1)[-1]
+    if last and last.lower() not in {"watch", "index", "sets", "playlist"}:
+        return last
     return None
 
 
@@ -515,6 +537,7 @@ def _audio_key(variant: DownloadVariant) -> tuple[object, ...]:
         _language_key(audio.language),
         (audio.ext or variant.container or "").lower(),
         _broad_codec(audio.codec),
+        (audio.protocol or "").lower(),
     )
 
 
@@ -806,6 +829,7 @@ def map_audio(
             language,
             (audio_stream.ext or "").lower(),
             _broad_codec(audio_stream.codec),
+            (audio_stream.protocol or "").lower(),
         )
         if key in seen:
             continue
@@ -1110,7 +1134,12 @@ def map_thumbnails(entry: Mapping[str, Any]) -> tuple[Thumbnail, ...]:
     for raw in _items(entry.get("thumbnails")):
         add(raw, source="yt-dlp")
     legacy = entry.get("thumbnail")
-    if legacy is not None:
+    if isinstance(legacy, (list, tuple)):
+        # Some extractors put a list of URLs in the legacy ``thumbnail``
+        # field instead of using ``thumbnails``.
+        for raw in legacy:
+            add(raw, source="thumbnail")
+    elif legacy is not None:
         add(legacy, source="thumbnail")
     return tuple(result)
 
@@ -1295,22 +1324,30 @@ class YtDlpMapper:
         info: Mapping[str, Any],
         ref: SourceRef,
         *,
-        flat: bool = False,
+        flat: bool | None = False,
         limit: int | None = None,
     ) -> SourceInfo:
+        """Map one payload.
+
+        ``flat=None`` is auto mode: collections stay flat (no formats) while
+        a single item is resolved fully.  This lets the generic yt-dlp loader
+        auto-detect the shape when ``classify_url`` cannot know it offline.
+        """
         if not isinstance(info, Mapping):
             raise UnsupportedUrl(ref.url, source=ref.source)
         type_ = self._check_type(info, ref)
+        is_collection = type_ in _COLLECTION_TYPES
+        effective_flat = is_collection if flat is None else flat
         thumbnails = map_thumbnails(info)
         creator = self._creator(info)
 
-        if type_ in _COLLECTION_TYPES:
+        if is_collection:
             entries = self._entries(info, limit=limit)
             items = tuple(
                 self._item(
                     entry,
                     ref,
-                    flat=flat,
+                    flat=effective_flat,
                     position=position,
                     fallback_url=None,
                 )
@@ -1327,7 +1364,7 @@ class YtDlpMapper:
                 self._item(
                     info,
                     ref,
-                    flat=flat,
+                    flat=effective_flat,
                     position=1,
                     fallback_url=ref.url,
                 ),
@@ -1406,10 +1443,17 @@ class YtDlpMapper:
         position: int,
         fallback_url: str | None,
     ) -> MediaItem:
+        page_url = self._page_url(info, fallback_url=fallback_url)
+        identifier = (
+            _text(info.get("id"))
+            or _url_identifier(page_url)
+            or f"item-{position}"
+        )
         title = _first_text(
             info.get("track"),
             info.get("title"),
-            info.get("id"),
+            info.get("display_id"),
+            identifier,
             fallback_url,
         ) or "item"
         creator = self._creator(info)
@@ -1427,13 +1471,12 @@ class YtDlpMapper:
             if flat
             else tuple(build_variants(info, authenticated=authenticated))
         )
-        page_url = self._page_url(info, fallback_url=fallback_url)
         if not artists and creator:
             artists = (creator,)
         suggested_stem = self._suggested_stem(creator, title)
         thumbnails = map_thumbnails(info)
         base = MediaItem(
-            id=_text(info.get("id")) or ref.id or "item-1",
+            id=identifier,
             title=title,
             suggested_stem=suggested_stem,
             kind=_entry_kind(variants),
@@ -1451,7 +1494,7 @@ class YtDlpMapper:
             variants=variants,
             resolution=ResolutionState.FLAT if flat else ResolutionState.FULL,
             position=position,
-            group_id=_text(info.get("id")),
+            group_id=_text(info.get("id")) or identifier,
             extras=_extras(info),
         )
         if flat:

@@ -1,0 +1,36 @@
+{
+  "_type": "playlist",
+  "id": "987654321",
+  "title": "Fixture Set",
+  "uploader": "SoundCloud Fixture Artist",
+  "creator": "SoundCloud Fixture Artist",
+  "description": "A sanitized SoundCloud set fixture for offline tests.",
+  "webpage_url": "https://soundcloud.com/fixture-artist/sets/fixture-set",
+  "original_url": "https://soundcloud.com/fixture-artist/sets/fixture-set",
+  "extractor": "soundcloud:set",
+  "extractor_key": "SoundcloudSet",
+  "playlist_count": 2,
+  "thumbnail": "https://i1.sndcdn.com/artworks-set-500x500.jpg",
+  "entries": [
+    {
+      "_type": "url",
+      "id": "111111111",
+      "title": "Set Track One",
+      "url": "https://soundcloud.com/fixture-artist/set-track-one",
+      "webpage_url": "https://soundcloud.com/fixture-artist/set-track-one",
+      "uploader": "SoundCloud Fixture Artist",
+      "duration": 180.0,
+      "playlist_index": 1
+    },
+    {
+      "_type": "url",
+      "id": "222222222",
+      "title": "Set Track Two",
+      "url": "https://soundcloud.com/fixture-artist/set-track-two",
+      "webpage_url": "https://soundcloud.com/fixture-artist/set-track-two",
+      "uploader": "SoundCloud Fixture Artist",
+      "duration": 195.5,
+      "playlist_index": 2
+    }
+  ]
+}

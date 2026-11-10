@@ -1,0 +1,22 @@
+{
+  "_type": "playlist",
+  "id": "6386657",
+  "title": "Sati Akura",
+  "webpage_url": "https://music.yandex.ru/artist/6386657",
+  "original_url": "https://music.yandex.ru/artist/6386657",
+  "extractor": "yandexmusicv2:artist",
+  "extractor_key": "YandexMusicArtistIE",
+  "playlist_count": 2,
+  "entries": [
+    {
+      "_type": "url",
+      "url": "https://music.yandex.ru/album/15569342/track/82977109",
+      "webpage_url": "https://music.yandex.ru/album/15569342/track/82977109"
+    },
+    {
+      "_type": "url",
+      "url": "https://music.yandex.ru/album/13615036/track/76994401",
+      "webpage_url": "https://music.yandex.ru/album/13615036/track/76994401"
+    }
+  ]
+}

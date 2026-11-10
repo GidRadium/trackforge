@@ -140,7 +140,7 @@ class YouTubeLoader(YtDlpLoader):
         ref: SourceRef,
         *,
         ctx: LoaderContext,
-        flat: bool = False,
+        flat: bool | None = False,
         limit: int | None = None,
     ) -> SourceInfo:
         # yt-dlp has no extractor for a standalone community post URL; its

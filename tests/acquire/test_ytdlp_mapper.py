@@ -52,6 +52,19 @@ def test_maps_single_video_fields() -> None:
     assert source.items[0].resolution is ResolutionState.FULL
 
 
+def test_auto_mode_keeps_a_single_item_full() -> None:
+    info = load_fixture("youtube_video.info.json")
+    source = YtDlpMapper(SourceProfile(name="yt_dlp")).map(
+        info,
+        reference(info),
+        flat=None,
+    )
+
+    assert source.kind is SourceKind.SINGLE
+    assert source.items[0].resolution is ResolutionState.FULL
+    assert source.items[0].variants
+
+
 def test_maps_item_and_music_fallbacks() -> None:
     info = load_fixture("youtube_video.info.json")
     item = YtDlpMapper(SourceProfile(name="youtube")).map(
@@ -148,6 +161,30 @@ def test_legacy_thumbnail_field_is_normalized() -> None:
     ).items[0]
     assert len(item.thumbnails) == 1
     assert item.thumbnails[0].url == "https://example.test/cover.jpg"
+
+
+def test_legacy_thumbnail_list_is_expanded() -> None:
+    info = {
+        "_type": "video",
+        "id": "abc",
+        "title": "Legacy thumbnail list",
+        "thumbnail": [
+            "https://example.test/cover-640.jpg",
+            "https://example.test/cover-320.jpg",
+        ],
+    }
+    item = YtDlpMapper(SourceProfile(name="yt_dlp")).map(
+        info,
+        SourceRef("yt-dlp", "https://example.test/x"),
+    ).items[0]
+
+    assert len(item.thumbnails) == 2
+    assert [thumbnail.url for thumbnail in item.thumbnails] == [
+        "https://example.test/cover-640.jpg",
+        "https://example.test/cover-320.jpg",
+    ]
+    assert item.thumbnail is not None
+    assert item.thumbnail.url.startswith("https://example.test/cover-")
 
 
 def test_builds_variants_and_recommendations() -> None:

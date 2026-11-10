@@ -1,0 +1,34 @@
+{
+  "_type": "playlist",
+  "id": "lk.0f8fad5b-d9cb-469f-a165-70867728950e",
+  "title": "Liked tracks",
+  "description": "A sanitized shared/liked Yandex Music playlist fixture.",
+  "webpage_url": "https://music.yandex.ru/users/trackforge/playlists/lk.0f8fad5b-d9cb-469f-a165-70867728950e",
+  "original_url": "https://music.yandex.ru/users/trackforge/playlists/lk.0f8fad5b-d9cb-469f-a165-70867728950e",
+  "extractor": "yandexmusicv2:liked",
+  "extractor_key": "YandexMusicV2LikedPlaylist",
+  "playlist_count": 2,
+  "thumbnail": "https://avatars.yandex.net/get-music-content/12345/liked/1000x1000",
+  "entries": [
+    {
+      "_type": "url",
+      "id": "22345678",
+      "title": "Liked One",
+      "url": "https://music.yandex.ru/album/111111/track/22345678",
+      "webpage_url": "https://music.yandex.ru/album/111111/track/22345678",
+      "artist": "Liked Artist",
+      "duration": 184.0,
+      "playlist_index": 1
+    },
+    {
+      "_type": "url",
+      "id": "22345679",
+      "title": "Liked Two",
+      "url": "https://music.yandex.ru/album/222222/track/22345679",
+      "webpage_url": "https://music.yandex.ru/album/222222/track/22345679",
+      "artist": "Another Liked Artist",
+      "duration": 202.0,
+      "playlist_index": 2
+    }
+  ]
+}

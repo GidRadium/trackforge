@@ -92,7 +92,7 @@ def test_flat_loader_does_not_full_resolve_entries(
         url: str,
         *,
         ctx: LoaderContext,
-        flat: bool = False,
+        flat: bool | None = False,
         limit: int | None = None,
     ) -> dict[str, Any]:
         del ctx
@@ -112,6 +112,23 @@ def test_flat_loader_does_not_full_resolve_entries(
     ]
     assert source.kind is SourceKind.COLLECTION
     assert len(source.items) == 2
+    assert all(
+        item.resolution is ResolutionState.FLAT and not item.variants
+        for item in source.items
+    )
+
+
+def test_auto_mode_flattens_a_collection() -> None:
+    info = load_fixture("youtube_playlist_flat.info.json")
+    source = YtDlpMapper(SourceProfile(name="yt_dlp")).map(
+        info,
+        reference(info),
+        flat=None,
+        limit=4,
+    )
+
+    assert source.kind is SourceKind.COLLECTION
+    assert len(source.items) == 4
     assert all(
         item.resolution is ResolutionState.FLAT and not item.variants
         for item in source.items

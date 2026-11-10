@@ -1,0 +1,45 @@
+{
+  "_type": "playlist",
+  "id": "987654",
+  "title": "Signals",
+  "description": "A sanitized Yandex Music album fixture.",
+  "webpage_url": "https://music.yandex.ru/album/987654",
+  "original_url": "https://music.yandex.ru/album/987654",
+  "extractor": "yandexmusic:album",
+  "extractor_key": "YandexMusicAlbum",
+  "playlist_count": 3,
+  "thumbnail": "https://avatars.yandex.net/get-music-content/12345/abcdef/1000x1000",
+  "entries": [
+    {
+      "_type": "url",
+      "id": "12345678",
+      "title": "Midnight Signal",
+      "url": "https://music.yandex.ru/album/987654/track/12345678",
+      "webpage_url": "https://music.yandex.ru/album/987654/track/12345678",
+      "artist": "TrackForge Artist, Guest Vocalist",
+      "duration": 215.0,
+      "playlist_index": 1,
+      "thumbnail": "https://avatars.yandex.net/get-music-content/12345/abcdef/1000x1000"
+    },
+    {
+      "_type": "url",
+      "id": "12345679",
+      "title": "Second Signal",
+      "url": "https://music.yandex.ru/album/987654/track/12345679",
+      "webpage_url": "https://music.yandex.ru/album/987654/track/12345679",
+      "artist": "TrackForge Artist",
+      "duration": 198.5,
+      "playlist_index": 2
+    },
+    {
+      "_type": "url",
+      "id": "12345680",
+      "title": "Third Signal",
+      "url": "https://music.yandex.ru/album/987654/track/12345680",
+      "webpage_url": "https://music.yandex.ru/album/987654/track/12345680",
+      "artist": "TrackForge Artist",
+      "duration": 241.0,
+      "playlist_index": 3
+    }
+  ]
+}

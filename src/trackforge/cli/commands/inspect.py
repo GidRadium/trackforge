@@ -232,16 +232,21 @@ def inspect_url(
         raise typer.Exit(code=1)
 
 
-def _resolve_flat(flat: bool | None, hint: UrlHint) -> bool:
+def _resolve_flat(flat: bool | None, hint: UrlHint) -> bool | None:
     """Honour an explicit --flat/--no-flat, otherwise auto-flat collections.
 
-    Running a full playlist extraction by accident resolves every entry and
-    issues one YouTube request per item.  A collection URL should therefore
-    start in the cheap flat mode unless the user explicitly asks otherwise.
+    A known collection starts in the cheap flat mode.  A known single item
+    stays full.  For an unknown URL (the generic yt-dlp fallback cannot know
+    offline whether it is a playlist) return ``None`` so the loader can ask
+    yt-dlp for the shape and flatten only actual collections.
     """
     if flat is not None:
         return flat
-    return hint is UrlHint.COLLECTION
+    if hint is UrlHint.COLLECTION:
+        return True
+    if hint is UrlHint.SINGLE:
+        return False
+    return None
 
 
 def _profile_with_client_override(

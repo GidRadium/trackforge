@@ -9,9 +9,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import ClassVar
+from urllib.parse import urlsplit
 
 from ..config import SourceProfile
-from ..errors import SearchNotSupported
+from ..errors import AcquireError, SearchNotSupported
 from ..models import (
     DownloadRequest,
     DownloadResult,
@@ -100,7 +101,7 @@ class MediaLoader(ABC):
         ref: SourceRef,
         *,
         ctx: LoaderContext,
-        flat: bool = False,
+        flat: bool | None = False,
         limit: int | None = None,
     ) -> SourceInfo:
         """Resolve a source reference into normalized metadata."""
@@ -172,6 +173,17 @@ class MediaLoader(ABC):
         del profile
         return True
 
+    def unready_error(self, profile: SourceProfile) -> AcquireError | None:
+        """Typed error explaining why this loader cannot run.
+
+        By default an unready loader is simply skipped so a lower-priority
+        fallback can handle the URL.  A site-specific loader that must never
+        fall through to the generic yt-dlp extractor overrides this and
+        returns a user-facing error instead.
+        """
+        del profile
+        return None
+
 
 def select_best_thumbnail(
     candidates: Sequence[Thumbnail],
@@ -190,9 +202,14 @@ def select_best_thumbnail(
         url = thumbnail.url.strip()
         if not url:
             continue
-        lowered = url.lower()
+        # Inspect the filename, not the whole URL: Yandex covers live on
+        # ``avatars.yandex.net`` and must not be mistaken for a placeholder.
+        try:
+            name = urlsplit(url).path.rsplit("/", 1)[-1].lower()
+        except ValueError:
+            continue
         if any(
-            marker in lowered
+            marker in name
             for marker in ("no_thumbnail", "no-thumbnail", "placeholder", "avatar")
         ):
             continue

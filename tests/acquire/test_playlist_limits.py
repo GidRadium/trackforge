@@ -49,7 +49,7 @@ def run_extract(
     monkeypatch: pytest.MonkeyPatch,
     loader: YtDlpLoader,
     *,
-    flat: bool,
+    flat: bool | None,
     limit: int | None,
     profile: SourceProfile | None = None,
 ) -> dict[str, object]:
@@ -103,6 +103,21 @@ def test_full_resolve_sets_noplaylist(
     assert options["extract_flat"] is False
     assert options["noplaylist"] is True
     assert options["playlist_items"] == f"1:{DEFAULT_FLAT_LIMIT}"
+
+
+def test_auto_mode_lets_yt_dlp_choose_the_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    options = run_extract(
+        monkeypatch,
+        YtDlpLoader(),
+        flat=None,
+        limit=4,
+    )
+
+    assert options["extract_flat"] == "in_playlist"
+    assert options["noplaylist"] is False
+    assert options["playlist_items"] == "1:4"
 
 
 @pytest.mark.parametrize("limit", [None, 0, -1])

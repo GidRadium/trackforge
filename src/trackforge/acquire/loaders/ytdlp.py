@@ -66,6 +66,28 @@ _AUTH_AVAILABILITY = frozenset(
     {"private", "premium_only", "subscriber_only", "needs_auth", "members_only"}
 )
 
+# yt-dlp extractors (not only Yandex) can report important warnings through
+# the logger instead of the info_dict.  They are collected during extraction
+# and attached under a private key so site loaders can surface the relevant
+# ones without exposing raw log output to users.
+INFO_WARNINGS_KEY = "_tf_warnings"
+
+
+class _WarningCollector(logging.Handler):
+    """Collect formatted warning messages emitted during one extraction."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 - logging must never break extraction
+            return
+        if message:
+            self.messages.append(message)
+
 
 def _configured_limit(profile: SourceProfile, key: str, default: int) -> int:
     """Read a positive integer limit override from ``SourceProfile.extra``."""
@@ -181,15 +203,17 @@ class YtDlpLoader(MediaLoader):
         ref: SourceRef,
         *,
         ctx: LoaderContext,
-        flat: bool = False,
+        flat: bool | None = False,
         limit: int | None = None,
     ) -> SourceInfo:
         """Extract metadata only; never download media files.
 
         ``flat=True`` asks yt-dlp for a bounded list of collection entries
-        without resolving their formats.  A full resolve is intended for one
-        selected item's ``page_url``; ``noplaylist`` keeps a ``watch?v&list``
-        URL from expanding into the whole playlist.
+        without resolving their formats.  ``flat=None`` is auto mode: a
+        collection is listed flat, while a single item keeps its formats.
+        A full resolve is intended for one selected item's ``page_url``;
+        ``noplaylist`` keeps a ``watch?v&list`` URL from expanding into the
+        whole playlist.
         """
         self.preflight(ref.url, ctx.profile)
         effective_limit = effective_flat_limit(limit, ctx.profile)
@@ -206,7 +230,20 @@ class YtDlpLoader(MediaLoader):
             limit=effective_limit,
         )
         source = self._finalize(source, ctx)
-        return self._validate_collection(source, info)
+        source = self._validate_collection(source, info)
+        warnings = self._info_warnings(info)
+        if warnings:
+            source = replace(source, warnings=source.warnings + warnings)
+        return source
+
+    def _info_warnings(self, info: Mapping[str, Any]) -> tuple[str, ...]:
+        """Turn collected yt-dlp warnings into source warnings.
+
+        The generic loader ignores extractor chatter; site-specific loaders
+        override this for warnings that carry real user-facing meaning.
+        """
+        del info
+        return ()
 
     def _validate_collection(
         self,
@@ -230,7 +267,7 @@ class YtDlpLoader(MediaLoader):
         url: str,
         *,
         ctx: LoaderContext,
-        flat: bool = False,
+        flat: bool | None = False,
         limit: int | None = None,
     ) -> Mapping[str, Any]:
         """Run ``extract_info(download=False)`` and sanitize the payload."""
@@ -244,10 +281,15 @@ class YtDlpLoader(MediaLoader):
                 "noprogress": True,
                 "ignoreerrors": False,
                 "cachedir": False,
-                "extract_flat": "in_playlist" if flat else False,
+                # ``None`` is auto mode: ask yt-dlp to flatten collection
+                # entries, but let the mapper keep a single item fully
+                # resolved (the top-level video still carries its formats).
+                "extract_flat": False if flat is False else "in_playlist",
                 "playlist_items": f"1:{effective_limit}",
-                # A full resolve targets one item; never expand its playlist.
-                "noplaylist": not flat,
+                # An explicit full resolve targets one item; never expand its
+                # playlist.  Flat/auto must allow the playlist extractor to
+                # return its entries instead of only the first one.
+                "noplaylist": flat is False,
                 "remote_components": [],
             }
         )
@@ -257,26 +299,31 @@ class YtDlpLoader(MediaLoader):
 
         from yt_dlp.utils import DownloadError, ExtractorError
 
-        ydl = self._create_youtube_dl(options)
+        collector = _WarningCollector()
+        ctx.logger.addHandler(collector)
         try:
-            if hasattr(ydl, "__enter__") and hasattr(ydl, "__exit__"):
-                with ydl as active:
-                    info = active.extract_info(url, download=False)
-                    sanitize = getattr(active, "sanitize_info", None)
-                    if callable(sanitize):
-                        info = sanitize(info)
-            else:
-                try:
-                    info = ydl.extract_info(url, download=False)
-                    sanitize = getattr(ydl, "sanitize_info", None)
-                    if callable(sanitize):
-                        info = sanitize(info)
-                finally:
-                    close = getattr(ydl, "close", None)
-                    if callable(close):
-                        close()
-        except (DownloadError, ExtractorError) as exc:
-            raise map_ytdlp_error(exc, url=url) from exc
+            ydl = self._create_youtube_dl(options)
+            try:
+                if hasattr(ydl, "__enter__") and hasattr(ydl, "__exit__"):
+                    with ydl as active:
+                        info = active.extract_info(url, download=False)
+                        sanitize = getattr(active, "sanitize_info", None)
+                        if callable(sanitize):
+                            info = sanitize(info)
+                else:
+                    try:
+                        info = ydl.extract_info(url, download=False)
+                        sanitize = getattr(ydl, "sanitize_info", None)
+                        if callable(sanitize):
+                            info = sanitize(info)
+                    finally:
+                        close = getattr(ydl, "close", None)
+                        if callable(close):
+                            close()
+            except (DownloadError, ExtractorError) as exc:
+                raise map_ytdlp_error(exc, url=url) from exc
+        finally:
+            ctx.logger.removeHandler(collector)
 
         if info is None:
             raise map_ytdlp_error(
@@ -288,6 +335,9 @@ class YtDlpLoader(MediaLoader):
                 DownloadError("yt-dlp returned an unexpected result"),
                 url=url,
             )
+        if collector.messages:
+            info = dict(info)
+            info[INFO_WARNINGS_KEY] = tuple(collector.messages)
         return info
 
     def _finalize(self, source: SourceInfo, ctx: LoaderContext) -> SourceInfo:
@@ -330,6 +380,7 @@ def _is_youtube_url(url: str) -> bool:
 
 __all__ = [
     "DEFAULT_FLAT_LIMIT",
+    "INFO_WARNINGS_KEY",
     "MAX_FLAT_LIMIT",
     "YtDlpLoader",
     "YtDlpMapper",

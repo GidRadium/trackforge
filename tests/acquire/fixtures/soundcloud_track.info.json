@@ -1,0 +1,53 @@
+{
+  "_type": "video",
+  "id": "123456789",
+  "title": "Neon Rain",
+  "uploader": "SoundCloud Fixture Artist",
+  "uploader_id": "fixture-artist",
+  "creator": "SoundCloud Fixture Artist",
+  "description": "A sanitized SoundCloud track fixture for offline tests.",
+  "duration": 210.0,
+  "webpage_url": "https://soundcloud.com/fixture-artist/neon-rain",
+  "original_url": "https://soundcloud.com/fixture-artist/neon-rain",
+  "extractor": "soundcloud",
+  "extractor_key": "Soundcloud",
+  "thumbnail": "https://i1.sndcdn.com/artworks-fixture-500x500.jpg",
+  "thumbnails": [
+    {
+      "url": "https://i1.sndcdn.com/artworks-fixture-500x500.jpg",
+      "width": 500,
+      "height": 500,
+      "ext": "jpg"
+    }
+  ],
+  "formats": [
+    {
+      "format_id": "http_mp3_128",
+      "ext": "mp3",
+      "protocol": "https",
+      "vcodec": "none",
+      "acodec": "mp3",
+      "abr": 128,
+      "filesize": 3360000,
+      "url": "https://cf-media.sndcdn.com/fixture-128.mp3"
+    },
+    {
+      "format_id": "hls_mp3_160",
+      "ext": "mp3",
+      "protocol": "m3u8_native",
+      "vcodec": "none",
+      "acodec": "mp3",
+      "abr": 160,
+      "url": "https://cf-media.sndcdn.com/fixture-160.m3u8"
+    },
+    {
+      "format_id": "hls_opus_64",
+      "ext": "opus",
+      "protocol": "m3u8_native",
+      "vcodec": "none",
+      "acodec": "opus",
+      "abr": 64,
+      "url": "https://cf-media.sndcdn.com/fixture-64.m3u8"
+    }
+  ]
+}

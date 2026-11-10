@@ -155,7 +155,7 @@ class FakeLoader(MediaLoader):
         ref: SourceRef,
         *,
         ctx: LoaderContext,
-        flat: bool = False,
+        flat: bool | None = False,
         limit: int | None = None,
     ) -> SourceInfo:
         del flat, limit

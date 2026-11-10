@@ -1,0 +1,54 @@
+{
+  "_type": "video",
+  "id": "12345678",
+  "title": "Midnight Signal",
+  "artist": "TrackForge Artist, Guest Vocalist",
+  "album": "Signals",
+  "album_id": "987654",
+  "album_artist": "TrackForge Artist",
+  "track_number": 3,
+  "track_total": 10,
+  "disc_number": 1,
+  "date": "20240101",
+  "upload_date": "20240101",
+  "thumbnail": "https://avatars.yandex.net/get-music-content/12345/abcdef/1000x1000",
+  "duration": 215.0,
+  "webpage_url": "https://music.yandex.ru/album/987654/track/12345678",
+  "original_url": "https://music.yandex.ru/album/987654/track/12345678",
+  "extractor": "yandexmusic:track",
+  "extractor_key": "YandexMusicTrack",
+  "genre": ["electronic", "synthpop"],
+  "quality": "lossless",
+  "formats": [
+    {
+      "format_id": "flac-1000k",
+      "ext": "flac",
+      "protocol": "https",
+      "vcodec": "none",
+      "acodec": "flac",
+      "abr": 1000,
+      "filesize": 26875000,
+      "url": "https://cdn.example.test/yandex/track-12345678.flac"
+    },
+    {
+      "format_id": "mp3-320k",
+      "ext": "mp3",
+      "protocol": "https",
+      "vcodec": "none",
+      "acodec": "mp3",
+      "abr": 320,
+      "filesize": 8600000,
+      "url": "https://cdn.example.test/yandex/track-12345678-320.mp3"
+    },
+    {
+      "format_id": "mp3-192k",
+      "ext": "mp3",
+      "protocol": "https",
+      "vcodec": "none",
+      "acodec": "mp3",
+      "abr": 192,
+      "filesize": 5160000,
+      "url": "https://cdn.example.test/yandex/track-12345678-192.mp3"
+    }
+  ]
+}

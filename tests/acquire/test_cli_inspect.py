@@ -354,7 +354,7 @@ class CollectionLoader(FakeLoader):
         info: SourceInfo | None = None,
     ) -> None:
         super().__init__(name=name, info=info)
-        self.flat_calls: list[bool] = []
+        self.flat_calls: list[bool | None] = []
 
     def classify_url(self, url: str) -> UrlHint:
         del url
@@ -365,16 +365,24 @@ class CollectionLoader(FakeLoader):
         ref: SourceRef,
         *,
         ctx: LoaderContext,
-        flat: bool = False,
+        flat: bool | None = False,
         limit: int | None = None,
     ) -> SourceInfo:
         self.flat_calls.append(flat)
         return super().get_info(
             ref,
             ctx=ctx,
-            flat=flat,
+            flat=flat if flat is not None else False,
             limit=limit,
         )
+
+
+class UnknownLoader(CollectionLoader):
+    """Fake generic loader whose URL shape cannot be classified offline."""
+
+    def classify_url(self, url: str) -> UrlHint:
+        del url
+        return UrlHint.UNKNOWN
 
 
 def test_inspect_auto_flattens_collections(
@@ -395,9 +403,24 @@ def test_inspect_auto_flattens_collections(
     assert loader.flat_calls == [True, False]
 
 
+def test_inspect_unknown_url_uses_loader_auto_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loader = UnknownLoader(
+        name="fake",
+        info=make_source_info(kind=SourceKind.COLLECTION),
+    )
+    install_fake_command(monkeypatch, loader)
+
+    result = runner.invoke(app, ["inspect", URL, "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert loader.flat_calls == [None]
+
+
 def test_resolve_flat_honours_explicit_choice() -> None:
     assert inspect_command._resolve_flat(None, UrlHint.COLLECTION) is True
     assert inspect_command._resolve_flat(None, UrlHint.SINGLE) is False
-    assert inspect_command._resolve_flat(None, UrlHint.UNKNOWN) is False
+    assert inspect_command._resolve_flat(None, UrlHint.UNKNOWN) is None
     assert inspect_command._resolve_flat(True, UrlHint.SINGLE) is True
     assert inspect_command._resolve_flat(False, UrlHint.COLLECTION) is False

@@ -57,6 +57,9 @@ class LoaderRegistry:
             if not profile.enabled:
                 raise ConfigError(f"loader {loader.name!r} is disabled")
             if not loader.is_ready(profile):
+                error = loader.unready_error(profile)
+                if error is not None:
+                    raise error
                 raise ConfigError(f"loader {loader.name!r} is not configured")
             if not loader.supports_url(url):
                 raise UnsupportedUrl(url, source=source)
@@ -67,6 +70,13 @@ class LoaderRegistry:
             if not profile.enabled:
                 continue
             if not loader.is_ready(profile):
+                # A site-specific loader may forbid falling through to the
+                # generic yt-dlp extractor (for example a missing Yandex
+                # plugin must not silently use the broken built-in one).
+                if loader.supports_url(url):
+                    error = loader.unready_error(profile)
+                    if error is not None:
+                        raise error
                 continue
             if loader.supports_url(url):
                 return ResolvedLoader(loader=loader, profile=profile)
@@ -99,7 +109,17 @@ def default_registry(config: AppConfig | None = None) -> LoaderRegistry:
     Site-specific loaders run first; the generic yt-dlp adapter remains the
     final fallback (and the only one that accepts arbitrary http(s) URLs).
     """
+    from .loaders.soundcloud import SoundCloudLoader
+    from .loaders.yandex_music import YandexMusicLoader
     from .loaders.youtube import YouTubeLoader
     from .loaders.ytdlp import YtDlpLoader
 
-    return LoaderRegistry([YouTubeLoader(), YtDlpLoader()], config)
+    return LoaderRegistry(
+        [
+            YouTubeLoader(),
+            YandexMusicLoader(),
+            SoundCloudLoader(),
+            YtDlpLoader(),
+        ],
+        config,
+    )

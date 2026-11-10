@@ -1,0 +1,30 @@
+{
+  "_type": "video",
+  "id": "32345678",
+  "title": "Stale Session Preview",
+  "artist": "Preview Artist",
+  "album": "Expired Session",
+  "album_artist": "Preview Artist",
+  "track_number": 1,
+  "disc_number": 1,
+  "date": "20230101",
+  "upload_date": "20230101",
+  "thumbnail": "https://avatars.yandex.net/get-music-content/12345/preview/1000x1000",
+  "duration": 18.0,
+  "quality": "smart_preview",
+  "webpage_url": "https://music.yandex.ru/album/333333/track/32345678",
+  "original_url": "https://music.yandex.ru/album/333333/track/32345678",
+  "extractor": "yandexmusic:track",
+  "extractor_key": "YandexMusicTrack",
+  "formats": [
+    {
+      "format_id": "mp3-320k",
+      "ext": "mp3",
+      "protocol": "https",
+      "vcodec": "none",
+      "acodec": "mp3",
+      "abr": 320,
+      "url": "https://cdn.example.test/yandex/preview-32345678.mp3"
+    }
+  ]
+}

@@ -16,8 +16,10 @@ from trackforge.acquire.errors import (
     DownloadFailed,
     DrmProtected,
     GeoBlocked,
+    MissingPlugin,
     NoFormats,
     PostprocessError,
+    PreviewOnly,
     ProxyError,
     RateLimited,
     SearchNotSupported,
@@ -50,6 +52,8 @@ ALL_ERRORS = [
     PostprocessError,
     CancelledError,
     ConfigError,
+    MissingPlugin,
+    PreviewOnly,
     SearchNotSupported,
 ]
 
@@ -77,6 +81,8 @@ def test_every_error_is_an_acquire_error(error_type: type[AcquireError]) -> None
         PostprocessError,
         CancelledError,
         ConfigError,
+        MissingPlugin,
+        PreviewOnly,
     ],
 )
 def test_non_retryable_errors(error_type: type[AcquireError]) -> None:
@@ -102,6 +108,8 @@ def test_hints_are_present_for_actionable_errors() -> None:
     assert NoFormats.hint
     assert VariantUnavailable.hint
     assert UnsupportedUrl.hint
+    assert MissingPlugin.hint
+    assert PreviewOnly.hint
 
 
 def test_message_default_and_custom_hint() -> None:

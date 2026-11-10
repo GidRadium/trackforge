@@ -235,6 +235,25 @@ class ConfigError(AcquireError):
     hint = "check the config file and environment variables"
 
 
+class MissingPlugin(ConfigError):
+    """A source requires an external yt-dlp plugin that is not importable."""
+
+    default_message = "required yt-dlp plugin is missing"
+    hint = "install the plugin into the same environment as yt-dlp"
+
+
+class PreviewOnly(AcquireError):
+    """The source silently served a short preview instead of the full media.
+
+    L1 reports this as a ``SourceInfo`` warning (a preview may be the only
+    thing the server exposes).  The download layer treats it as a hard
+    failure because a short preview must never be accepted as success.
+    """
+
+    default_message = "source served a preview instead of the full media"
+    hint = "refresh the source session/cookies or try another account"
+
+
 class SearchNotSupported(AcquireError):
     """A loader has no search implementation."""
 
