@@ -28,8 +28,19 @@ uv run tfg scan music/ --progress
 uv run tfg scan music/ --limit 100
 uv run tfg doctor --source youtube
 uv run tfg doctor --source youtube --check-network
+uv run tfg inspect "https://www.youtube.com/watch?v=..." --cookies cookies.txt
+uv run tfg inspect "https://www.youtube.com/watch?v=..." --json
+uv run tfg inspect "https://www.youtube.com/watch?v=..." --raw
+uv run tfg inspect "https://www.youtube.com/watch?v=..." --player-client default
 uv run pytest
 ```
+
+`tfg inspect` is a temporary L1.1 debug command: it prints normalized
+`SourceInfo`, `--json` prints it machine-readably, and `--raw` prints the
+sanitized yt-dlp `info_dict`. It never downloads media. The public `inspect`
+CLI contract is finalized in L1.5. `--player-client default` ignores a
+configured `extractor_args.youtube.player_client` restriction for one run;
+`--no-extractor-args` drops all configured extractor arguments.
 
 `tfg doctor` is offline by default. It checks the selected source profile,
 cookie file permissions/format, proxy URL, yt-dlp, yt-dlp-ejs, Deno, ffmpeg and

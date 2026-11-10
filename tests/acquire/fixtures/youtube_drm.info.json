@@ -1,0 +1,48 @@
+{
+  "_type": "video",
+  "id": "drm123XYZ",
+  "title": "DRM Protected Test Video",
+  "uploader": "DRM Channel",
+  "channel": "DRM Channel",
+  "duration": 100.0,
+  "upload_date": "20240220",
+  "webpage_url": "https://www.youtube.com/watch?v=drm123XYZ",
+  "availability": "premium_only",
+  "has_drm": true,
+  "extractor": "youtube",
+  "extractor_key": "Youtube",
+  "thumbnails": [
+    {
+      "url": "https://i.ytimg.com/vi/drm123XYZ/maxresdefault.jpg",
+      "width": 1280,
+      "height": 720,
+      "ext": "jpg"
+    }
+  ],
+  "formats": [
+    {
+      "format_id": "137",
+      "ext": "mp4",
+      "protocol": "https",
+      "vcodec": "avc1.640028",
+      "acodec": "none",
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "filesize": 48000000,
+      "has_drm": true,
+      "url": "https://media.example.test/drm/137.mp4"
+    },
+    {
+      "format_id": "140",
+      "ext": "m4a",
+      "protocol": "https",
+      "vcodec": "none",
+      "acodec": "mp4a.40.2",
+      "abr": 128,
+      "filesize": 4100000,
+      "has_drm": "maybe",
+      "url": "https://media.example.test/drm/140.m4a"
+    }
+  ]
+}

@@ -9,6 +9,7 @@ import typer
 
 from .commands.doctor import doctor
 from .commands.info import info
+from .commands.inspect import inspect_url
 from .commands.scan import scan_command
 from .commands.set import set_metadata
 
@@ -29,6 +30,7 @@ app.command("info")(info)
 app.command("set")(set_metadata)
 app.command("scan")(scan_command)
 app.command("doctor")(doctor)
+app.command("inspect")(inspect_url)
 
 
 def main() -> None:

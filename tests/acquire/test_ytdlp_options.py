@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Self
 
 import pytest
 
@@ -214,3 +215,129 @@ def test_youtube_get_info_preflight_raises_auth_required_before_network() -> Non
             ),
             ctx=ctx,
         )
+
+
+class FakeYoutubeDL:
+    def __init__(self, options: dict[str, object], info: dict[str, object]) -> None:
+        self.options = options
+        self.info = info
+        self.extract_calls: list[tuple[str, bool]] = []
+        self.closed = False
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info: object) -> bool:
+        return False
+
+    def extract_info(self, url: str, *, download: bool) -> dict[str, object]:
+        self.extract_calls.append((url, download))
+        return self.info
+
+    def sanitize_info(self, info: dict[str, object]) -> dict[str, object]:
+        return info
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_extract_uses_metadata_only_options_and_cookies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = write_cookie_file(tmp_path / "config" / "youtube.txt")
+    profile_ = profile(
+        cookies_file=source,
+        proxy="http://proxy.test:8080",
+        socket_timeout=9,
+    )
+    loader = YtDlpLoader()
+    ctx = LoaderContext(job_id="job-1", profile=profile_)
+    info: dict[str, object] = {"_type": "video", "id": "abc", "title": "Video"}
+    fake = FakeYoutubeDL({}, info)
+
+    captured: dict[str, object] = {}
+
+    def create(options: object) -> FakeYoutubeDL:
+        captured.update(options)  # type: ignore[arg-type]
+        return fake
+
+    monkeypatch.setattr(loader, "_create_youtube_dl", create)
+    result = loader._extract("https://www.youtube.com/watch?v=abc", ctx=ctx)
+
+    assert result is info
+    assert fake.extract_calls == [
+        ("https://www.youtube.com/watch?v=abc", False)
+    ]
+    assert captured["skip_download"] is True
+    assert captured["extract_flat"] is False
+    assert captured["cachedir"] is False
+    assert captured["remote_components"] == []
+    assert captured["cookiefile"] == str(source)
+    assert captured["proxy"] == "http://proxy.test:8080"
+    assert captured["js_runtimes"]["deno"]["path"].endswith("deno")  # type: ignore[index]
+    assert not list(tmp_path.glob("*.part"))
+    assert not list(tmp_path.glob("*.mp4"))
+
+
+def test_get_info_maps_extraction_without_downloading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    fixture = (
+        Path(__file__).parent / "fixtures" / "youtube_video.info.json"
+    )
+    info = json.loads(fixture.read_text(encoding="utf-8"))
+    cookie = write_cookie_file(tmp_path / "config" / "youtube.txt")
+    loader = YtDlpLoader()
+    ctx = LoaderContext(
+        job_id="job-1",
+        profile=SourceProfile(name="yt_dlp", cookies_file=cookie),
+    )
+
+    def extract(url: str, **kwargs: object) -> dict[str, object]:
+        assert url == "https://www.youtube.com/watch?v=abc123DEF45"
+        return info
+
+    monkeypatch.setattr(loader, "_extract", extract)
+    source_info = loader.get_info(
+        SourceRef(
+            source="yt-dlp",
+            url="https://www.youtube.com/watch?v=abc123DEF45",
+        ),
+        ctx=ctx,
+    )
+
+    assert source_info.kind.value == "single"
+    assert source_info.title == "TrackForge Test Video"
+    assert source_info.items[0].variants
+    assert source_info.items[0].recommendations.video is not None
+    assert not list(tmp_path.glob("*.m4a"))
+
+
+def test_extract_maps_ytdlp_errors_to_typed_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from yt_dlp.utils import DownloadError
+
+    from trackforge.acquire.errors import AuthRequired
+
+    source = write_cookie_file(tmp_path / "config" / "youtube.txt")
+    loader = YtDlpLoader()
+    ctx = LoaderContext(
+        job_id="job-1",
+        profile=profile(cookies_file=source, proxy="none"),
+    )
+
+    class FailingYoutubeDL(FakeYoutubeDL):
+        def extract_info(self, url: str, *, download: bool) -> dict[str, object]:
+            raise DownloadError("ERROR: This video is private")
+
+    fake = FailingYoutubeDL({}, {})
+    monkeypatch.setattr(loader, "_create_youtube_dl", lambda options: fake)
+
+    with pytest.raises(AuthRequired, match="private"):
+        loader._extract("https://www.youtube.com/watch?v=abc", ctx=ctx)

@@ -50,12 +50,43 @@ class UnsupportedUrl(AcquireError):
         source: str | None = None,
         hint: str | None = None,
     ) -> None:
-        message = f"unsupported URL: {url}"
+        message = f"unsupported URL: {url}" if url else "unsupported URL"
         if source:
             message = f"{message} (source {source!r})"
         super().__init__(message, hint=hint)
         self.url = url
         self.source = source
+
+
+class UnresolvedRedirect(AcquireError):
+    """The source returned a redirect/wrapper that was not resolved."""
+
+    default_message = "unresolved redirect"
+    hint = "refresh the item or resolve the redirected URL first"
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        url: str | None = None,
+        hint: str | None = None,
+    ) -> None:
+        super().__init__(message, hint=hint)
+        self.url = url
+
+
+class UnsupportedCollection(AcquireError):
+    """The URL is a collection/playlist, which is not implemented yet."""
+
+    default_message = "collections are not supported yet"
+    hint = "collection/playlist support arrives in L1.2; pass a single item URL"
+
+    def __init__(self, url: str | None = None, *, hint: str | None = None) -> None:
+        message = self.default_message
+        if url:
+            message = f"{message}: {url}"
+        super().__init__(message, hint=hint)
+        self.url = url
 
 
 class AmbiguousInput(AcquireError):

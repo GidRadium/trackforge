@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import ClassVar
 
@@ -15,12 +15,15 @@ from ..errors import SearchNotSupported
 from ..models import (
     DownloadRequest,
     DownloadResult,
+    DownloadVariant,
     MediaItem,
     MediaKind,
     Recommendations,
     SearchCandidate,
     SourceInfo,
     SourceRef,
+    StreamInfo,
+    StreamRole,
     Thumbnail,
     ThumbnailAsset,
     UrlHint,
@@ -219,8 +222,26 @@ def select_best_thumbnail(
     return best
 
 
+def _stream(variant: DownloadVariant, role: StreamRole) -> StreamInfo | None:
+    return next(
+        (stream for stream in variant.streams if stream.role is role),
+        None,
+    )
+
+
+def _codec_stem(codec: str | None) -> str:
+    if not codec:
+        return ""
+    return codec.split(".", 1)[0].strip().lower()
+
+
 def default_recommendations(item: MediaItem) -> Recommendations:
-    """Choose one usable variant per media use from the item's variants."""
+    """Choose one usable variant per media use from the item's variants.
+
+    The generic policy mirrors the source table in the architecture: prefer
+    MP4/H.264/AAC for video and M4A/AAC for audio, then fall back to the best
+    original stream.  Site-specific loaders may override this.
+    """
     variants = [
         variant
         for variant in item.variants
@@ -236,9 +257,58 @@ def default_recommendations(item: MediaItem) -> Recommendations:
                     return variant.id
         return None
 
+    def video_score(variant: DownloadVariant) -> tuple[float, ...]:
+        video = _stream(variant, StreamRole.VIDEO)
+        audio = _stream(variant, StreamRole.AUDIO)
+        container = (variant.container or "").lower()
+        video_codec = _codec_stem(video.codec if video else None)
+        audio_codec = _codec_stem(audio.codec if audio else None)
+        return (
+            1.0 if container == "mp4" else 0.0,
+            1.0 if video_codec in {"avc1", "h264"} else 0.0,
+            1.0 if audio_codec in {"aac", "mp4a"} else 0.0,
+            float(audio.language_preference or 0.0) if audio else 0.0,
+            float(video.height or 0) if video else 0.0,
+            float(video.fps or 0.0) if video else 0.0,
+            float(video.bitrate_kbps or 0.0) if video else 0.0,
+        )
+
+    def audio_score(variant: DownloadVariant) -> tuple[float, ...]:
+        audio = _stream(variant, StreamRole.AUDIO)
+        container = (variant.container or "").lower()
+        codec = _codec_stem(audio.codec if audio else None)
+        return (
+            1.0 if container in {"m4a", "mp4"} else 0.0,
+            1.0 if codec in {"aac", "mp4a"} else 0.0,
+            float(audio.language_preference or 0.0) if audio else 0.0,
+            float(audio.bitrate_kbps or 0.0) if audio else 0.0,
+            float(audio.filesize or 0) if audio else 0.0,
+        )
+
+    def best(
+        *kinds: MediaKind,
+        score: Callable[[DownloadVariant], tuple[float, ...]],
+    ) -> str | None:
+        candidates = [variant for variant in variants if variant.kind in kinds]
+        if not candidates:
+            return None
+        return max(candidates, key=score).id
+
     return Recommendations(
-        audio=first(MediaKind.AUDIO, MediaKind.AUDIO_VIDEO),
-        video=first(MediaKind.AUDIO_VIDEO, MediaKind.VIDEO),
+        audio=best(
+            MediaKind.AUDIO,
+            score=audio_score,
+        )
+        or best(
+            MediaKind.AUDIO,
+            MediaKind.AUDIO_VIDEO,
+            score=audio_score,
+        ),
+        video=best(
+            MediaKind.AUDIO_VIDEO,
+            MediaKind.VIDEO,
+            score=video_score,
+        ),
         image=first(MediaKind.IMAGE, MediaKind.ANIMATED_IMAGE),
         document=first(MediaKind.DOCUMENT),
     )

@@ -1,0 +1,223 @@
+{
+  "_type": "video",
+  "id": "abc123DEF45",
+  "display_id": "abc123DEF45",
+  "title": "TrackForge Test Video",
+  "description": "A sanitized fixture for offline metadata tests.",
+  "uploader": "TrackForge Channel",
+  "uploader_id": "@trackforge",
+  "uploader_url": "https://www.youtube.com/@trackforge",
+  "channel": "TrackForge Channel",
+  "channel_id": "UCtrackforge0000000000",
+  "duration": 245.5,
+  "upload_date": "20240112",
+  "release_date": "20240112",
+  "timestamp": 1705060800,
+  "webpage_url": "https://www.youtube.com/watch?v=abc123DEF45",
+  "original_url": "https://www.youtube.com/watch?v=abc123DEF45",
+  "availability": "public",
+  "age_limit": 0,
+  "live_status": "not_live",
+  "extractor": "youtube",
+  "extractor_key": "Youtube",
+  "view_count": 123456,
+  "like_count": 7890,
+  "tags": [
+    "test",
+    "fixture"
+  ],
+  "categories": [
+    "Music"
+  ],
+  "thumbnails": [
+    {
+      "url": "https://i.ytimg.com/vi/abc123DEF45/default.jpg",
+      "width": 120,
+      "height": 90,
+      "ext": "jpg",
+      "preference": -10
+    },
+    {
+      "url": "https://i.ytimg.com/vi/abc123DEF45/mqdefault.jpg",
+      "width": 320,
+      "height": 180,
+      "ext": "jpg"
+    },
+    {
+      "url": "https://i.ytimg.com/vi/abc123DEF45/hqdefault.jpg",
+      "width": 480,
+      "height": 360,
+      "ext": "jpg"
+    },
+    {
+      "url": "https://i.ytimg.com/vi/abc123DEF45/maxresdefault.jpg",
+      "width": 1280,
+      "height": 720,
+      "ext": "jpg",
+      "preference": 1
+    }
+  ],
+  "thumbnail": "https://i.ytimg.com/vi/abc123DEF45/maxresdefault.jpg",
+  "formats": [
+    {
+      "format_id": "137",
+      "format_note": "1080p",
+      "ext": "mp4",
+      "protocol": "https",
+      "vcodec": "avc1.640028",
+      "acodec": "none",
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "tbr": 4200,
+      "filesize": 48000000,
+      "url": "https://media.example.test/video/137.mp4"
+    },
+    {
+      "format_id": "136",
+      "format_note": "720p",
+      "ext": "mp4",
+      "protocol": "https",
+      "vcodec": "avc1.4d401f",
+      "acodec": "none",
+      "width": 1280,
+      "height": 720,
+      "fps": 30,
+      "tbr": 2500,
+      "filesize": 25000000,
+      "url": "https://media.example.test/video/136.mp4"
+    },
+    {
+      "format_id": "248",
+      "format_note": "1080p",
+      "ext": "webm",
+      "protocol": "https",
+      "vcodec": "vp9",
+      "acodec": "none",
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "tbr": 3900,
+      "filesize": 45000000,
+      "url": "https://media.example.test/video/248.webm"
+    },
+    {
+      "format_id": "247",
+      "format_note": "720p",
+      "ext": "webm",
+      "protocol": "https",
+      "vcodec": "vp9",
+      "acodec": "none",
+      "width": 1280,
+      "height": 720,
+      "fps": 30,
+      "tbr": 2200,
+      "filesize": 22000000,
+      "url": "https://media.example.test/video/247.webm"
+    },
+    {
+      "format_id": "22",
+      "format_note": "720p",
+      "ext": "mp4",
+      "protocol": "https",
+      "vcodec": "avc1.64001F",
+      "acodec": "mp4a.40.2",
+      "width": 1280,
+      "height": 720,
+      "fps": 30,
+      "tbr": 1800,
+      "filesize": 30000000,
+      "url": "https://media.example.test/video/22.mp4"
+    },
+    {
+      "format_id": "18",
+      "format_note": "360p",
+      "ext": "mp4",
+      "protocol": "https",
+      "vcodec": "avc1.42001E",
+      "acodec": "mp4a.40.2",
+      "width": 640,
+      "height": 360,
+      "fps": 30,
+      "tbr": 700,
+      "filesize": 12000000,
+      "url": "https://media.example.test/video/18.mp4"
+    },
+    {
+      "format_id": "140",
+      "format_note": "medium",
+      "ext": "m4a",
+      "protocol": "https",
+      "vcodec": "none",
+      "acodec": "mp4a.40.2",
+      "abr": 128,
+      "asr": 44100,
+      "audio_channels": 2,
+      "filesize": 4100000,
+      "url": "https://media.example.test/audio/140.m4a"
+    },
+    {
+      "format_id": "251",
+      "format_note": "medium",
+      "ext": "webm",
+      "protocol": "https",
+      "vcodec": "none",
+      "acodec": "opus",
+      "abr": 160,
+      "asr": 48000,
+      "audio_channels": 2,
+      "filesize": 4500000,
+      "url": "https://media.example.test/audio/251.webm"
+    },
+    {
+      "format_id": "sb0",
+      "format_note": "storyboard",
+      "ext": "mhtml",
+      "vcodec": "none",
+      "acodec": "none",
+      "url": "https://media.example.test/storyboard/sb0.mhtml"
+    }
+  ],
+  "subtitles": {
+    "en": [
+      {
+        "ext": "vtt",
+        "url": "https://media.example.test/subs/en.vtt",
+        "name": "English"
+      },
+      {
+        "ext": "srv1",
+        "url": "https://media.example.test/subs/en.srv1",
+        "name": "English"
+      }
+    ],
+    "ru": [
+      {
+        "ext": "vtt",
+        "url": "https://media.example.test/subs/ru.vtt",
+        "name": "Russian"
+      }
+    ]
+  },
+  "automatic_captions": {
+    "en": [
+      {
+        "ext": "json3",
+        "url": "https://media.example.test/subs/en-auto.json3",
+        "name": "English (auto)"
+      },
+      {
+        "ext": "ttml",
+        "url": "https://media.example.test/subs/en-auto.ttml",
+        "name": "English (auto)"
+      }
+    ],
+    "de": [
+      {
+        "ext": "vtt",
+        "url": "https://media.example.test/subs/de-auto.vtt",
+        "name": "German (auto)"
+      }
+    ]
+  }
+}

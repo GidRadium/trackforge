@@ -1,9 +1,8 @@
-"""Generic yt-dlp loader — contract only at L0/L1.0.
+"""Generic yt-dlp loader for single media items.
 
-The real extraction/mapping arrives in L1.1.  This module deliberately does
-not import :mod:`yt_dlp` at import time and never touches the network.  It
-does expose the L1.0 option builder and the auth preflight that ``get_info``
-will use in L1.1.
+The module keeps :mod:`yt_dlp` imports lazy so importing the acquisition
+package stays offline.  ``get_info`` only extracts metadata
+(``download=False``); downloading belongs to L2.
 """
 
 # pyright: standard
@@ -12,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -20,6 +20,19 @@ from ..auth import ensure_auth_ready
 from ..config import SourceProfile
 from ..models import DownloadRequest, DownloadResult, SourceInfo, SourceRef
 from .base import LoaderCapabilities, LoaderContext, MediaLoader
+from .ytdlp_errors import (
+    humanize_error,
+    is_retryable,
+    map_ytdlp_error,
+)
+from .ytdlp_mapper import (
+    YtDlpMapper,
+    best_audio_variant,
+    best_video_variant,
+    build_variants,
+    map_thumbnails,
+    parse_partial_date,
+)
 from .ytdlp_options import (
     build_ydl_options,
     create_youtube_dl,
@@ -127,10 +140,89 @@ class YtDlpLoader(MediaLoader):
         flat: bool = False,
         limit: int | None = None,
     ) -> SourceInfo:
-        # TODO(L1.1): call yt-dlp extract_info(download=False), map info_dict.
+        """Extract metadata only; never download media files."""
         self.preflight(ref.url, ctx.profile)
-        del ref, ctx, flat, limit
-        raise NotImplementedError("YtDlpLoader.get_info is implemented in L1.1")
+        info = self._extract(ref.url, ctx=ctx, flat=flat, limit=limit)
+        source = YtDlpMapper(ctx.profile).map(info, ref, flat=flat)
+        return self._finalize(source, ctx)
+
+    def _extract(
+        self,
+        url: str,
+        *,
+        ctx: LoaderContext,
+        flat: bool = False,
+        limit: int | None = None,
+    ) -> Mapping[str, Any]:
+        """Run ``extract_info(download=False)`` and sanitize the payload."""
+        del flat, limit  # collections are implemented in L1.2
+        options = self._base_options(ctx.profile, logger=ctx.logger)
+        options.update(
+            {
+                "skip_download": True,
+                "quiet": True,
+                "no_warnings": True,
+                "noprogress": True,
+                "ignoreerrors": False,
+                "cachedir": False,
+                "extract_flat": False,
+                "remote_components": [],
+            }
+        )
+        js_runtimes = deno_js_runtimes()
+        if js_runtimes:
+            options["js_runtimes"] = js_runtimes
+
+        from yt_dlp.utils import DownloadError, ExtractorError
+
+        ydl = self._create_youtube_dl(options)
+        try:
+            if hasattr(ydl, "__enter__") and hasattr(ydl, "__exit__"):
+                with ydl as active:
+                    info = active.extract_info(url, download=False)
+                    sanitize = getattr(active, "sanitize_info", None)
+                    if callable(sanitize):
+                        info = sanitize(info)
+            else:
+                try:
+                    info = ydl.extract_info(url, download=False)
+                    sanitize = getattr(ydl, "sanitize_info", None)
+                    if callable(sanitize):
+                        info = sanitize(info)
+                finally:
+                    close = getattr(ydl, "close", None)
+                    if callable(close):
+                        close()
+        except (DownloadError, ExtractorError) as exc:
+            raise map_ytdlp_error(exc, url=url) from exc
+
+        if info is None:
+            raise map_ytdlp_error(
+                DownloadError("yt-dlp returned no data"),
+                url=url,
+            )
+        if not isinstance(info, Mapping):
+            raise map_ytdlp_error(
+                DownloadError("yt-dlp returned an unexpected result"),
+                url=url,
+            )
+        return info
+
+    def _finalize(self, source: SourceInfo, ctx: LoaderContext) -> SourceInfo:
+        """Apply source-specific thumbnail and recommendation policy."""
+        items = tuple(
+            replace(
+                item,
+                thumbnail=self.choose_thumbnail(item, ctx=ctx) or item.thumbnail,
+                recommendations=self.recommend(item, ctx=ctx),
+            )
+            for item in source.items
+        )
+        thumbnail = next(
+            (item.thumbnail for item in items if item.thumbnail is not None),
+            None,
+        ) or source.thumbnail
+        return replace(source, items=items, thumbnail=thumbnail)
 
     def download(
         self,
@@ -156,8 +248,17 @@ def _is_youtube_url(url: str) -> bool:
 
 __all__ = [
     "YtDlpLoader",
+    "YtDlpMapper",
+    "best_audio_variant",
+    "best_video_variant",
+    "build_variants",
     "build_ydl_options",
     "create_youtube_dl",
     "deno_js_runtimes",
+    "humanize_error",
+    "is_retryable",
+    "map_thumbnails",
+    "map_ytdlp_error",
+    "parse_partial_date",
     "prepare_ydl_options",
 ]

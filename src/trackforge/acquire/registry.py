@@ -96,10 +96,10 @@ class LoaderRegistry:
 def default_registry(config: AppConfig | None = None) -> LoaderRegistry:
     """Build the built-in registry.
 
-    L0 only has the generic yt-dlp skeleton; site-specific loaders are added
-    in later layers.  The import is local so importing the registry does not
-    pull in the yt-dlp adapter unless needed.
+    Site-specific loaders run first; the generic yt-dlp adapter remains the
+    final fallback (and the only one that accepts arbitrary http(s) URLs).
     """
+    from .loaders.youtube import YouTubeLoader
     from .loaders.ytdlp import YtDlpLoader
 
-    return LoaderRegistry([YtDlpLoader()], config)
+    return LoaderRegistry([YouTubeLoader(), YtDlpLoader()], config)

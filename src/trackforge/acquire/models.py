@@ -44,6 +44,17 @@ class UrlHint(StrEnum):
     UNKNOWN = "unknown"
 
 
+class LiveStatus(StrEnum):
+    """Live-stream state reported by a source."""
+
+    LIVE = "is_live"
+    UPCOMING = "is_upcoming"
+    WAS_LIVE = "was_live"
+    POST_LIVE = "post_live"
+    NOT_LIVE = "not_live"
+    UNKNOWN = "unknown"
+
+
 class MediaKind(StrEnum):
     """What kind of media an item or variant contains."""
 
@@ -147,6 +158,7 @@ class StreamInfo:
     sample_rate: int | None = None
     channels: int | None = None
     language: str | None = None
+    language_preference: float | None = None
     dynamic_range: str | None = None
     filesize: int | None = None
     filesize_approx: int | None = None
@@ -203,6 +215,25 @@ class Recommendations:
 
 
 @dataclass(frozen=True, slots=True)
+class SubtitleTrack:
+    """One subtitle/caption track exposed by a source.
+
+    YouTube returns several formats per language (vtt, ttml, json3, srv*);
+    all of them are kept.  ``is_automatic`` distinguishes generated captions
+    from uploader-provided subtitles.
+    """
+
+    language: str
+    url: str | None = field(default=None, repr=False)
+    ext: str | None = None
+    name: str | None = None
+    mime: str | None = None
+    is_automatic: bool = False
+    data: str | None = field(default=None, repr=False)
+    http_headers: Mapping[str, str] = field(default_factory=dict, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class MediaItem:
     """One downloadable media item inside a source."""
 
@@ -215,10 +246,12 @@ class MediaItem:
     album: str | None = None
     album_artists: tuple[str, ...] = ()
     duration: float | None = None
+    live_status: LiveStatus = LiveStatus.UNKNOWN
     release_date: PartialDate | None = None
     page_url: str | None = None
     thumbnails: tuple[Thumbnail, ...] = ()
     thumbnail: Thumbnail | None = None
+    subtitles: tuple[SubtitleTrack, ...] = ()
     variants: tuple[DownloadVariant, ...] = ()
     recommendations: Recommendations = field(default_factory=Recommendations)
     resolution: ResolutionState = ResolutionState.FULL
@@ -229,6 +262,8 @@ class MediaItem:
     def __post_init__(self) -> None:
         if not isinstance(self.kind, MediaKind):
             object.__setattr__(self, "kind", MediaKind(self.kind))
+        if not isinstance(self.live_status, LiveStatus):
+            object.__setattr__(self, "live_status", LiveStatus(self.live_status))
         if not isinstance(self.resolution, ResolutionState):
             object.__setattr__(
                 self,

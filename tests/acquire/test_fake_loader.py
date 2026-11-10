@@ -189,7 +189,9 @@ def test_default_recommendations_choose_usable_variants() -> None:
     assert recommendations.document is None
 
 
-def test_ytdlp_skeleton_is_offline_and_not_implemented() -> None:
+def test_ytdlp_loader_maps_an_offline_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     loader = YtDlpLoader()
     assert loader.supports_url("https://example.test/watch/1") is True
     assert loader.supports_url("http://example.test/x") is True
@@ -197,9 +199,30 @@ def test_ytdlp_skeleton_is_offline_and_not_implemented() -> None:
     assert loader.supports_url("not a url") is False
     assert loader.profile_name() == "yt_dlp"
 
+    info = {
+        "_type": "video",
+        "id": "1",
+        "title": "Video",
+        "webpage_url": "https://example.test/watch/1",
+        "formats": [
+            {
+                "format_id": "18",
+                "ext": "mp4",
+                "vcodec": "avc1",
+                "acodec": "mp4a",
+                "height": 360,
+                "url": "https://media.example.test/18.mp4",
+            }
+        ],
+    }
+    monkeypatch.setattr(loader, "_extract", lambda *args, **kwargs: info)
     ctx = make_context(SourceProfile(name="yt_dlp"))
-    with pytest.raises(NotImplementedError):
-        loader.get_info(info_ref(), ctx=ctx)
+    source = loader.get_info(info_ref(), ctx=ctx)
+
+    assert source.kind is SourceKind.SINGLE
+    assert source.url == "https://example.test/watch/1"
+    assert source.items[0].variants
+    assert source.items[0].recommendations.video is not None
 
 
 def info_ref():
