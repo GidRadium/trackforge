@@ -18,13 +18,15 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import replace
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from ...metadata.model import PartialDate
 from ..auth import resolve_proxy
 from ..config import SourceProfile
-from ..errors import AuthRequired, MissingPlugin, UnsupportedUrl
+from ..download import looks_like_preview, probe_media_duration
+from ..errors import AuthRequired, MissingPlugin, PreviewOnly, UnsupportedUrl
 from ..models import (
     MediaItem,
     MediaKind,
@@ -41,6 +43,9 @@ from .base import LoaderCapabilities, LoaderContext, select_best_thumbnail
 from .thumbnail_probe import ImageSize, fetch_image_size, parse_image_size
 from .ytdlp import INFO_WARNINGS_KEY, YtDlpLoader, effective_flat_limit
 from .ytdlp_mapper import best_variant
+
+if TYPE_CHECKING:
+    from ..planner import ItemPlan
 
 _URL_HOSTS = frozenset(
     {
@@ -456,6 +461,7 @@ class YandexMusicLoader(YtDlpLoader):
     config_key = "yandex_music"
     priority = 20
     required_plugins = ("yt-dlp-yandex-music",)
+    requires_ffprobe_for_download = True
     capabilities = LoaderCapabilities(
         search=False,
         playlists=True,
@@ -954,6 +960,41 @@ class YandexMusicLoader(YtDlpLoader):
             prefer_codec="flac",
         )
         return Recommendations(audio=audio.id if audio is not None else None)
+
+    def _validate_downloaded(
+        self,
+        item_plan: ItemPlan,
+        path: Path,
+        *,
+        ctx: LoaderContext,
+    ) -> None:
+        """Reject a short ``smart_preview`` even when download "succeeded"."""
+        item = item_plan.item
+        expected = item.duration
+        quality = item.extras.get("quality")
+        reason: str | None = None
+        if isinstance(quality, str) and quality.strip().lower() in _PREVIEW_QUALITIES:
+            reason = f"quality={quality.strip().lower()!r}"
+        else:
+            actual = probe_media_duration(
+                path,
+                timeout=ctx.profile.socket_timeout,
+            )
+            if looks_like_preview(actual, expected):
+                if expected is not None:
+                    reason = (
+                        f"downloaded duration is {actual:.1f}s, "
+                        f"expected {expected:.1f}s"
+                    )
+                else:
+                    reason = f"downloaded duration is {actual:.1f}s"
+        if reason is None:
+            return
+        raise PreviewOnly(
+            f"PreviewOnly: item {item.id!r} looks like a Yandex preview "
+            f"({reason}); refresh the session cookies or try another account",
+            hint="refresh the Yandex session cookies and download again",
+        )
 
 
 __all__ = [

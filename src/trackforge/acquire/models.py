@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, ClassVar
 
 from ..metadata.model import PartialDate
@@ -428,3 +428,29 @@ class DownloadResult:
     files: tuple[DownloadedFile, ...]
     failures: tuple[DownloadFailure, ...] = ()
     warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ItemPlan:
+    """One selected item/variant ready to be downloaded."""
+
+    item: MediaItem
+    variant: DownloadVariant
+    selector: str
+    output_stem: str
+
+    @property
+    def stem_name(self) -> str:
+        """Flat file name stem (without any ``1/`` collision prefix)."""
+        return PurePosixPath(self.output_stem).name
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadPlan:
+    """The complete, immutable work description for one download job."""
+
+    job_id: str
+    source: SourceRef
+    source_info: SourceInfo
+    items: tuple[ItemPlan, ...]
+    options: DownloadOptions

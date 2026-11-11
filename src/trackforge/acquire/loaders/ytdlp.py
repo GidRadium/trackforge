@@ -12,22 +12,45 @@ item by its ``page_url``.
 from __future__ import annotations
 
 import logging
+import shutil
 from collections.abc import Mapping
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
 
 from ..auth import ensure_auth_ready
 from ..config import SourceProfile
-from ..errors import AuthRequired, Unavailable
+from ..download import (
+    YtDlpProgressHook,
+    build_postprocessors,
+    collect_download_outputs,
+    ensure_ffmpeg,
+    ensure_ffprobe,
+    requires_ffmpeg,
+)
+from ..errors import (
+    AcquireError,
+    AuthRequired,
+    CancelledError,
+    DownloadFailed,
+    PostprocessError,
+    PreviewOnly,
+    Unavailable,
+)
 from ..models import (
+    CollisionPolicy,
+    DownloadedFile,
+    DownloadFailure,
     DownloadRequest,
     DownloadResult,
     SourceInfo,
     SourceKind,
     SourceRef,
 )
+from ..planner import DownloadPlan, ItemPlan, YtDlpPlanner
+from ..progress import ProgressEvent, ProgressStage
+from ..staging import StagingArea
 from .base import LoaderCapabilities, LoaderContext, MediaLoader
 from .ytdlp_errors import (
     humanize_error,
@@ -356,15 +379,274 @@ class YtDlpLoader(MediaLoader):
         ) or source.thumbnail
         return replace(source, items=items, thumbnail=thumbnail)
 
+    # Yandex overrides this to verify that the served file is not a preview.
+    requires_ffprobe_for_download = False
+
     def download(
         self,
         request: DownloadRequest,
         *,
         ctx: LoaderContext,
     ) -> DownloadResult:
-        # TODO(L2): plan selections, call yt-dlp extract_info(download=True).
-        del request, ctx
-        raise NotImplementedError("YtDlpLoader.download is implemented in L2")
+        """Download every selected variant into this job's staging directory.
+
+        Items are processed sequentially.  A failure in one item is recorded
+        in :attr:`DownloadResult.failures` and does not stop the remaining
+        items.  Cancellation is different: it aborts the whole job and
+        removes the staging directory unless ``keep_temp`` is set.
+        """
+        plan = YtDlpPlanner(request, job_id=ctx.job_id).plan()
+        if not plan.items:
+            return DownloadResult(files=())
+        ctx.cancel.raise_if_cancelled()
+        for item_plan in plan.items:
+            self.preflight(
+                item_plan.item.page_url or plan.source.url,
+                ctx.profile,
+            )
+
+        if any(requires_ffmpeg(item_plan, plan.options) for item_plan in plan.items):
+            ensure_ffmpeg()
+        if self.requires_ffprobe_for_download:
+            ensure_ffprobe()
+
+        staging = ctx.staging or StagingArea(plan.options.target_dir)
+        job_dir = staging.job_dir(plan.job_id)
+        files: list[DownloadedFile] = []
+        failures: list[DownloadFailure] = []
+        try:
+            for index, item_plan in enumerate(plan.items, start=1):
+                ctx.cancel.raise_if_cancelled()
+                try:
+                    downloaded = self._download_item(
+                        plan,
+                        item_plan,
+                        item_index=index,
+                        ctx=ctx,
+                        job_dir=job_dir,
+                    )
+                except CancelledError:
+                    raise
+                except PreviewOnly as exc:
+                    failures.append(
+                        DownloadFailure(
+                            item_id=item_plan.item.id,
+                            message=str(exc),
+                            retryable=exc.retryable,
+                        )
+                    )
+                except AcquireError as exc:
+                    failures.append(
+                        DownloadFailure(
+                            item_id=item_plan.item.id,
+                            message=str(exc),
+                            retryable=exc.retryable,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001 - one item must not stop the rest
+                    ctx.logger.warning(
+                        "download failed for item %s: %s",
+                        item_plan.item.id,
+                        exc,
+                    )
+                    failures.append(
+                        DownloadFailure(
+                            item_id=item_plan.item.id,
+                            message=str(exc) or type(exc).__name__,
+                        )
+                    )
+                else:
+                    files.append(downloaded)
+                    ctx.progress.emit(
+                        ProgressEvent(
+                            stage=ProgressStage.DONE,
+                            job_id=plan.job_id,
+                            item_index=index,
+                            item_count=len(plan.items),
+                            filename=downloaded.path.name,
+                        )
+                    )
+            return DownloadResult(files=tuple(files), failures=tuple(failures))
+        except CancelledError:
+            if not plan.options.keep_temp:
+                shutil.rmtree(job_dir, ignore_errors=True)
+            raise
+        except BaseException:
+            if not plan.options.keep_temp:
+                shutil.rmtree(job_dir, ignore_errors=True)
+            raise
+
+    def _download_item(
+        self,
+        plan: DownloadPlan,
+        item_plan: ItemPlan,
+        *,
+        item_index: int,
+        ctx: LoaderContext,
+        job_dir: Path,
+    ) -> DownloadedFile:
+        hook = YtDlpProgressHook(
+            ctx.progress,
+            ctx.cancel,
+            plan,
+            item_plan,
+            item_index,
+        )
+        options = self._download_options(
+            plan,
+            item_plan,
+            ctx=ctx,
+            job_dir=job_dir,
+            hook=hook,
+        )
+        relative = PurePosixPath(item_plan.output_stem)
+        (job_dir / relative.parent).mkdir(parents=True, exist_ok=True)
+        (job_dir / "tmp").mkdir(parents=True, exist_ok=True)
+
+        url = item_plan.item.page_url or plan.source.url
+        info = self._extract_download(url, options, ctx=ctx)
+        ctx.cancel.raise_if_cancelled()
+        media, sidecars = collect_download_outputs(item_plan, job_dir, info)
+        try:
+            self._validate_downloaded(item_plan, media, ctx=ctx)
+        except PreviewOnly:
+            if not plan.options.keep_temp:
+                for path in (media, *sidecars):
+                    path.unlink(missing_ok=True)
+            raise
+        return DownloadedFile(
+            item_id=item_plan.item.id,
+            path=media,
+            item=item_plan.item,
+            sidecars=sidecars,
+        )
+
+    def _download_options(
+        self,
+        plan: DownloadPlan,
+        item_plan: ItemPlan,
+        *,
+        ctx: LoaderContext,
+        job_dir: Path,
+        hook: YtDlpProgressHook,
+    ) -> dict[str, Any]:
+        options = dict(self._base_options(ctx.profile, logger=ctx.logger))
+        postprocessors = build_postprocessors(item_plan, plan.options)
+        options.update(
+            {
+                "format": item_plan.selector,
+                "paths": {
+                    "home": str(job_dir),
+                    "temp": str(job_dir / "tmp"),
+                },
+                "outtmpl": {"default": f"{item_plan.output_stem}.%(ext)s"},
+                "noplaylist": True,
+                "skip_download": False,
+                "writethumbnail": plan.options.write_thumbnail,
+                "writeinfojson": plan.options.write_info_json,
+                "writesubtitles": bool(plan.options.subtitles),
+                "subtitleslangs": list(plan.options.subtitles),
+                "subtitlesformat": "best",
+                "overwrites": plan.options.collision is CollisionPolicy.OVERWRITE,
+                "continuedl": True,
+                "keepvideo": plan.options.keep_temp,
+                "postprocessors": postprocessors,
+                "progress_hooks": [hook.download],
+                "postprocessor_hooks": [hook.postprocessor],
+            }
+        )
+        container = _normalise_container(plan.options.container)
+        if container is not None and item_plan.variant.requires_merge:
+            # ffmpeg merges into the requested container directly; adding a
+            # separate remuxer afterwards would process the file twice.
+            options["merge_output_format"] = container
+        return options
+
+    def _extract_download(
+        self,
+        url: str,
+        options: Mapping[str, Any],
+        *,
+        ctx: LoaderContext,
+    ) -> Mapping[str, Any]:
+        from yt_dlp.utils import (
+            DownloadCancelled as YtDlpDownloadCancelled,
+        )
+        from yt_dlp.utils import DownloadError, ExtractorError, PostProcessingError
+
+        ydl = self._create_youtube_dl(options)
+        try:
+            try:
+                if hasattr(ydl, "__enter__") and hasattr(ydl, "__exit__"):
+                    with ydl as active:
+                        info = active.extract_info(url, download=True)
+                        sanitize = getattr(active, "sanitize_info", None)
+                        if callable(sanitize):
+                            info = sanitize(info)
+                else:
+                    try:
+                        info = ydl.extract_info(url, download=True)
+                        sanitize = getattr(ydl, "sanitize_info", None)
+                        if callable(sanitize):
+                            info = sanitize(info)
+                    finally:
+                        close = getattr(ydl, "close", None)
+                        if callable(close):
+                            close()
+            except YtDlpDownloadCancelled as exc:
+                raise CancelledError("download cancelled by user") from exc
+            except PostProcessingError as exc:
+                raise PostprocessError(
+                    f"post-processing failed: {exc}",
+                    hint="check that ffmpeg is installed and the file is valid",
+                ) from exc
+            except (DownloadError, ExtractorError) as exc:
+                if ctx.cancel.cancelled:
+                    raise CancelledError("download cancelled by user") from exc
+                if _looks_like_postprocess_error(exc):
+                    raise PostprocessError(
+                        f"post-processing failed: {exc}",
+                        hint="check that ffmpeg is installed and the file is valid",
+                    ) from exc
+                raise map_ytdlp_error(exc, url=url) from exc
+        finally:
+            close = getattr(ydl, "close", None)
+            if callable(close):
+                close()
+
+        if info is None:
+            raise DownloadFailed(
+                "yt-dlp returned no data while downloading",
+                hint="retry the download; refresh the item if it persists",
+            )
+        if not isinstance(info, Mapping):
+            raise DownloadFailed(
+                "yt-dlp returned an unexpected download result",
+                hint="retry the download; refresh the item if it persists",
+            )
+        return info
+
+    def _validate_downloaded(
+        self,
+        item_plan: ItemPlan,
+        path: Path,
+        *,
+        ctx: LoaderContext,
+    ) -> None:
+        """Source-specific post-download verification hook."""
+        del item_plan, path, ctx
+
+
+def _normalise_container(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = value.strip().lower().lstrip(".")
+    return text or None
+
+
+def _looks_like_postprocess_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return "postprocessing" in text or "post-processing" in text
 
 
 def _is_youtube_url(url: str) -> bool:
@@ -382,12 +664,18 @@ __all__ = [
     "DEFAULT_FLAT_LIMIT",
     "INFO_WARNINGS_KEY",
     "MAX_FLAT_LIMIT",
+    "DownloadPlan",
+    "ItemPlan",
     "YtDlpLoader",
     "YtDlpMapper",
+    "YtDlpPlanner",
+    "YtDlpProgressHook",
     "best_audio_variant",
     "best_video_variant",
+    "build_postprocessors",
     "build_variants",
     "build_ydl_options",
+    "collect_download_outputs",
     "create_youtube_dl",
     "deno_js_runtimes",
     "effective_flat_limit",
@@ -397,4 +685,5 @@ __all__ = [
     "map_ytdlp_error",
     "parse_partial_date",
     "prepare_ydl_options",
+    "requires_ffmpeg",
 ]

@@ -16,9 +16,10 @@ import uuid
 
 from .config import AppConfig
 from .loaders.base import LoaderContext
-from .models import SourceInfo, SourceRef
-from .progress import NullProgressSink
+from .models import DownloadRequest, DownloadResult, SourceInfo, SourceRef
+from .progress import CancellationToken, NullProgressSink, ProgressSink
 from .registry import LoaderRegistry, ResolvedLoader, default_registry
+from .staging import StagingArea
 
 _LOGGER = logging.getLogger("trackforge.acquire")
 
@@ -78,15 +79,54 @@ class AcquisitionService:
             indent=indent,
         )
 
-    def context_for(self, resolved: ResolvedLoader) -> LoaderContext:
+    def context_for(
+        self,
+        resolved: ResolvedLoader,
+        *,
+        job_id: str | None = None,
+        progress: ProgressSink | None = None,
+        cancel: CancellationToken | None = None,
+        staging: StagingArea | None = None,
+    ) -> LoaderContext:
         """Build a context for an already resolved loader."""
         return LoaderContext(
-            job_id=uuid.uuid4().hex,
+            job_id=job_id or uuid.uuid4().hex,
             profile=resolved.profile,
-            progress=NullProgressSink(),
+            progress=progress or NullProgressSink(),
+            cancel=cancel or CancellationToken(),
+            staging=staging,
             http=self.http,
             logger=self.logger,
         )
+
+    def download(
+        self,
+        request: DownloadRequest,
+        *,
+        progress: ProgressSink | None = None,
+        cancel: CancellationToken | None = None,
+        staging: StagingArea | None = None,
+        job_id: str | None = None,
+    ) -> DownloadResult:
+        """Download the selected variants into staging.
+
+        The request already contains a frozen ``SourceInfo`` and explicit
+        selections, so no user interaction happens here.  ``target_dir`` is
+        used as the staging root unless a :class:`StagingArea` is injected;
+        L2 never commits files to their final ingest path.
+        """
+        resolved = self.registry.resolve(
+            request.source_info.url,
+            source=request.source_info.source,
+        )
+        ctx = self.context_for(
+            resolved,
+            job_id=job_id,
+            progress=progress,
+            cancel=cancel,
+            staging=staging or StagingArea(request.options.target_dir),
+        )
+        return resolved.loader.download(request, ctx=ctx)
 
 
 __all__ = ["AcquisitionService"]

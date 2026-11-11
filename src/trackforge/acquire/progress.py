@@ -103,3 +103,12 @@ class CancellationToken:
     def raise_if_cancelled(self) -> None:
         if self.cancelled:
             raise CancelledError()
+
+
+def __getattr__(name: str) -> object:
+    """Lazily expose the yt-dlp hook without a module import cycle."""
+    if name == "YtDlpProgressHook":
+        from .download import YtDlpProgressHook
+
+        return YtDlpProgressHook
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -12,7 +12,13 @@ from .base import (
 from .soundcloud import SoundCloudLoader
 from .yandex_music import YandexMusicLoader
 from .youtube import YouTubeLoader
-from .ytdlp import YtDlpLoader
+from .ytdlp import (
+    DownloadPlan,
+    ItemPlan,
+    YtDlpLoader,
+    YtDlpPlanner,
+    YtDlpProgressHook,
+)
 from .ytdlp_errors import (
     classify_ytdlp_error,
     humanize_error,
@@ -41,6 +47,8 @@ from .ytdlp_options import (
 )
 
 __all__ = [
+    "DownloadPlan",
+    "ItemPlan",
     "LoaderCapabilities",
     "LoaderContext",
     "MediaLoader",
@@ -49,6 +57,8 @@ __all__ = [
     "YouTubeLoader",
     "YtDlpLoader",
     "YtDlpMapper",
+    "YtDlpPlanner",
+    "YtDlpProgressHook",
     "best_audio_variant",
     "best_variant",
     "best_video_variant",
