@@ -5,10 +5,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
 
 import typer
+from typer.core import TyperGroup
 
 from .commands.doctor import doctor
 from .commands.info import info
@@ -20,7 +20,7 @@ from .commands.set import set_metadata
 from .commands.sources import sources_command
 
 
-class TfgGroup(typer.core.TyperGroup):
+class TfgGroup(TyperGroup):
     """Typer group with a default ``input`` command.
 
     Registered subcommands always win, so ``tfg info``/``set``/``scan`` keep
@@ -37,7 +37,7 @@ class TfgGroup(typer.core.TyperGroup):
             and args[0] not in {"--help", "-h"}
             and not ctx.resilient_parsing
         ):
-            setattr(ctx, "_protected_args", ["input"])
+            ctx._protected_args = ["input"]
             ctx.args = list(args)
             return ctx.args
         return super().parse_args(ctx, args)
@@ -45,7 +45,7 @@ class TfgGroup(typer.core.TyperGroup):
     def resolve_command(
         self,
         ctx: Any,
-        args: Sequence[str],
+        args: list[str],
     ) -> tuple[Any, Any, list[str]]:
         if args:
             first = args[0]

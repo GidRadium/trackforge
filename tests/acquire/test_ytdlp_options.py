@@ -17,13 +17,13 @@ from trackforge.acquire.errors import AuthRequired
 from trackforge.acquire.loaders.base import LoaderContext
 from trackforge.acquire.loaders.youtube import YouTubeLoader
 from trackforge.acquire.loaders.ytdlp import YtDlpLoader
-from trackforge.acquire.registry import LoaderRegistry
 from trackforge.acquire.loaders.ytdlp_options import (
     build_ydl_options,
     create_youtube_dl,
     prepare_ydl_options,
 )
 from trackforge.acquire.models import SourceRef
+from trackforge.acquire.registry import LoaderRegistry
 from trackforge.acquire.staging import StagingArea
 
 

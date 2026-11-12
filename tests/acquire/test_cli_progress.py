@@ -78,7 +78,7 @@ def test_non_tty_progress_is_not_spammed() -> None:
     status = StatusLine(buffer)
     sink = HumanProgressSink(status)
 
-    for percent in range(0, 101):
+    for percent in range(101):
         sink.emit(
             download_event(
                 filename="video",

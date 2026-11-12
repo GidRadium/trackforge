@@ -28,12 +28,12 @@ from ..models import (
     UrlHint,
 )
 from .base import LoaderContext
+from .youtube_thumbnails import youtube_thumbnail_candidates
 from .ytdlp import YtDlpLoader
 from .ytdlp_mapper import (
     best_variant,
     best_video_variant,
 )
-from .youtube_thumbnails import youtube_thumbnail_candidates
 
 _URL_RE = re.compile(
     r"^https?://(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be)(?:/|$)",

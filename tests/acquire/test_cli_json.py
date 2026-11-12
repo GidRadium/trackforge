@@ -13,10 +13,11 @@ from fakes import make_source_info
 from typer.testing import CliRunner
 
 from trackforge.acquire.config import AppConfig, SourceProfile
+from trackforge.acquire.loaders.base import LoaderContext
 from trackforge.acquire.models import (
+    DownloadedFile,
     DownloadRequest,
     DownloadResult,
-    DownloadedFile,
 )
 from trackforge.acquire.progress import ProgressEvent, ProgressStage
 from trackforge.acquire.serialization import assert_schema_shape

@@ -44,7 +44,6 @@ from ..models import (
     DownloadFailure,
     DownloadRequest,
     DownloadResult,
-    MediaItem,
     SourceInfo,
     SourceKind,
     SourceRef,
@@ -55,19 +54,12 @@ from ..progress import ProgressEvent, ProgressStage
 from ..staging import StagingArea
 from .base import LoaderCapabilities, LoaderContext, MediaLoader
 from .ytdlp_errors import (
-    humanize_error,
-    is_retryable,
     map_ytdlp_error,
 )
 from .ytdlp_mapper import (
     DEFAULT_FLAT_LIMIT,
     MAX_FLAT_LIMIT,
     YtDlpMapper,
-    best_audio_variant,
-    best_video_variant,
-    build_variants,
-    map_thumbnails,
-    parse_partial_date,
 )
 from .ytdlp_options import (
     build_ydl_options,

@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fakes import FakeLoader, make_source_info, make_variant
@@ -35,7 +36,7 @@ class DownloadingFakeLoader(FakeLoader):
         self,
         *,
         result_factory: Callable[[DownloadRequest], DownloadResult] | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._result_factory = result_factory

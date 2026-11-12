@@ -38,7 +38,12 @@ from ..models import (
     UrlHint,
 )
 from ..yandex_plugin import plugin_available, plugin_install_hint
-from .base import LoaderCapabilities, LoaderContext, rank_thumbnails, select_best_thumbnail
+from .base import (
+    LoaderCapabilities,
+    LoaderContext,
+    rank_thumbnails,
+    select_best_thumbnail,
+)
 from .ytdlp import INFO_WARNINGS_KEY, YtDlpLoader, effective_flat_limit
 from .ytdlp_mapper import best_variant
 

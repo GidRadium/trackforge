@@ -254,7 +254,7 @@ def run_input(
         for index, item in enumerate(selected, start=1):
             if len(selected) > 1:
                 echo(f"\nItem {index}/{len(selected)}:")
-            variant = _choose_one(
+            selected_variant = _choose_one(
                 item,
                 spec,
                 interactive,
@@ -262,7 +262,10 @@ def run_input(
                 echo=echo,
             )
             chosen.append(
-                ItemSelection(item_id=item.id, variant_id=variant.id)
+                ItemSelection(
+                    item_id=item.id,
+                    variant_id=selected_variant.id,
+                )
             )
         selections = tuple(chosen)
         if (

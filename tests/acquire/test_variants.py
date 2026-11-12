@@ -560,7 +560,9 @@ def test_quality_first_prefers_higher_resolution_h265() -> None:
 
     assert chosen is not None
     assert chosen.streams[0].height == 2160
-    assert chosen.streams[0].codec.startswith("hev1")
+    codec = chosen.streams[0].codec
+    assert codec is not None
+    assert codec.startswith("hev1")
 
 
 def test_quality_first_keeps_h264_at_equal_resolution() -> None:
@@ -588,7 +590,9 @@ def test_quality_first_keeps_h264_at_equal_resolution() -> None:
 
     assert chosen is not None
     assert chosen.streams[0].height == 1080
-    assert chosen.streams[0].codec.startswith("avc1")
+    codec = chosen.streams[0].codec
+    assert codec is not None
+    assert codec.startswith("avc1")
 
 
 def test_default_recommendations_are_quality_first() -> None:
@@ -619,4 +623,6 @@ def test_default_recommendations_are_quality_first() -> None:
         variant for variant in variants if variant.id == recommendations.video
     )
     assert chosen.streams[0].height == 2160
-    assert chosen.streams[0].codec.startswith("hev1")
+    codec = chosen.streams[0].codec
+    assert codec is not None
+    assert codec.startswith("hev1")
