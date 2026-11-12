@@ -139,7 +139,7 @@ def test_model_fields_are_frozen() -> None:
 
 
 def test_schema_field_names_are_frozen() -> None:
-    assert SOURCE_INFO_SCHEMA_VERSION == 1
+    assert SOURCE_INFO_SCHEMA_VERSION == 2
     assert SOURCE_INFO_FIELDS == (
         "schema_version",
         "source",
@@ -156,6 +156,7 @@ def test_schema_field_names_are_frozen() -> None:
         "page_url",
         "resolution",
         "thumbnail",
+        "thumbnails",
         "recommendations",
         "variants",
     )

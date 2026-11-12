@@ -86,6 +86,7 @@ from .loaders import (
     dedupe_and_sort,
     default_recommendations,
     deno_js_runtimes,
+    dynamic_range_rank,
     humanize_error,
     is_retryable,
     map_audio,
@@ -95,7 +96,9 @@ from .loaders import (
     pair_video_with_audio,
     parse_partial_date,
     prepare_ydl_options,
+    rank_thumbnails,
     select_best_thumbnail,
+    video_codec_rank,
 )
 from .models import (
     SOURCE_INFO_SCHEMA_VERSION,
@@ -156,6 +159,7 @@ from .serialization import (
 )
 from .service import AcquisitionService
 from .staging import StagingArea, allocate_target
+from .thumbnail_cache import ThumbnailCache
 
 __all__ = [
     "MEDIA_ITEM_FIELDS",
@@ -232,6 +236,7 @@ __all__ = [
     "SubtitleTrack",
     "Thumbnail",
     "ThumbnailAsset",
+    "ThumbnailCache",
     "Unavailable",
     "UnresolvedEntry",
     "UnresolvedRedirect",
@@ -264,6 +269,7 @@ __all__ = [
     "default_recommendations",
     "default_registry",
     "deno_js_runtimes",
+    "dynamic_range_rank",
     "ensure_auth_ready",
     "ensure_ffmpeg",
     "ensure_ffprobe",
@@ -283,6 +289,7 @@ __all__ = [
     "parse_partial_date",
     "prepare_ydl_options",
     "probe_duration",
+    "rank_thumbnails",
     "probe_media_duration",
     "requires_ffmpeg",
     "resolve_proxy",
@@ -295,4 +302,5 @@ __all__ = [
     "source_info_to_json",
     "user_config_path",
     "validate_cookie_file",
+    "video_codec_rank",
 ]

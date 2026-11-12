@@ -16,10 +16,18 @@ import uuid
 
 from .config import AppConfig
 from .loaders.base import LoaderContext
-from .models import DownloadRequest, DownloadResult, SourceInfo, SourceRef
+from .models import (
+    DownloadRequest,
+    DownloadResult,
+    SourceInfo,
+    SourceRef,
+    Thumbnail,
+    ThumbnailAsset,
+)
 from .progress import CancellationToken, NullProgressSink, ProgressSink
 from .registry import LoaderRegistry, ResolvedLoader, default_registry
 from .staging import StagingArea
+from .thumbnail_cache import ThumbnailCache
 
 _LOGGER = logging.getLogger("trackforge.acquire")
 
@@ -34,11 +42,17 @@ class AcquisitionService:
         registry: LoaderRegistry | None = None,
         http: object | None = None,
         logger: logging.Logger | None = None,
+        thumbnail_cache: ThumbnailCache | None = None,
     ) -> None:
         self.config = config or AppConfig()
         self.registry = registry or default_registry(self.config)
         self.http = http
         self.logger = logger or _LOGGER
+        self.thumbnail_cache = (
+            thumbnail_cache
+            if thumbnail_cache is not None
+            else ThumbnailCache()
+        )
 
     def inspect(
         self,
@@ -71,13 +85,43 @@ class AcquisitionService:
         source: str | None = None,
         indent: int | None = 2,
     ) -> str:
-        """Inspect and return the frozen schema-version-1 JSON text."""
+        """Inspect and return the frozen schema-version-2 JSON text."""
         from .serialization import source_info_to_json
 
         return source_info_to_json(
             self.inspect(url, flat=flat, limit=limit, source=source),
             indent=indent,
         )
+
+    def fetch_thumbnail(
+        self,
+        thumbnail: Thumbnail,
+        *,
+        url: str | None = None,
+        source: str | None = None,
+        max_bytes: int | None = None,
+    ) -> ThumbnailAsset | None:
+        """Return cached thumbnail bytes, fetching them when necessary.
+
+        After ``inspect`` the chosen thumbnail is normally already cached, so
+        bots/GUIs can call this without a network request.  ``url``/``source``
+        are only needed when the cache is cold.
+        """
+        cached = self.thumbnail_cache.get(thumbnail.url)
+        if cached is not None:
+            return cached
+        if url is None:
+            return None
+        resolved = self.registry.resolve(url, source=source)
+        ctx = self.context_for(resolved)
+        asset = resolved.loader.fetch_thumbnail(
+            thumbnail,
+            ctx=ctx,
+            max_bytes=max_bytes,
+        )
+        if asset is not None:
+            self.thumbnail_cache.put(thumbnail.url, asset)
+        return asset
 
     def context_for(
         self,
@@ -97,6 +141,7 @@ class AcquisitionService:
             staging=staging,
             http=self.http,
             logger=self.logger,
+            thumbnail_cache=self.thumbnail_cache,
         )
 
     def download(

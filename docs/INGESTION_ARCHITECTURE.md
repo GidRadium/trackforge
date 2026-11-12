@@ -1,6 +1,6 @@
 # Архитектура получения медиа (input → download → ingest)
 
-**Статус:** L1 завершён; `SourceInfo v1` frozen (2026-11-10)
+**Статус:** L1 завершён; `SourceInfo v2` (v1 frozen 2026-11-10, v2 — 2026-11-12)
 
 **Дата:** 2026-11-09  
 **Связанные документы:** [IDEA.md](./IDEA.md), [METADATA_RESEARCH.md](./METADATA_RESEARCH.md), [INGESTION_RESEARCH.md](./INGESTION_RESEARCH.md), [INGESTION_IMPLEMENTATION_PLAN.md](./INGESTION_IMPLEMENTATION_PLAN.md)
@@ -354,9 +354,10 @@ class SourceInfo:
 
 > `PartialDate` переиспользуем из `trackforge.metadata`, чтобы не плодить второй тип даты.
 
-### 3.2.1. `SourceInfo` v1 — зафиксировано
+### 3.2.1. `SourceInfo` v2 — зафиксировано
 
-**Дата фиксации:** 2026-11-10.  **`schema_version`: 1.**
+**Дата фиксации:** 2026-11-10 (v1), 2026-11-12 (v2: thumbnail candidates).
+**`schema_version`: 2.**
 
 Публичный JSON-контракт реализован в
 `trackforge.acquire.serialization` (`source_info_to_dict`,
@@ -366,7 +367,7 @@ class SourceInfo:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source": "youtube",
   "kind": "single",
   "title": "...",
@@ -379,6 +380,10 @@ class SourceInfo:
       "page_url": "...",
       "resolution": "full",
       "thumbnail": {"url": "...", "width": 1280, "height": 720},
+      "thumbnails": [
+        {"url": "...", "width": 1280, "height": 720},
+        {"url": "...", "width": 640, "height": 480}
+      ],
       "recommendations": {"audio": "...", "video": "..."},
       "variants": [
         {"id": "...", "label": "...", "kind": "video", "container": "mp4",
@@ -390,7 +395,7 @@ class SourceInfo:
 }
 ```
 
-Правила v1:
+Правила v2:
 
 - набор полей на всех трёх уровнях фиксирован; меняется только вместе с
   `schema_version`;
@@ -401,7 +406,10 @@ class SourceInfo:
 - `variants` не содержат подписанных media URL, `format_id`-селекторов,
   `http_headers` и потоков; для скачивания L2 переизвлекает формат по
   `variant.id`/`item.page_url`;
-- `thumbnail` — только URL и размеры, без байтов и заголовков;
+- `thumbnail` — выбранная обложка (URL и размеры), без байтов и заголовков;
+- `thumbnails` — упорядоченный список потенциальных обложек от лучшей к
+  худшей. Для flat-режима он строится без сетевых проверок; полный inspect
+  пытается скачать кандидатов по порядку и останавливается на первом рабочем;
 - `recommendations` в v1 — только `audio` и `video`;
   `image`/`document` появятся в новой версии вместе с L5;
 - `filesize` — точный размер, если источник его дал, иначе приблизительный
@@ -410,13 +418,13 @@ class SourceInfo:
   авторизации, токены, proxy, `extras`, `subtitles`, `StreamInfo.url`,
   `DownloadVariant.selector`, сырой `info_dict`;
 - новые source-specific данные сначала попадают только в
-  `MediaItem.extras`; чтобы вывести их в JSON, нужен `schema_version: 2`.
+  `MediaItem.extras`; чтобы вывести их в JSON, нужен следующий `schema_version`.
 
 Публичный API:
 
 ```python
 info = AcquisitionService(...).inspect(url, flat=False, limit=None, source=None)
-payload = info.to_dict()       # schema_version == 1
+payload = info.to_dict()       # schema_version == 2
 text = info.to_json()          # тот же объект, ensure_ascii=False
 ```
 
@@ -1477,7 +1485,7 @@ def build_variants(item: Mapping[str, Any]) -> list[DownloadVariant]:
 
 ### 7.1.1. Рекомендованные варианты
 
-Loader сам говорит, что считать лучшим для аудио и для видео. Это не «первый вариант в списке» и не глобальная эвристика: у YouTube приоритет MP4/M4A, у Yandex Music — лучшее доступное (FLAC, иначе MP3 320/192), у VK — m4a/mp3.
+Loader сам говорит, что считать лучшим для аудио и для видео. Это не «первый вариант в списке». Для видео действует quality-first: разрешение/FPS/HDR важнее совместимости, поэтому H.265/HEVC, VP9 или AV1 могут выиграть у H.264 более низкого разрешения. При равном качестве кодек работает как tie-breaker (H.264 → H.265 → VP9 → AV1), а контейнер MP4 предпочтительнее. Для аудио приоритеты source-specific: у YouTube M4A/AAC, у Yandex Music — лучшее доступное (FLAC, иначе MP3 320/192), у VK — m4a/mp3.
 
 Модель — `Recommendations` из §3.2. `MediaItem.recommendations` заполняется в `get_info` после построения вариантов. `MediaLoader.recommend()` — hook с default-реализацией `default_recommendations(item)`.
 
@@ -1485,17 +1493,17 @@ Loader сам говорит, что считать лучшим для ауди
 
 | Источник | `recommendations.video` | `recommendations.audio` |
 |---|---|---|
-| YouTube | MP4 (H.264 + AAC) максимального разрешения; fallback — лучший MP4, затем лучший доступный | M4A/AAC с максимальным битрейтом; fallback — лучший audio-only |
+| YouTube | максимальное разрешение/FPS/HDR; при равенстве — MP4, затем H.264 → H.265 → VP9 → AV1, AAC | M4A/AAC с максимальным битрейтом; fallback — лучший audio-only |
 | Yandex Music | нет (если видео нет) | FLAC, если сервер отдал; иначе MP3 320/192 (плагин `yt-dlp-yandex-music`) |
 | VK | MP4, если есть видео | M4A/MP3 с максимальным битрейтом |
 | Pinterest | MP4 для видео | нет |
-| Generic/yt-dlp | MP4/H.264 максимального разрешения; fallback — лучший | M4A/AAC; fallback — лучший original, без transcode |
+| Generic/yt-dlp | maximum quality: height/FPS/HDR, затем MP4 и codec rank | M4A/AAC; fallback — лучший original, без transcode |
 | Direct | — | — (image/document — original) |
 
 Алгоритм `default_recommendations`:
 
 1. Отбросить `downloadable=False`/DRM.
-2. Для видео: приоритет `container="mp4"`, `vcodec` H.264/AVC, наличие AAC; затем максимальные `height`, `fps`, `tbr`.
+2. Для видео: сначала максимальные `height`, `fps`, `dynamic_range`; при равенстве — `container="mp4"`, затем codec rank (`h264` → `h265` → `vp9` → `av1`), наличие AAC, язык audio, `tbr`.
 3. Для аудио: приоритет `m4a`/AAC, максимальный `abr`; если нет — лучший audio-only без перекодирования.
 4. Не рекомендовать transcode, если есть original.
 5. Если для сценария нет варианта — `None`.
@@ -1503,7 +1511,7 @@ Loader сам говорит, что считать лучшим для ауди
 
 ```python
 def default_recommendations(item: MediaItem) -> Recommendations:
-    video = best_video_variant(item.variants)   # mp4/h264 -> max height/fps
+    video = best_video_variant(item.variants)   # max height/fps/HDR -> mp4 -> codec rank
     audio = best_audio_variant(item.variants)   # m4a/aac -> max abr
     return Recommendations(
         video=video.id if video else None,
@@ -1518,12 +1526,10 @@ def default_recommendations(item: MediaItem) -> Recommendations:
 ```python
 class YouTubeLoader(YtDlpLoader):
     def recommend(self, item, *, ctx):
-        video = best_variant(
+        video = best_video_variant(
             item.variants,
-            kind=MediaKind.AUDIO_VIDEO,
             prefer_container="mp4",
             prefer_codec="h264",
-            order_by=("height", "fps", "tbr"),
         )
         audio = best_variant(
             item.variants,
@@ -2072,7 +2078,7 @@ tfg inspect "https://..." --json
 ### 10.4. JSON (download result; будущие L2/L3)
 
 Для `tfg inspect` действует отдельная зафиксированная схема из §3.2.1
-(`schema_version: 1`, без `input`/`result`). Ниже — эскиз будущего JSON
+(`schema_version: 2`, без `input`/`result`). Ниже — эскиз будущего JSON
 результата скачивания; он не должен подменять inspect-контракт.
 
 ```json

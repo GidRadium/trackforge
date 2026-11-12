@@ -15,7 +15,6 @@ from trackforge.acquire.config import SourceProfile
 from trackforge.acquire.errors import AuthRequired, UnsupportedUrl
 from trackforge.acquire.loaders import yandex_music
 from trackforge.acquire.loaders.base import LoaderContext
-from trackforge.acquire.loaders.thumbnail_probe import ImageSize
 from trackforge.acquire.loaders.yandex_music import (
     YandexMusicLoader,
     normalize_yandex_titles,
@@ -58,11 +57,6 @@ def inspect_fixture(
 ):
     loader = YandexMusicLoader()
     monkeypatch.setattr(yandex_music, "plugin_available", lambda: True)
-    monkeypatch.setattr(
-        yandex_music,
-        "fetch_image_size",
-        lambda *args, **kwargs: None,
-    )
 
     def fake_extract(
         url: str,
@@ -142,7 +136,7 @@ def test_feat_stays_inside_title(monkeypatch: pytest.MonkeyPatch) -> None:
     assert item.artists == ("TrackForge Artist", "Guest Vocalist")
 
 
-def test_cover_is_the_1000x1000_yandex_artifact(
+def test_cover_prefers_orig_without_a_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     info = load_fixture("yandex_track.info.json")
@@ -150,86 +144,100 @@ def test_cover_is_the_1000x1000_yandex_artifact(
     item = source.items[0]
 
     assert source.thumbnail is not None
-    assert (source.thumbnail.width, source.thumbnail.height) == (1000, 1000)
+    assert source.thumbnail.url.endswith("/orig")
+    assert source.thumbnail.width is None
     assert item.thumbnail is not None
-    assert item.thumbnail.url.endswith("/1000x1000")
-    assert (item.thumbnail.width, item.thumbnail.height) == (1000, 1000)
+    assert item.thumbnail.url.endswith("/orig")
+    assert item.thumbnail.width is None
 
 
-def test_cover_token_is_expanded(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_cover_token_is_expanded_without_network() -> None:
     info = load_fixture("yandex_track.info.json")
     info["thumbnail"] = "https://avatars.yandex.net/get-music-content/1/2/%%"
-    monkeypatch.setattr(
-        yandex_music,
-        "fetch_image_size",
-        lambda *args, **kwargs: None,
-    )
     source = YtDlpMapper(SourceProfile(name="yandex_music")).map(
         info,
         reference(info),
     )
-    item = YandexMusicLoader().choose_thumbnail(
+
+    candidates = YandexMusicLoader().thumbnail_candidates(
         source.items[0],
-        ctx=LoaderContext(job_id="job", profile=SourceProfile(name="yandex_music")),
+        ctx=LoaderContext(
+            job_id="job",
+            profile=SourceProfile(name="yandex_music"),
+        ),
     )
 
-    assert item is not None
-    assert item.url.endswith("/1000x1000")
-    assert (item.width, item.height) == (1000, 1000)
+    assert candidates[0].url.endswith("/orig")
+    assert candidates[0].width is None
+    sized = next(
+        candidate
+        for candidate in candidates
+        if candidate.url.endswith("/1000x1000")
+    )
+    assert (sized.width, sized.height) == (1000, 1000)
 
 
-def test_orig_cover_is_preferred(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _jpeg(width: int, height: int) -> bytes:
+    return (
+        b"\xff\xd8\xff\xc0\x00\x11\x08"
+        + height.to_bytes(2, "big")
+        + width.to_bytes(2, "big")
+        + b"\x00" * 16
+    )
+
+
+def test_orig_cover_is_preferred_and_fetched_once() -> None:
+    from trackforge.acquire.thumbnail_cache import ThumbnailCache
+
     info = load_fixture("yandex_track.info.json")
     source = YtDlpMapper(SourceProfile(name="yandex_music")).map(
         info,
         reference(info),
     )
-    monkeypatch.setattr(
-        yandex_music,
-        "fetch_image_size",
-        lambda *args, **kwargs: ImageSize(3000, 3000, "jpg", "image/jpeg"),
+    calls: list[str] = []
+
+    class Client:
+        def get(self, url: str) -> bytes:
+            calls.append(url)
+            assert url.endswith("/orig")
+            return _jpeg(3000, 3000)
+
+    ctx = LoaderContext(
+        job_id="job",
+        profile=SourceProfile(name="yandex_music"),
+        http=Client(),
+        thumbnail_cache=ThumbnailCache(),
     )
 
-    item = YandexMusicLoader().choose_thumbnail(
-        source.items[0],
-        ctx=LoaderContext(job_id="job", profile=SourceProfile(name="yandex_music")),
-    )
+    chosen = YandexMusicLoader().choose_thumbnail(source.items[0], ctx=ctx)
 
-    assert item is not None
-    assert item.url.endswith("/orig")
-    assert (item.width, item.height) == (3000, 3000)
-    assert item.source == "yandex:orig"
+    assert chosen is not None
+    assert chosen.url.endswith("/orig")
+    assert (chosen.width, chosen.height) == (3000, 3000)
+    assert chosen.source == "yandex:orig"
+    assert len(calls) == 1
+    assert ctx.thumbnail_cache is not None
+    assert ctx.thumbnail_cache.get(chosen.url) is not None
 
 
-def test_orig_cover_is_not_probed_for_flat_items(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_flat_yandex_candidates_include_orig_without_fetching() -> None:
     info = load_fixture("yandex_album.info.json")
     source = YtDlpMapper(SourceProfile(name="yandex_music")).map(
         info,
         reference(info),
         flat=True,
     )
-    calls: list[str] = []
 
-    def fake_probe(url: str, **kwargs: object) -> ImageSize | None:
-        del kwargs
-        calls.append(url)
-        return ImageSize(3000, 3000, "jpg", "image/jpeg")
-
-    monkeypatch.setattr(yandex_music, "fetch_image_size", fake_probe)
-
-    item = YandexMusicLoader().choose_thumbnail(
+    candidates = YandexMusicLoader().thumbnail_candidates(
         source.items[0],
-        ctx=LoaderContext(job_id="job", profile=SourceProfile(name="yandex_music")),
+        ctx=LoaderContext(
+            job_id="job",
+            profile=SourceProfile(name="yandex_music"),
+        ),
     )
 
-    assert item is not None
-    assert calls == []
+    assert candidates[0].url.endswith("/orig")
+    assert candidates[0].width is None
 
 
 def test_recommends_flac_when_the_server_served_it(
@@ -548,11 +556,6 @@ def test_ar_playlist_falls_back_to_yandex_api(
     }
     loader = YandexMusicLoader()
     monkeypatch.setattr(yandex_music, "plugin_available", lambda: True)
-    monkeypatch.setattr(
-        yandex_music,
-        "fetch_image_size",
-        lambda *args, **kwargs: None,
-    )
 
     def unsupported_extract(
         url: str,

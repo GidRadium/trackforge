@@ -1,30 +1,24 @@
-"""YouTube thumbnail fallback tests (offline, injected HTTP)."""
+"""YouTube thumbnail candidate and full-resolve selection tests."""
 
 # pyright: standard
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
+
+import pytest
 
 from trackforge.acquire.config import SourceProfile
 from trackforge.acquire.loaders.base import LoaderContext
 from trackforge.acquire.loaders.youtube import YouTubeLoader
-from trackforge.acquire.models import MediaItem, Thumbnail
+from trackforge.acquire.models import MediaItem, Thumbnail, ThumbnailAsset
+from trackforge.acquire.thumbnail_cache import ThumbnailCache
 
 
-class FakeHttp:
-    def __init__(self, answer: Callable[[str], object]) -> None:
-        self.answer = answer
-        self.calls: list[str] = []
-
-    def exists(self, url: str) -> object:
-        self.calls.append(url)
-        return self.answer(url)
-
-
-def make_item(*, position: int | None = 1) -> MediaItem:
+def make_item(*, position: int | None = 1, item_id: str = "abc123") -> MediaItem:
     return MediaItem(
-        id="abc123",
+        id=item_id,
         title="Video",
         position=position,
         thumbnails=(
@@ -44,151 +38,243 @@ def make_item(*, position: int | None = 1) -> MediaItem:
     )
 
 
-def context(http: object | None) -> LoaderContext:
+def context(*, cache: bool = True) -> LoaderContext:
     return LoaderContext(
         job_id="job-1",
         profile=SourceProfile(name="youtube"),
-        http=http,
+        thumbnail_cache=ThumbnailCache() if cache else None,
     )
 
 
-def test_maxres_is_preferred_with_a_single_head_request() -> None:
-    http = FakeHttp(lambda url: "maxresdefault" in url)
-    chosen = YouTubeLoader().choose_thumbnail(make_item(), ctx=context(http))
+def install_fetch(
+    loader: YouTubeLoader,
+    monkeypatch: pytest.MonkeyPatch,
+    available: Callable[[str], bool],
+) -> list[str]:
+    calls: list[str] = []
 
-    assert chosen is not None
-    assert chosen.url.endswith("maxresdefault.jpg")
-    assert chosen.width == 1280
-    assert chosen.height == 720
-    assert chosen.source == "youtube:maxres"
-    assert len(http.calls) == 1
+    def fake_fetch(
+        thumbnail: Thumbnail,
+        *,
+        ctx: LoaderContext,
+        max_bytes: int | None = None,
+    ) -> ThumbnailAsset | None:
+        del ctx, max_bytes
+        calls.append(thumbnail.url)
+        if not available(thumbnail.url):
+            return None
+        return ThumbnailAsset(
+            data=b"image-bytes",
+            mime="image/jpeg",
+            width=777,
+            height=444,
+            ext="jpg",
+        )
 
-
-def test_sddefault_is_used_when_maxres_is_missing() -> None:
-    http = FakeHttp(lambda url: "sddefault" in url)
-    chosen = YouTubeLoader().choose_thumbnail(make_item(), ctx=context(http))
-
-    assert chosen is not None
-    assert chosen.url.endswith("sddefault.jpg")
-    assert chosen.source == "youtube:sd"
-    assert len(http.calls) == 2
-    assert "maxresdefault" in http.calls[0]
-    assert "sddefault" in http.calls[1]
-
-
-def test_existing_thumbnail_is_used_when_both_fallbacks_404() -> None:
-    http = FakeHttp(lambda url: False)
-    chosen = YouTubeLoader().choose_thumbnail(make_item(), ctx=context(http))
-
-    assert chosen is not None
-    assert chosen.url.endswith("hqdefault.jpg")
-    assert len(http.calls) == 2
+    monkeypatch.setattr(loader, "fetch_thumbnail", fake_fetch)
+    return calls
 
 
-def test_no_head_requests_for_non_primary_items() -> None:
-    http = FakeHttp(lambda url: True)
-    chosen = YouTubeLoader().choose_thumbnail(make_item(position=2), ctx=context(http))
+def test_candidates_are_ordered_without_network() -> None:
+    loader = YouTubeLoader()
+    ctx = context(cache=True)
+    monkeypatch_calls: list[str] = []
 
-    assert chosen is not None
-    assert chosen.url.endswith("hqdefault.jpg")
-    assert http.calls == []
+    def fail_fetch(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        monkeypatch_calls.append("fetch")
+        raise AssertionError("candidate generation must not fetch thumbnails")
+
+    loader.fetch_thumbnail = fail_fetch  # type: ignore[method-assign]
+    candidates = loader.thumbnail_candidates(make_item(), ctx=ctx)
+
+    assert [candidate.url for candidate in candidates] == [
+        "https://i.ytimg.com/vi/abc123/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/abc123/sddefault.jpg",
+        "https://i.ytimg.com/vi/abc123/hqdefault.jpg",
+        "https://i.ytimg.com/vi/abc123/mqdefault.jpg",
+    ]
+    assert (candidates[0].width, candidates[0].height) == (1280, 720)
+    assert monkeypatch_calls == []
 
 
-def test_known_maxres_thumbnail_skips_head_request() -> None:
+def test_youtube_query_is_stripped_and_known_size_applied() -> None:
     item = MediaItem(
         id="abc123",
         title="Video",
         position=1,
         thumbnails=(
             Thumbnail(
-                url="https://i.ytimg.com/vi/abc123/maxresdefault.jpg",
-                width=1280,
-                height=720,
+                url=(
+                    "https://i.ytimg.com/vi/abc123/maxresdefault.jpg"
+                    "?sqp=cache-busting&rs=signature"
+                ),
+                width=1920,
+                height=1080,
                 ext="jpg",
             ),
         ),
     )
-    http = FakeHttp(lambda url: True)
-    chosen = YouTubeLoader().choose_thumbnail(item, ctx=context(http))
+
+    candidates = YouTubeLoader().thumbnail_candidates(item, ctx=context())
+
+    assert candidates[0].url == "https://i.ytimg.com/vi/abc123/maxresdefault.jpg"
+    assert (candidates[0].width, candidates[0].height) == (1280, 720)
+
+
+def test_flat_items_never_fetch_thumbnails(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trackforge.acquire.models import ResolutionState
+
+    item = replace(make_item(), resolution=ResolutionState.FLAT)
+    loader = YouTubeLoader()
+    calls = install_fetch(loader, monkeypatch, lambda url: True)
+
+    chosen = loader.choose_thumbnail(item, ctx=context())
 
     assert chosen is not None
     assert chosen.url.endswith("maxresdefault.jpg")
-    assert http.calls == []
+    assert calls == []
 
 
-def test_head_style_http_client_is_supported() -> None:
-    class HeadHttp:
-        def __init__(self) -> None:
-            self.calls: list[str] = []
+def test_full_resolve_stops_at_the_first_working_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loader = YouTubeLoader()
+    calls = install_fetch(loader, monkeypatch, lambda url: "maxresdefault" in url)
 
-        def head(self, url: str) -> int:
-            self.calls.append(url)
-            return 200 if "maxresdefault" in url else 404
-
-    http = HeadHttp()
-    chosen = YouTubeLoader().choose_thumbnail(make_item(), ctx=context(http))
+    chosen = loader.choose_thumbnail(make_item(), ctx=context())
 
     assert chosen is not None
     assert chosen.url.endswith("maxresdefault.jpg")
-    assert len(http.calls) == 1
+    assert (chosen.width, chosen.height) == (777, 444)
+    assert calls == ["https://i.ytimg.com/vi/abc123/maxresdefault.jpg"]
 
 
-def test_http_errors_do_not_break_thumbnail_selection() -> None:
-    class BrokenHttp:
-        def exists(self, url: str) -> bool:
-            raise OSError("network down")
+def test_full_resolve_falls_back_to_the_next_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loader = YouTubeLoader()
+    calls = install_fetch(loader, monkeypatch, lambda url: "sddefault" in url)
 
-    chosen = YouTubeLoader().choose_thumbnail(make_item(), ctx=context(BrokenHttp()))
+    chosen = loader.choose_thumbnail(make_item(), ctx=context())
+
     assert chosen is not None
-    assert chosen.url.endswith("hqdefault.jpg")
+    assert chosen.url.endswith("sddefault.jpg")
+    assert (chosen.width, chosen.height) == (777, 444)
+    assert calls == [
+        "https://i.ytimg.com/vi/abc123/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/abc123/sddefault.jpg",
+    ]
 
 
-def test_no_id_skips_fallbacks() -> None:
-    item = MediaItem(id="", title="Video", position=1)
-    http = FakeHttp(lambda url: True)
-    assert YouTubeLoader().choose_thumbnail(item, ctx=context(http)) is None
-    assert http.calls == []
+def test_full_resolve_returns_best_metadata_candidate_when_all_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loader = YouTubeLoader()
+    calls = install_fetch(loader, monkeypatch, lambda _url: False)
 
-
-PNG_HEADER = (
-    b"\x89PNG\r\n\x1a\n"
-    + b"\x00\x00\x00\rIHDR"
-    + (640).to_bytes(4, "big")
-    + (360).to_bytes(4, "big")
-)
-
-
-def test_thumbnail_dimensions_are_verified_from_image_bytes() -> None:
-    from trackforge.acquire.loaders.thumbnail_probe import parse_image_size
-
-    class BodyHttp(FakeHttp):
-        def get(self, url: str) -> bytes:
-            self.calls.append(url)
-            return PNG_HEADER
-
-    http = BodyHttp(lambda url: True)
-    chosen = YouTubeLoader().choose_thumbnail(make_item(), ctx=context(http))
+    chosen = loader.choose_thumbnail(make_item(), ctx=context())
 
     assert chosen is not None
     assert chosen.url.endswith("maxresdefault.jpg")
-    assert (chosen.width, chosen.height) == (640, 360)
-    assert chosen.ext == "png"
-    assert chosen.mime == "image/png"
-
-    size = parse_image_size(PNG_HEADER)
-    assert size is not None
-    assert (size.width, size.height) == (640, 360)
-
-
-def test_unverified_dimensions_are_not_claimed() -> None:
-    class NoBodyHttp(FakeHttp):
-        def get(self, url: str) -> None:
-            self.calls.append(url)
-
-    http = NoBodyHttp(lambda url: True)
-    chosen = YouTubeLoader().choose_thumbnail(make_item(), ctx=context(http))
-    assert chosen is not None
-    assert chosen.url.endswith("maxresdefault.jpg")
-    # Injected client says it has no body; normalized guess is kept for tests,
-    # while real CLI paths use fetch_image_size and drop unverified dimensions.
     assert (chosen.width, chosen.height) == (1280, 720)
+    assert len(calls) == 4
+
+
+def test_fetched_bytes_are_cached_for_later_sidecar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jpeg = b"\xff\xd8\xff\xc0\x00\x11\x08\x00\x78\x01\x40" + b"x" * 16
+    loader = YouTubeLoader()
+    monkeypatch.setattr(
+        loader,
+        "_fetch_thumbnail_bytes",
+        lambda thumbnail, *, ctx, max_bytes: jpeg,
+    )
+    ctx = context()
+
+    chosen = loader.choose_thumbnail(make_item(), ctx=ctx)
+
+    assert chosen is not None
+    assert chosen.url.endswith("maxresdefault.jpg")
+    assert ctx.thumbnail_cache is not None
+    cached = ctx.thumbnail_cache.get(chosen.url)
+    assert cached is not None
+    assert cached.data == jpeg
+    assert cached.ext == "jpg"
+
+
+def test_no_fetch_without_a_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    loader = YouTubeLoader()
+    calls = install_fetch(loader, monkeypatch, lambda _url: True)
+
+    chosen = loader.choose_thumbnail(make_item(), ctx=context(cache=False))
+
+    assert chosen is not None
+    assert chosen.url.endswith("maxresdefault.jpg")
+    assert calls == []
+
+
+def test_secondary_items_do_not_receive_synthetic_fallbacks() -> None:
+    candidates = YouTubeLoader().thumbnail_candidates(
+        make_item(position=2),
+        ctx=context(),
+    )
+
+    assert [candidate.url for candidate in candidates] == [
+        "https://i.ytimg.com/vi/abc123/hqdefault.jpg",
+        "https://i.ytimg.com/vi/abc123/mqdefault.jpg",
+    ]
+
+
+def test_full_collection_only_fetches_primary_thumbnail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trackforge.acquire.models import SourceInfo, SourceKind
+
+    loader = YouTubeLoader()
+    calls = install_fetch(loader, monkeypatch, lambda _url: True)
+    first = make_item(position=1)
+    second = make_item(position=2)
+    source = SourceInfo(
+        source="youtube",
+        url="https://www.youtube.com/playlist?list=test",
+        kind=SourceKind.COLLECTION,
+        items=(first, second),
+    )
+    ctx = context()
+
+    finalized = loader._finalize(source, ctx=ctx)
+
+    assert len(calls) == 1
+    assert calls[0].endswith("maxresdefault.jpg")
+    assert finalized.items[0].thumbnail is not None
+    assert finalized.items[1].thumbnail is not None
+    assert finalized.items[1].thumbnail.url.endswith("hqdefault.jpg")
+
+
+def test_injected_http_client_is_used_for_thumbnail_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jpeg = b"\xff\xd8\xff\xc0\x00\x11\x08\x00\x78\x01\x40" + b"x" * 16
+
+    class Client:
+        def get(self, url: str) -> bytes:
+            assert "maxresdefault" in url
+            return jpeg
+
+    loader = YouTubeLoader()
+    monkeypatch.setattr(
+        loader,
+        "_fetch_thumbnail_bytes",
+        lambda *args, **kwargs: pytest.fail("real network helper was used"),
+    )
+    ctx = context()
+    ctx.http = Client()
+
+    chosen = loader.choose_thumbnail(make_item(), ctx=ctx)
+
+    assert chosen is not None
+    assert chosen.url.endswith("maxresdefault.jpg")
+    assert ctx.thumbnail_cache is not None
+    assert ctx.thumbnail_cache.get(chosen.url) is not None

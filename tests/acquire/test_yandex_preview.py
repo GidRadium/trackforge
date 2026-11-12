@@ -45,11 +45,6 @@ def inspect_fixture(
 ):
     loader = YandexMusicLoader()
     monkeypatch.setattr(yandex_music, "plugin_available", lambda: True)
-    monkeypatch.setattr(
-        yandex_music,
-        "fetch_image_size",
-        lambda *args, **kwargs: None,
-    )
 
     def fake_extract(
         url: str,

@@ -44,9 +44,11 @@ from ..models import (
     DownloadFailure,
     DownloadRequest,
     DownloadResult,
+    MediaItem,
     SourceInfo,
     SourceKind,
     SourceRef,
+    Thumbnail,
 )
 from ..planner import DownloadPlan, ItemPlan, YtDlpPlanner
 from ..progress import ProgressEvent, ProgressStage
@@ -71,18 +73,6 @@ from .ytdlp_options import (
     build_ydl_options,
     create_youtube_dl,
     deno_js_runtimes,
-    prepare_ydl_options,
-)
-
-_YT_HOSTS = frozenset(
-    {
-        "youtube.com",
-        "www.youtube.com",
-        "m.youtube.com",
-        "music.youtube.com",
-        "youtu.be",
-        "www.youtu.be",
-    }
 )
 
 _AUTH_AVAILABILITY = frozenset(
@@ -148,7 +138,7 @@ class YtDlpLoader(MediaLoader):
     config_key = "yt_dlp"
     priority = 1000
     capabilities = LoaderCapabilities(
-        search=True,
+        search=False,
         playlists=True,
         posts=True,
         live=True,
@@ -165,23 +155,12 @@ class YtDlpLoader(MediaLoader):
             return False
         return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
-    def is_ready(self, profile: SourceProfile) -> bool:
-        """YouTube profiles need cookies before a network call.
-
-        The generic ``yt_dlp`` profile stays usable without cookies because
-        many non-YouTube sites are public.  A profile explicitly named
-        ``youtube`` is expected to have an authenticated cookie source.
-        """
-        if profile.name == "youtube":
-            return bool(profile.cookies_file or profile.cookies_from_browser)
-        return True
-
     def preflight(self, url: str, profile: SourceProfile) -> None:
-        """Raise a typed auth error before a YouTube request if unconfigured."""
-        if _is_youtube_url(url):
+        """Apply the loader's auth policy before a network request."""
+        if self.requires_auth(url):
             ensure_auth_ready(
                 profile,
-                source="youtube",
+                source=self.name,
                 cookies_required=True,
             )
 
@@ -199,22 +178,6 @@ class YtDlpLoader(MediaLoader):
             cookiefile=cookiefile,
             logger=logger,
             env=env,
-        )
-
-    def _prepared_options(
-        self,
-        ctx: LoaderContext,
-        *,
-        env: Mapping[str, str] | None = None,
-    ) -> dict[str, Any]:
-        """Validate auth and build options using the configured cookie file."""
-        return prepare_ydl_options(
-            ctx.profile,
-            staging=ctx.staging,
-            job_id=ctx.job_id,
-            logger=ctx.logger,
-            env=env,
-            cookies_required=ctx.profile.name == "youtube",
         )
 
     @staticmethod
@@ -365,19 +328,30 @@ class YtDlpLoader(MediaLoader):
 
     def _finalize(self, source: SourceInfo, ctx: LoaderContext) -> SourceInfo:
         """Apply source-specific thumbnail and recommendation policy."""
-        items = tuple(
-            replace(
-                item,
-                thumbnail=self.choose_thumbnail(item, ctx=ctx) or item.thumbnail,
-                recommendations=self.recommend(item, ctx=ctx),
+        items = []
+        for item in source.items:
+            candidates = self.thumbnail_candidates(item, ctx=ctx)
+            chosen = self.choose_thumbnail(item, ctx=ctx)
+            if chosen is not None and not any(
+                candidate.url == chosen.url for candidate in candidates
+            ):
+                # A loader override may choose a candidate outside the generic
+                # list (for example Yandex's verified ``/orig`` cover).
+                candidates = (chosen, *candidates)
+            items.append(
+                replace(
+                    item,
+                    thumbnails=candidates,
+                    thumbnail=chosen or item.thumbnail,
+                    recommendations=self.recommend(item, ctx=ctx),
+                )
             )
-            for item in source.items
-        )
+        items_tuple = tuple(items)
         thumbnail = next(
-            (item.thumbnail for item in items if item.thumbnail is not None),
+            (item.thumbnail for item in items_tuple if item.thumbnail is not None),
             None,
         ) or source.thumbnail
-        return replace(source, items=items, thumbnail=thumbnail)
+        return replace(source, items=items_tuple, thumbnail=thumbnail)
 
     # Yandex overrides this to verify that the served file is not a preview.
     requires_ffprobe_for_download = False
@@ -514,12 +488,102 @@ class YtDlpLoader(MediaLoader):
                 for path in (media, *sidecars):
                     path.unlink(missing_ok=True)
             raise
+
+        warnings: list[str] = []
+        if plan.options.write_thumbnail:
+            sidecar_thumbnail = self.thumbnail_sidecar(
+                item_plan.item,
+                ctx=ctx,
+            )
+            if sidecar_thumbnail is not None:
+                thumbnail_path, warning = self._write_thumbnail(
+                    sidecar_thumbnail,
+                    media,
+                    ctx=ctx,
+                )
+                if thumbnail_path is not None:
+                    sidecars = (*sidecars, thumbnail_path)
+                if warning is not None:
+                    warnings.append(warning)
         return DownloadedFile(
             item_id=item_plan.item.id,
             path=media,
             item=item_plan.item,
             sidecars=sidecars,
+            warnings=tuple(warnings),
         )
+
+    def _write_thumbnail(
+        self,
+        thumbnail: Thumbnail,
+        media: Path,
+        *,
+        ctx: LoaderContext,
+    ) -> tuple[Path | None, str | None]:
+        asset = self.fetch_thumbnail(thumbnail, ctx=ctx)
+        if asset is None:
+            return None, "thumbnail is not available"
+        extension = (asset.ext or thumbnail.ext or "jpg").strip().lower()
+        if extension == "jpeg":
+            extension = "jpg"
+        target = media.with_suffix(f".{extension}")
+        if target == media:
+            target = media.parent / f"{media.stem}.thumb.{extension}"
+        if target.exists():
+            target = media.parent / f"{media.stem}.thumbnail.{extension}"
+        target.write_bytes(asset.data)
+        return target, None
+
+    def _fetch_thumbnail_bytes(
+        self,
+        thumbnail: Thumbnail,
+        *,
+        ctx: LoaderContext,
+        max_bytes: int,
+    ) -> bytes:
+        """Fetch an image through yt-dlp's networking (cookies/proxy aware)."""
+        from yt_dlp.networking import Request
+
+        options = self._base_options(ctx.profile, logger=ctx.logger)
+        options.update(
+            {
+                "skip_download": True,
+                "quiet": True,
+                "no_warnings": True,
+                "noprogress": True,
+            }
+        )
+        ydl = self._create_youtube_dl(options)
+        data: bytes = b""
+        try:
+            headers = {
+                "Accept": (
+                    "image/jpeg,image/png,image/webp,image/*;q=0.8,*/*;q=0.1"
+                ),
+                "Accept-Encoding": "identity",
+            }
+            headers.update(
+                {
+                    str(key): str(value)
+                    for key, value in thumbnail.http_headers.items()
+                }
+            )
+            response = ydl.urlopen(Request(thumbnail.url, headers=headers))
+            try:
+                data = response.read(max_bytes + 1)
+            finally:
+                close = getattr(response, "close", None)
+                if callable(close):
+                    close()
+        finally:
+            close = getattr(ydl, "close", None)
+            if callable(close):
+                close()
+        if not isinstance(data, (bytes, bytearray)) or not data:
+            raise DownloadFailed("thumbnail response was empty")
+        if len(data) > max_bytes:
+            raise DownloadFailed("thumbnail exceeds the size limit")
+        return bytes(data)
 
     def _download_options(
         self,
@@ -542,7 +606,11 @@ class YtDlpLoader(MediaLoader):
                 "outtmpl": {"default": f"{item_plan.output_stem}.%(ext)s"},
                 "noplaylist": True,
                 "skip_download": False,
-                "writethumbnail": plan.options.write_thumbnail,
+                "writethumbnail": (
+                    plan.options.write_thumbnail
+                    and self.thumbnail_sidecar(item_plan.item, ctx=ctx)
+                    is None
+                ),
                 "writeinfojson": plan.options.write_info_json,
                 "writesubtitles": bool(plan.options.subtitles),
                 "subtitleslangs": list(plan.options.subtitles),
@@ -647,43 +715,3 @@ def _normalise_container(value: str | None) -> str | None:
 def _looks_like_postprocess_error(exc: BaseException) -> bool:
     text = str(exc).lower()
     return "postprocessing" in text or "post-processing" in text
-
-
-def _is_youtube_url(url: str) -> bool:
-    try:
-        parsed = urlsplit(url.strip())
-    except ValueError:
-        return False
-    host = (parsed.hostname or "").lower()
-    if host == "youtu.be" or host.endswith(".youtu.be"):
-        return True
-    return host in _YT_HOSTS or host.endswith(".youtube.com")
-
-
-__all__ = [
-    "DEFAULT_FLAT_LIMIT",
-    "INFO_WARNINGS_KEY",
-    "MAX_FLAT_LIMIT",
-    "DownloadPlan",
-    "ItemPlan",
-    "YtDlpLoader",
-    "YtDlpMapper",
-    "YtDlpPlanner",
-    "YtDlpProgressHook",
-    "best_audio_variant",
-    "best_video_variant",
-    "build_postprocessors",
-    "build_variants",
-    "build_ydl_options",
-    "collect_download_outputs",
-    "create_youtube_dl",
-    "deno_js_runtimes",
-    "effective_flat_limit",
-    "humanize_error",
-    "is_retryable",
-    "map_thumbnails",
-    "map_ytdlp_error",
-    "parse_partial_date",
-    "prepare_ydl_options",
-    "requires_ffmpeg",
-]

@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from ...metadata.model import PartialDate
-from ..auth import resolve_proxy
 from ..config import SourceProfile
 from ..download import looks_like_preview, probe_media_duration
 from ..errors import AuthRequired, MissingPlugin, PreviewOnly, UnsupportedUrl
@@ -39,8 +38,7 @@ from ..models import (
     UrlHint,
 )
 from ..yandex_plugin import plugin_available, plugin_install_hint
-from .base import LoaderCapabilities, LoaderContext, select_best_thumbnail
-from .thumbnail_probe import ImageSize, fetch_image_size, parse_image_size
+from .base import LoaderCapabilities, LoaderContext, rank_thumbnails, select_best_thumbnail
 from .ytdlp import INFO_WARNINGS_KEY, YtDlpLoader, effective_flat_limit
 from .ytdlp_mapper import best_variant
 
@@ -257,40 +255,6 @@ def _orig_cover_url(url: str) -> str | None:
             return None
     return urlunsplit(
         (parsed.scheme, parsed.netloc, new_path, parsed.query, parsed.fragment)
-    )
-
-
-def _probe_cover_size(url: str, *, ctx: LoaderContext) -> ImageSize | None:
-    """Read only the image header of a cover, never the whole file."""
-    http = ctx.http
-    if http is not None:
-        for method_name in ("get_bytes", "get", "read"):
-            method = getattr(http, method_name, None)
-            if not callable(method):
-                continue
-            try:
-                data = method(url)
-            except Exception:  # noqa: BLE001 - optional size verification
-                return None
-            if isinstance(data, (bytes, bytearray)):
-                return parse_image_size(bytes(data))
-            return None
-        # An injected HTTP client without a body reader: do not fall back to
-        # the real network behind the caller's back.
-        return None
-
-    try:
-        proxy = resolve_proxy(
-            ctx.profile.proxy,
-            label=f"sources.{ctx.profile.name}.proxy",
-        )
-    except Exception:  # noqa: BLE001 - doctor reports proxy problems
-        proxy = None
-    return fetch_image_size(
-        url,
-        timeout=ctx.profile.socket_timeout,
-        proxy=proxy,
-        headers=dict(ctx.profile.headers),
     )
 
 
@@ -894,12 +858,18 @@ class YandexMusicLoader(YtDlpLoader):
                 warnings.append(warning)
         return tuple(warnings)
 
-    def choose_thumbnail(
+    def thumbnail_candidates(
         self,
         item: MediaItem,
         *,
         ctx: LoaderContext,
-    ) -> Thumbnail | None:
+    ) -> tuple[Thumbnail, ...]:
+        """Return normalized covers plus a potential ``/orig`` master.
+
+        No URL is probed here.  A full inspect tries the ordered candidates
+        and stops at the first working one.
+        """
+        del ctx
         candidates: list[Thumbnail] = []
         seen: set[str] = set()
         for thumbnail in (*item.thumbnails, item.thumbnail):
@@ -911,35 +881,21 @@ class YandexMusicLoader(YtDlpLoader):
             seen.add(normalized.url)
             candidates.append(normalized)
 
-        # The plugin rewrites Yandex's ``%%`` token to 1000x1000.  The CDN
-        # usually also serves the untouched master as ``/orig`` (often
-        # 3000x3000), so probe its header once for the primary item.  Flat
-        # collections must stay cheap: no probe per entry.
+        ranked = list(rank_thumbnails(candidates))
         if (
             item.position in (None, 1)
-            and item.resolution is not ResolutionState.FLAT
-            and not any((thumbnail.width or 0) >= 2000 for thumbnail in candidates)
+            and not any((thumbnail.width or 0) >= 2000 for thumbnail in ranked)
         ):
-            for candidate in candidates:
+            for candidate in ranked:
                 original_url = _orig_cover_url(candidate.url)
                 if original_url is None or original_url in seen:
                     continue
-                size = _probe_cover_size(original_url, ctx=ctx)
-                if size is not None:
-                    candidates.append(
-                        Thumbnail(
-                            url=original_url,
-                            width=size.width,
-                            height=size.height,
-                            ext=size.ext,
-                            mime=size.mime,
-                            source="yandex:orig",
-                        )
-                    )
-                    seen.add(original_url)
-                break
-
-        return select_best_thumbnail(candidates)
+                seen.add(original_url)
+                return (
+                    Thumbnail(url=original_url, source="yandex:orig"),
+                    *ranked,
+                )
+        return tuple(ranked)
 
     def recommend(
         self,

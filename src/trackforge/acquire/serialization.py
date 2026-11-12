@@ -1,4 +1,4 @@
-"""Frozen ``SourceInfo`` v1 JSON serialization.
+"""Frozen ``SourceInfo`` v2 JSON serialization.
 
 Only the fields listed here are part of the public inspect contract.  The
 serializer is deliberately explicit: it never iterates dataclass fields and
@@ -43,6 +43,7 @@ MEDIA_ITEM_FIELDS: tuple[str, ...] = (
     "page_url",
     "resolution",
     "thumbnail",
+    "thumbnails",
     "recommendations",
     "variants",
 )
@@ -71,7 +72,7 @@ class ThumbnailDict(TypedDict):
 
 
 class RecommendationsDict(TypedDict):
-    """Serialized recommendations for schema v1."""
+    """Serialized recommendations for schema v2."""
 
     audio: str | None
     video: str | None
@@ -90,19 +91,20 @@ class VariantDict(TypedDict):
 
 
 class MediaItemDict(TypedDict):
-    """Serialized media item for schema v1."""
+    """Serialized media item for schema v2."""
 
     id: str
     title: str
     page_url: str | None
     resolution: str
     thumbnail: ThumbnailDict | None
+    thumbnails: list[ThumbnailDict]
     recommendations: RecommendationsDict
     variants: list[VariantDict]
 
 
 class SourceInfoDict(TypedDict):
-    """Top-level frozen schema-version-1 document."""
+    """Top-level frozen schema-version-2 document."""
 
     schema_version: int
     source: str
@@ -173,13 +175,18 @@ def _item(value: MediaItem) -> MediaItemDict:
         "page_url": _public_url(value.page_url) if value.page_url else None,
         "resolution": value.resolution.value,
         "thumbnail": _thumbnail(value.thumbnail),
+        "thumbnails": [
+            serialized
+            for thumbnail in value.thumbnails
+            if (serialized := _thumbnail(thumbnail)) is not None
+        ],
         "recommendations": _recommendations(value.recommendations),
         "variants": [_variant(variant) for variant in value.variants],
     }
 
 
 def source_info_to_dict(source: SourceInfo) -> SourceInfoDict:
-    """Serialize a :class:`SourceInfo` as the frozen schema-version-1 object."""
+    """Serialize a :class:`SourceInfo` as the frozen schema-version-2 object."""
     return {
         "schema_version": SOURCE_INFO_SCHEMA_VERSION,
         "source": source.source,
@@ -218,22 +225,44 @@ def assert_schema_shape(payload: Mapping[str, object]) -> None:
     actual = set(payload)
     if actual != expected:
         raise ValueError(
-            f"SourceInfo v1 keys changed: expected {sorted(expected)}, "
+            f"SourceInfo v2 keys changed: expected {sorted(expected)}, "
             f"got {sorted(actual)}"
         )
+    top_thumbnail = payload.get("thumbnail")
+    if top_thumbnail is not None:
+        if not isinstance(top_thumbnail, Mapping):
+            raise TypeError("SourceInfo v2 'thumbnail' must be an object or null")
+        _check_keys(top_thumbnail, THUMBNAIL_FIELDS, "thumbnail")
+
     items = payload.get("items")
     if not isinstance(items, list):
-        raise TypeError("SourceInfo v1 'items' must be a list")
+        raise TypeError("SourceInfo v2 'items' must be a list")
     for item in items:
         if not isinstance(item, Mapping):
-            raise TypeError("SourceInfo v1 items must be objects")
+            raise TypeError("SourceInfo v2 items must be objects")
         _check_keys(item, MEDIA_ITEM_FIELDS, "item")
+        item_thumbnail = item.get("thumbnail")
+        if item_thumbnail is not None:
+            if not isinstance(item_thumbnail, Mapping):
+                raise TypeError(
+                    "SourceInfo v2 item 'thumbnail' must be an object or null"
+                )
+            _check_keys(item_thumbnail, THUMBNAIL_FIELDS, "item thumbnail")
+        item_thumbnails = item.get("thumbnails")
+        if not isinstance(item_thumbnails, list):
+            raise TypeError("SourceInfo v2 item 'thumbnails' must be a list")
+        for thumbnail in item_thumbnails:
+            if not isinstance(thumbnail, Mapping):
+                raise TypeError(
+                    "SourceInfo v2 item thumbnails must be objects"
+                )
+            _check_keys(thumbnail, THUMBNAIL_FIELDS, "item thumbnail")
         variants = item.get("variants")
         if not isinstance(variants, list):
-            raise TypeError("SourceInfo v1 'variants' must be a list")
+            raise TypeError("SourceInfo v2 'variants' must be a list")
         for variant in variants:
             if not isinstance(variant, Mapping):
-                raise TypeError("SourceInfo v1 variants must be objects")
+                raise TypeError("SourceInfo v2 variants must be objects")
             _check_keys(variant, VARIANT_FIELDS, "variant")
 
 
@@ -244,7 +273,7 @@ def _check_keys(
 ) -> None:
     if set(value) != set(expected):
         raise ValueError(
-            f"SourceInfo v1 {label} keys changed: "
+            f"SourceInfo v2 {label} keys changed: "
             f"expected {sorted(expected)}, got {sorted(value)}"
         )
 

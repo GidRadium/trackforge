@@ -126,28 +126,6 @@ def test_chooses_best_thumbnail_and_keeps_list() -> None:
     assert item.thumbnail.url.endswith("maxresdefault.jpg")
 
 
-def test_youtube_maxres_dimensions_are_normalized() -> None:
-    info = {
-        "_type": "video",
-        "id": "abc",
-        "title": "Thumbnail size",
-        "thumbnails": [
-            {
-                "url": "https://i.ytimg.com/vi/abc/maxresdefault.jpg",
-                "width": 1920,
-                "height": 1080,
-            }
-        ],
-    }
-    item = YtDlpMapper(SourceProfile(name="youtube")).map(
-        info,
-        SourceRef("youtube", "https://www.youtube.com/watch?v=abc"),
-    ).items[0]
-    assert item.thumbnail is not None
-    assert (item.thumbnail.width, item.thumbnail.height) == (1280, 720)
-    assert item.thumbnail.ext == "jpg"
-
-
 def test_legacy_thumbnail_field_is_normalized() -> None:
     info = {
         "_type": "video",
@@ -387,3 +365,19 @@ def test_infers_live_status_without_live_status_field() -> None:
             SourceRef("yt-dlp", "https://example.test/x"),
         ).items[0]
         assert item.live_status is expected
+
+
+def test_signed_non_youtube_thumbnail_query_is_preserved() -> None:
+    info = {
+        "_type": "video",
+        "id": "abc",
+        "title": "Signed thumbnail",
+        "thumbnail": "https://cdn.example.test/cover.jpg?token=secret",
+    }
+    item = YtDlpMapper(SourceProfile(name="yt_dlp")).map(
+        info,
+        SourceRef("yt-dlp", "https://example.test/x"),
+    ).items[0]
+
+    assert item.thumbnail is not None
+    assert item.thumbnail.url.endswith("?token=secret")

@@ -2,7 +2,7 @@
 
 Collections use the two-stage contract from :class:`YtDlpLoader`: a bounded
 flat listing first, then a full resolve of a selected item's ``page_url``.
-Search arrives in L3.
+Text search is deferred to a later checkpoint.
 """
 
 # pyright: standard
@@ -10,14 +10,11 @@ Search arrives in L3.
 from __future__ import annotations
 
 import re
-import urllib.error
-import urllib.request
 from dataclasses import replace
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
-from ..auth import resolve_proxy
 from ..config import SourceProfile
-from ..errors import SearchNotSupported, UnsupportedPost
+from ..errors import AuthRequired, SearchNotSupported, UnsupportedPost
 from ..models import (
     MediaItem,
     MediaKind,
@@ -25,18 +22,18 @@ from ..models import (
     ResolutionState,
     SearchCandidate,
     SourceInfo,
+    SourceKind,
     SourceRef,
     Thumbnail,
     UrlHint,
 )
-from .base import LoaderContext, select_best_thumbnail
-from .thumbnail_probe import fetch_image_size, parse_image_size
+from .base import LoaderContext
 from .ytdlp import YtDlpLoader
 from .ytdlp_mapper import (
     best_variant,
     best_video_variant,
-    youtube_thumbnail_size,
 )
+from .youtube_thumbnails import youtube_thumbnail_candidates
 
 _URL_RE = re.compile(
     r"^https?://(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be)(?:/|$)",
@@ -53,21 +50,6 @@ _YOUTUBE_HOSTS = frozenset(
     }
 )
 _VIDEO_PATHS = frozenset({"watch", "shorts", "live", "embed", "v", "clip"})
-_THUMBNAIL_FALLBACKS = (
-    (
-        "https://i.ytimg.com/vi/{id}/maxresdefault.jpg",
-        "youtube:maxres",
-        1280,
-        720,
-    ),
-    (
-        "https://i.ytimg.com/vi/{id}/sddefault.jpg",
-        "youtube:sd",
-        640,
-        480,
-    ),
-)
-_OK_STATUS = range(200, 400)
 
 
 def _is_youtube_host(host: str) -> bool:
@@ -158,106 +140,66 @@ class YouTubeLoader(YtDlpLoader):
             )
         return super().get_info(ref, ctx=ctx, flat=flat, limit=limit)
 
-    def choose_thumbnail(
+    def is_ready(self, profile: SourceProfile) -> bool:
+        """YouTube needs an authenticated cookie source."""
+        return bool(profile.cookies_file or profile.cookies_from_browser)
+
+    def requires_auth(self, url: str) -> bool:
+        try:
+            host = (urlsplit(url.strip()).hostname or "").lower()
+        except ValueError:
+            return False
+        return _is_youtube_host(host)
+
+    def unready_error(self, profile: SourceProfile) -> AuthRequired | None:
+        """Never fall through to the generic loader for an unconfigured YouTube."""
+        if self.is_ready(profile):
+            return None
+        return AuthRequired(
+            "YouTube requires cookies before a network request",
+            hint="configure sources.youtube.cookies or use --cookies",
+        )
+
+    def thumbnail_candidates(
         self,
         item: MediaItem,
         *,
         ctx: LoaderContext,
-    ) -> Thumbnail | None:
-        candidates = list(item.thumbnails)
-        if item.thumbnail is not None:
-            candidates.append(item.thumbnail)
-        # A flat collection item only has metadata.  Probing maxres/sd here
-        # would add network requests to the stage that must stay cheap.
-        if item.resolution is ResolutionState.FLAT:
-            return select_best_thumbnail(candidates)
-        if item.id and item.position in (None, 1):
-            existing = {thumbnail.url for thumbnail in candidates}
-            for template, source, fallback_width, fallback_height in _THUMBNAIL_FALLBACKS:
-                url = template.format(id=quote(item.id, safe=""))
-                if url in existing:
-                    # yt-dlp already supplied this exact (best) thumbnail.
-                    break
-                if not self._thumbnail_exists(url, ctx=ctx):
-                    continue
-                size = youtube_thumbnail_size(url)
-                width, height = size or (fallback_width, fallback_height)
-                candidates.append(
-                    Thumbnail(
-                        url=url,
-                        width=width,
-                        height=height,
-                        ext="jpg",
-                        source=source,
-                    )
+    ) -> tuple[Thumbnail, ...]:
+        """Return YouTube thumbnail candidates without probing availability."""
+        del ctx
+        return youtube_thumbnail_candidates(item)
+
+    def _finalize(self, source: SourceInfo, ctx: LoaderContext) -> SourceInfo:
+        """Store the full ordered candidate list and the chosen thumbnail."""
+        items = []
+        for item in source.items:
+            candidates = self.thumbnail_candidates(item, ctx=ctx)
+            should_fetch = (
+                ctx.thumbnail_cache is not None
+                and item.resolution is not ResolutionState.FLAT
+                and (
+                    source.kind is not SourceKind.COLLECTION
+                    or item.position in (None, 1)
                 )
-                break
-        selected = select_best_thumbnail(candidates)
-        if selected is None:
-            return None
-        return self._verified_thumbnail(selected, ctx=ctx)
-
-    def _verified_thumbnail(
-        self,
-        thumbnail: Thumbnail,
-        *,
-        ctx: LoaderContext,
-    ) -> Thumbnail:
-        """Verify the selected thumbnail's real dimensions when possible."""
-        try:
-            host = urlsplit(thumbnail.url).hostname or ""
-        except ValueError:
-            return thumbnail
-        if not (host == "i.ytimg.com" or host.endswith(".ytimg.com")):
-            return thumbnail
-
-        if ctx.http is not None:
-            for method_name in ("get_bytes", "get", "read"):
-                method = getattr(ctx.http, method_name, None)
-                if not callable(method):
-                    continue
-                try:
-                    data = method(thumbnail.url)
-                except Exception:  # noqa: BLE001 - optional verification
-                    return thumbnail
-                if isinstance(data, (bytes, bytearray)):
-                    size = parse_image_size(bytes(data))
-                    if size is not None:
-                        return replace(
-                            thumbnail,
-                            width=size.width,
-                            height=size.height,
-                            ext=size.ext,
-                            mime=size.mime,
-                        )
-                return thumbnail
-            # A test/injected HTTP object without a body reader: do not hit
-            # the real network behind the caller's back.
-            return thumbnail
-
-        try:
-            proxy = resolve_proxy(
-                ctx.profile.proxy,
-                label=f"sources.{ctx.profile.name}.proxy",
             )
-        except Exception:  # noqa: BLE001 - doctor reports proxy problems
-            proxy = None
-        size = fetch_image_size(
-            thumbnail.url,
-            timeout=ctx.profile.socket_timeout,
-            proxy=proxy,
-            headers=dict(ctx.profile.headers),
-        )
-        if size is None:
-            # The metadata dimensions were not verified, so do not claim them.
-            return replace(thumbnail, width=None, height=None)
-        return replace(
-            thumbnail,
-            width=size.width,
-            height=size.height,
-            ext=size.ext,
-            mime=size.mime,
-        )
+            if should_fetch:
+                chosen = self._resolve_thumbnail(candidates, ctx=ctx)
+            else:
+                chosen = candidates[0] if candidates else None
+            items.append(
+                replace(
+                    item,
+                    thumbnails=candidates,
+                    thumbnail=chosen or item.thumbnail,
+                    recommendations=self.recommend(item, ctx=ctx),
+                )
+            )
+        thumbnail = next(
+            (item.thumbnail for item in items if item.thumbnail is not None),
+            None,
+        ) or source.thumbnail
+        return replace(source, items=tuple(items), thumbnail=thumbnail)
 
     def recommend(
         self,
@@ -291,82 +233,5 @@ class YouTubeLoader(YtDlpLoader):
     ) -> list[SearchCandidate]:
         del query, limit, ctx
         raise SearchNotSupported(self.name)
-
-    def _thumbnail_exists(self, url: str, *, ctx: LoaderContext) -> bool:
-        http = ctx.http
-        if http is not None:
-            for method_name in ("exists", "head", "url_exists"):
-                method = getattr(http, method_name, None)
-                if not callable(method):
-                    continue
-                try:
-                    result = method(url)
-                except Exception:  # noqa: BLE001 - missing thumbnail is not fatal
-                    return False
-                return _status_ok(result)
-        return self._head_via_urllib(url, profile=ctx.profile)
-
-    @staticmethod
-    def _head_via_urllib(url: str, *, profile: SourceProfile) -> bool:
-        headers = {"User-Agent": profile.user_agent or "TrackForge/1.1"}
-        for name, value in profile.headers.items():
-            headers.setdefault(str(name), str(value))
-        try:
-            proxy = resolve_proxy(
-                profile.proxy,
-                label=f"sources.{profile.name}.proxy",
-            )
-        except Exception:  # noqa: BLE001 - invalid proxy is reported by doctor
-            proxy = None
-        try:
-            request = urllib.request.Request(url, headers=headers, method="HEAD")
-            if proxy:
-                opener = urllib.request.build_opener(
-                    urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-                )
-                response = opener.open(request, timeout=profile.socket_timeout)
-            else:
-                response = urllib.request.urlopen(
-                    request,
-                    timeout=profile.socket_timeout,
-                )
-            try:
-                return _status_ok(response)
-            finally:
-                close = getattr(response, "close", None)
-                if callable(close):
-                    close()
-        except urllib.error.HTTPError as exc:
-            return _status_ok(exc.code)
-        except (urllib.error.URLError, OSError, ValueError):
-            return False
-
-
-def _status_ok(result: object) -> bool:
-    """Interpret a bool/int/response-like thumbnail probe result."""
-    if isinstance(result, bool):
-        return result
-    if isinstance(result, int):
-        return result in _OK_STATUS
-    if result is None:
-        return False
-    status = getattr(result, "status", None)
-    if status is None:
-        status = getattr(result, "status_code", None)
-    if status is None:
-        getcode = getattr(result, "getcode", None)
-        if callable(getcode):
-            try:
-                status = getcode()
-            except Exception:  # noqa: BLE001
-                status = None
-    if isinstance(status, int):
-        return status in _OK_STATUS
-    ok = getattr(result, "ok", None)
-    if isinstance(ok, bool):
-        return ok
-    # A truthy response object without a status is treated as success.
-    return bool(result)
-
 
 __all__ = ["YouTubeLoader"]

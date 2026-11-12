@@ -13,9 +13,7 @@ arguments.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
 from pathlib import Path
-from typing import NoReturn
 from urllib.parse import urlsplit
 
 import typer
@@ -33,11 +31,20 @@ from trackforge.acquire.registry import default_registry
 from trackforge.acquire.serialization import source_info_to_json
 from trackforge.acquire.service import AcquisitionService
 
+from ..common import (
+    EXIT_ERROR,
+    EXIT_OK,
+    build_overrides,
+    print_error,
+    usage_error,
+)
+
 _LOGGER = logging.getLogger("trackforge.acquire")
 
-EXIT_OK = 0
-EXIT_ERROR = 1
-EXIT_USAGE = 2
+# Kept as module-level aliases for compatibility with existing CLI tests.
+_overrides = build_overrides
+_print_error = print_error
+_usage_error = usage_error
 
 
 def inspect_url(
@@ -141,43 +148,6 @@ def _validate_url(value: str) -> str:
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
         _usage_error("expected an absolute http(s) URL")
     return text
-
-
-def _usage_error(message: str) -> NoReturn:
-    typer.echo(f"error: {message}", err=True)
-    raise typer.Exit(code=EXIT_USAGE)
-
-
-def _print_error(exc: BaseException) -> None:
-    message = redact_text(str(exc))
-    typer.echo(f"error: {type(exc).__name__}: {message}", err=True)
-    hint = getattr(exc, "hint", None)
-    if isinstance(hint, str) and hint:
-        typer.echo(f"hint: {redact_text(hint)}", err=True)
-
-
-def _overrides(
-    *,
-    cookies: Path | None,
-    proxy: str | None,
-    source: str | None,
-    source_names: Iterable[str] | None = None,
-) -> dict[str, object]:
-    payload: dict[str, object] = {}
-    if cookies is not None:
-        payload["cookies"] = str(cookies)
-    if proxy is not None:
-        payload["proxy"] = proxy
-    if not payload:
-        return {}
-
-    names = {"default", *(source_names or ())}
-    if source is not None:
-        profile_key = source
-        if profile_key in {"yt-dlp", "yt_dlp"}:
-            profile_key = "yt_dlp"
-        names.add(profile_key)
-    return {"sources": {name: dict(payload) for name in sorted(names)}}
 
 
 def _render_source(source: SourceInfo) -> None:

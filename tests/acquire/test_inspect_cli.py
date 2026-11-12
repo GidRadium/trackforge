@@ -59,7 +59,7 @@ def test_inspect_json(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["kind"] == "single"
     assert payload["title"] == "Fake media"
     assert payload["items"][0]["variants"][0]["id"] == "audio-best"

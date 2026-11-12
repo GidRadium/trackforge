@@ -141,7 +141,7 @@ def test_inspect_json_returns_the_frozen_document() -> None:
     text = service.inspect_json(URL)
     payload = json.loads(text)
 
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["source"] == "fake"
     assert payload["items"][0]["variants"][0]["id"] == "audio-best"
     assert loader.download_calls == []

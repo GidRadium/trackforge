@@ -34,7 +34,12 @@ from ..models import (
     SubtitleTrack,
     Thumbnail,
 )
-from .base import default_recommendations, select_best_thumbnail
+from .base import (
+    default_recommendations,
+    dynamic_range_rank,
+    select_best_thumbnail,
+    video_codec_rank,
+)
 
 _VIDEO_EXTENSIONS = frozenset({"mp4", "m4v", "mov", "webm", "mkv", "avi", "flv"})
 _AUDIO_EXTENSIONS = frozenset({"m4a", "mp3", "opus", "ogg", "oga", "webm", "aac", "flac", "wav"})
@@ -1059,45 +1064,6 @@ def build_variants(
     return dedupe_and_sort(variants)
 
 
-_YOUTUBE_THUMBNAIL_SIZES = {
-    "maxresdefault": (1280, 720),
-    "maxresdefault.jpg": (1280, 720),
-    "maxresdefault.webp": (1280, 720),
-    "sddefault": (640, 480),
-    "sddefault.jpg": (640, 480),
-    "sddefault.webp": (640, 480),
-    "hqdefault": (480, 360),
-    "hqdefault.jpg": (480, 360),
-    "hqdefault.webp": (480, 360),
-    "hq720": (1280, 720),
-    "hq720.jpg": (1280, 720),
-    "hq720.webp": (1280, 720),
-    "mqdefault": (320, 180),
-    "mqdefault.jpg": (320, 180),
-    "mqdefault.webp": (320, 180),
-    "default": (120, 90),
-    "default.jpg": (120, 90),
-    "default.webp": (120, 90),
-}
-
-
-def youtube_thumbnail_size(url: str) -> tuple[int, int] | None:
-    """Return known YouTube CDN dimensions instead of trusting bad metadata.
-
-    YouTube reports ``maxresdefault`` as 1920x1080, but the CDN actually
-    serves a 1280x720 JPEG/WebP.  The same normalization applies to the other
-    well-known thumbnail names.
-    """
-    try:
-        host = urlsplit(url).hostname or ""
-        name = urlsplit(url).path.rsplit("/", 1)[-1].lower()
-    except ValueError:
-        return None
-    if not (host == "i.ytimg.com" or host.endswith(".ytimg.com")):
-        return None
-    return _YOUTUBE_THUMBNAIL_SIZES.get(name)
-
-
 def _thumbnail_ext(url: str) -> str | None:
     try:
         name = urlsplit(url).path.rsplit("/", 1)[-1].lower()
@@ -1134,9 +1100,6 @@ def map_thumbnails(entry: Mapping[str, Any]) -> tuple[Thumbnail, ...]:
             source_name = source
         if url is None:
             return
-        known_size = youtube_thumbnail_size(url)
-        if known_size is not None:
-            width, height = known_size
         if ext is None:
             ext = _thumbnail_ext(url)
         headers_map = {
@@ -1578,8 +1541,15 @@ def best_variant(
     prefer_container: str | None = None,
     prefer_codec: str | None = None,
     require_audio: bool = False,
+    quality_first: bool = False,
 ) -> DownloadVariant | None:
-    """Return the best usable variant matching optional source preferences."""
+    """Return the best usable variant matching optional source preferences.
+
+    ``quality_first`` ranks resolution, frame rate and dynamic range before
+    compatibility preferences.  Codec/container then act as tie-breakers, so
+    a higher-resolution H.265/HEVC or VP9/AV1 stream can beat a lower-
+    resolution H.264 stream while H.264 still wins at equal quality.
+    """
     kind_set = set(kinds)
     candidates: list[tuple[tuple[float, ...], DownloadVariant]] = []
     for variant in variants:
@@ -1604,19 +1574,34 @@ def best_variant(
         language_preference = (audio.language_preference or 0.0) if audio else 0.0
         height = (video.height or 0) if video else 0
         fps = (video.fps or 0.0) if video else 0.0
+        dynamic_range = dynamic_range_rank(video.dynamic_range if video else None)
         bitrate = (video.bitrate_kbps or 0.0) if video else 0.0
         audio_bitrate = (audio.bitrate_kbps or 0.0) if audio else 0.0
-        # Container/codec preferences dominate resolution for YouTube.
-        score = (
-            container_match,
-            codec_match,
-            audio_match,
-            float(language_preference),
-            float(height),
-            float(fps),
-            float(bitrate),
-            float(audio_bitrate),
-        )
+        if quality_first:
+            score = (
+                float(height),
+                float(fps),
+                float(dynamic_range),
+                container_match,
+                float(-video_codec_rank(video_codec)),
+                codec_match,
+                audio_match,
+                float(language_preference),
+                float(bitrate),
+                float(audio_bitrate),
+            )
+        else:
+            # Audio and generic callers keep the compatibility-first order.
+            score = (
+                container_match,
+                codec_match,
+                audio_match,
+                float(language_preference),
+                float(height),
+                float(fps),
+                float(bitrate),
+                float(audio_bitrate),
+            )
         candidates.append((score, variant))
     if not candidates:
         return None
@@ -1635,6 +1620,7 @@ def best_video_variant(
         prefer_container=prefer_container,
         prefer_codec=prefer_codec,
         require_audio=False,
+        quality_first=True,
     )
 
 
@@ -1657,5 +1643,4 @@ __all__ = [
     "map_thumbnails",
     "pair_video_with_audio",
     "parse_partial_date",
-    "youtube_thumbnail_size",
 ]

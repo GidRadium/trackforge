@@ -533,3 +533,90 @@ def test_audio_only_size_is_estimated_from_abr() -> None:
     variant = build_variants(item)[0]
     assert variant.filesize is None
     assert variant.filesize_approx == 960_000
+
+
+def test_quality_first_prefers_higher_resolution_h265() -> None:
+    item = {
+        "id": "x",
+        "formats": [
+            video_format(
+                "137",
+                vcodec="avc1.640028",
+                height=1080,
+                ext="mp4",
+            ),
+            video_format(
+                "313",
+                vcodec="hev1.1.6.L120.90",
+                height=2160,
+                ext="mp4",
+            ),
+            audio_format("140"),
+        ],
+    }
+    variants = build_variants(item)
+
+    chosen = best_video_variant(variants)
+
+    assert chosen is not None
+    assert chosen.streams[0].height == 2160
+    assert chosen.streams[0].codec.startswith("hev1")
+
+
+def test_quality_first_keeps_h264_at_equal_resolution() -> None:
+    item = {
+        "id": "x",
+        "formats": [
+            video_format(
+                "137",
+                vcodec="avc1.640028",
+                height=1080,
+                ext="mp4",
+            ),
+            video_format(
+                "399",
+                vcodec="av01.0.08M.08",
+                height=1080,
+                ext="mp4",
+            ),
+            audio_format("140"),
+        ],
+    }
+    variants = build_variants(item)
+
+    chosen = best_video_variant(variants)
+
+    assert chosen is not None
+    assert chosen.streams[0].height == 1080
+    assert chosen.streams[0].codec.startswith("avc1")
+
+
+def test_default_recommendations_are_quality_first() -> None:
+    info = {
+        "id": "x",
+        "formats": [
+            video_format(
+                "137",
+                vcodec="avc1.640028",
+                height=1080,
+                ext="mp4",
+            ),
+            video_format(
+                "313",
+                vcodec="hev1.1.6.L120.90",
+                height=2160,
+                ext="mp4",
+            ),
+            audio_format("140"),
+        ],
+    }
+    variants = tuple(build_variants(info))
+    item = MediaItem(id="x", title="x", variants=variants)
+
+    recommendations = default_recommendations(item)
+
+    chosen = next(
+        variant for variant in variants if variant.id == recommendations.video
+    )
+    assert chosen.streams[0].height == 2160
+    assert chosen.streams[0].codec.startswith("hev1")

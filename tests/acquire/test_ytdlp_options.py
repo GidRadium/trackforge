@@ -12,10 +12,12 @@ from typing import Self
 
 import pytest
 
-from trackforge.acquire.config import SourceProfile
+from trackforge.acquire.config import AppConfig, SourceProfile
 from trackforge.acquire.errors import AuthRequired
 from trackforge.acquire.loaders.base import LoaderContext
+from trackforge.acquire.loaders.youtube import YouTubeLoader
 from trackforge.acquire.loaders.ytdlp import YtDlpLoader
+from trackforge.acquire.registry import LoaderRegistry
 from trackforge.acquire.loaders.ytdlp_options import (
     build_ydl_options,
     create_youtube_dl,
@@ -180,15 +182,16 @@ def test_loader_base_options_use_the_same_builder(tmp_path: Path) -> None:
 
 
 def test_youtube_profile_without_cookies_is_not_ready() -> None:
-    loader = YtDlpLoader()
-    assert loader.is_ready(SourceProfile(name="youtube")) is False
+    youtube = YouTubeLoader()
+    assert youtube.is_ready(SourceProfile(name="youtube")) is False
     assert (
-        loader.is_ready(
+        youtube.is_ready(
             SourceProfile(name="youtube", cookies_from_browser=("chrome",))
         )
         is True
     )
-    assert loader.is_ready(SourceProfile(name="yt_dlp")) is True
+    # The generic loader remains usable for non-YouTube public sites.
+    assert YtDlpLoader().is_ready(SourceProfile(name="yt_dlp")) is True
 
 
 def test_prepare_options_requires_cookies_when_asked(tmp_path: Path) -> None:
@@ -203,15 +206,15 @@ def test_prepare_options_requires_cookies_when_asked(tmp_path: Path) -> None:
 
 
 def test_youtube_get_info_preflight_raises_auth_required_before_network() -> None:
-    loader = YtDlpLoader()
+    loader = YouTubeLoader()
     ctx = LoaderContext(
         job_id="job-1",
-        profile=SourceProfile(name="yt_dlp"),
+        profile=SourceProfile(name="youtube"),
     )
     with pytest.raises(AuthRequired, match="requires cookies"):
         loader.get_info(
             SourceRef(
-                source="yt-dlp",
+                source="youtube",
                 url="https://www.youtube.com/watch?v=test",
             ),
             ctx=ctx,
@@ -346,3 +349,20 @@ def test_extract_maps_ytdlp_errors_to_typed_errors(
 
     with pytest.raises(AuthRequired, match="private"):
         loader._extract("https://www.youtube.com/watch?v=abc", ctx=ctx)
+
+
+def test_auth_policy_is_owned_by_the_site_loader() -> None:
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+    assert YtDlpLoader().requires_auth(url) is False
+    assert YouTubeLoader().requires_auth(url) is True
+
+
+def test_registry_does_not_fall_through_to_generic_for_unconfigured_youtube() -> None:
+    registry = LoaderRegistry(
+        [YouTubeLoader(), YtDlpLoader()],
+        AppConfig(),
+    )
+
+    with pytest.raises(AuthRequired, match="requires cookies"):
+        registry.resolve("https://www.youtube.com/watch?v=dQw4w9WgXcQ")

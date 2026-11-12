@@ -64,7 +64,7 @@
 
 ### 4. JSON schema
 
-- `schema_version: 1`;
+- `schema_version: 2`;
 - `inspect`/`download`/`doctor` JSON;
 - события progress — JSONL;
 - стабильные поля;

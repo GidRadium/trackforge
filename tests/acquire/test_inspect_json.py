@@ -1,4 +1,4 @@
-"""Tests for the frozen ``SourceInfo`` v1 JSON schema."""
+"""Tests for the frozen ``SourceInfo`` v2 JSON schema."""
 
 # pyright: standard
 
@@ -35,12 +35,12 @@ from trackforge.acquire.serialization import (
 )
 
 
-def test_schema_version_is_one() -> None:
+def test_schema_version_is_two() -> None:
     info = make_source_info()
 
-    assert SOURCE_INFO_SCHEMA_VERSION == 1
-    assert SourceInfo.SCHEMA_VERSION == 1
-    assert info.schema_version == 1
+    assert SOURCE_INFO_SCHEMA_VERSION == 2
+    assert SourceInfo.SCHEMA_VERSION == 2
+    assert info.schema_version == 2
 
 
 def test_top_level_and_nested_keys_are_frozen() -> None:
@@ -51,6 +51,11 @@ def test_top_level_and_nested_keys_are_frozen() -> None:
     item = payload["items"][0]
     assert isinstance(item, dict)
     assert tuple(item) == MEDIA_ITEM_FIELDS
+    item_thumbnails = item["thumbnails"]
+    assert isinstance(item_thumbnails, list)
+    for thumbnail in item_thumbnails:
+        assert isinstance(thumbnail, dict)
+        assert tuple(thumbnail) == THUMBNAIL_FIELDS
     variant = item["variants"][0]
     assert isinstance(variant, dict)
     assert tuple(variant) == VARIANT_FIELDS
@@ -81,6 +86,13 @@ def test_scalar_values_match_the_model() -> None:
     assert item["id"] == "item-1"
     assert item["page_url"] == "https://example.test/media/1"
     assert item["resolution"] == "full"
+    assert item["thumbnails"] == [
+        {
+            "url": "https://example.test/cover.jpg",
+            "width": 1280,
+            "height": 720,
+        }
+    ]
     assert item["recommendations"] == {
         "audio": "audio-best",
         "video": None,
@@ -116,13 +128,14 @@ def test_flat_items_have_no_variants() -> None:
 
 def test_missing_thumbnail_is_null() -> None:
     info = make_source_info()
-    item = replace(info.items[0], thumbnail=None)
+    item = replace(info.items[0], thumbnail=None, thumbnails=())
     info = replace(info, thumbnail=None, items=(item,))
 
     payload = source_info_to_dict(info)
 
     assert payload["thumbnail"] is None
     assert payload["items"][0]["thumbnail"] is None
+    assert payload["items"][0]["thumbnails"] == []
 
 
 def test_video_variant_height_and_approximate_filesize() -> None:

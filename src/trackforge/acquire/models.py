@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 # The public inspect JSON contract.  Bump this only together with a documented
 # schema change; internal/model additions that are not serialized do not need
 # a bump, but public fields do.
-SOURCE_INFO_SCHEMA_VERSION = 1
+SOURCE_INFO_SCHEMA_VERSION = 2
 
 
 class InputKind(StrEnum):
@@ -149,6 +149,7 @@ class ThumbnailAsset:
     mime: str
     width: int | None = None
     height: int | None = None
+    ext: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,13 +311,13 @@ class SourceInfo:
         return SOURCE_INFO_SCHEMA_VERSION
 
     def to_dict(self) -> SourceInfoDict:
-        """Return the frozen schema-version-1 representation."""
+        """Return the frozen schema-version-2 representation."""
         from .serialization import source_info_to_dict
 
         return source_info_to_dict(self)
 
     def to_json(self, *, indent: int | None = 2) -> str:
-        """Return the frozen schema-version-1 representation as JSON text."""
+        """Return the frozen schema-version-2 representation as JSON text."""
         from .serialization import source_info_to_json
 
         return source_info_to_json(self, indent=indent)

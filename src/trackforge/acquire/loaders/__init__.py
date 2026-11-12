@@ -7,7 +7,10 @@ from .base import (
     LoaderContext,
     MediaLoader,
     default_recommendations,
+    dynamic_range_rank,
+    rank_thumbnails,
     select_best_thumbnail,
+    video_codec_rank,
 )
 from .soundcloud import SoundCloudLoader
 from .yandex_music import YandexMusicLoader
@@ -68,6 +71,7 @@ __all__ = [
     "create_youtube_dl",
     "dedupe_and_sort",
     "default_recommendations",
+    "dynamic_range_rank",
     "deno_js_runtimes",
     "humanize_error",
     "is_retryable",
@@ -79,5 +83,7 @@ __all__ = [
     "pair_video_with_audio",
     "parse_partial_date",
     "prepare_ydl_options",
+    "rank_thumbnails",
     "select_best_thumbnail",
+    "video_codec_rank",
 ]
